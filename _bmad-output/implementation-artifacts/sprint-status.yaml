@@ -70,7 +70,7 @@ development_status:
   3-3-select-template-for-rough-cut: done
   3-4-load-templates-from-markdown: done
   3-5-template-asset-groups: done
-  3-6-parse-format-rules: ready-for-dev
+  3-6-parse-format-rules: done
   epic-3-retrospective: optional
   
   # Epic 4: Media Selection & Transcription

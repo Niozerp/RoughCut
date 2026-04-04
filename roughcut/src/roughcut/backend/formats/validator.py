@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Optional
 from pathlib import Path
 
-from .models import FormatTemplate, TemplateSegment, AssetGroup
+from .models import (
+    FormatTemplate, TemplateSegment, AssetGroup,
+    FormatRule, TimingConstraint, SegmentStructure, TransitionRule,
+    MediaMatchingCriteria, MatchingRule, RuleType
+)
 
 
 class ValidationError(Exception):
@@ -14,6 +18,260 @@ class ValidationError(Exception):
     def __init__(self, message: str, field: Optional[str] = None):
         super().__init__(message)
         self.field = field
+
+
+class FormatRuleValidator:
+    """
+    Validates format rules and media matching criteria.
+    
+    Ensures format rules have logical consistency, proper timing constraints,
+    and valid cross-references to asset groups.
+    
+    Example:
+        >>> validator = FormatRuleValidator()
+        >>> is_valid, errors = validator.validate_format_rules(template.format_rules)
+        >>> if not is_valid:
+        ...     for error in errors:
+        ...         print(f"Rule error: {error}")
+    """
+    
+    def __init__(self):
+        """Initialize validator."""
+        self._errors: List[str] = []
+    
+    def validate_format_rules(
+        self, 
+        format_rules: List[FormatRule],
+        asset_groups: Optional[List[AssetGroup]] = None
+    ) -> Tuple[bool, List[str]]:
+        """
+        Validate a list of format rules.
+        
+        Checks:
+        - Timing constraint logical consistency (min <= max)
+        - Segment structure has valid segment_count (> 0)
+        - Transition rules reference valid segment boundaries
+        - No timing conflicts between rules
+        
+        Args:
+            format_rules: List of FormatRule objects to validate
+            asset_groups: Optional list of asset groups for transition validation
+            
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        self._errors = []
+        
+        if not format_rules:
+            return True, []
+        
+        # Track timing constraints across all rules
+        total_min = None
+        total_max = None
+        
+        for i, rule in enumerate(format_rules):
+            self._validate_single_rule(rule, i, asset_groups)
+            
+            # Track total timing across timing rules
+            if rule.rule_type == RuleType.TIMING and rule.timing_constraint:
+                tc = rule.timing_constraint
+                if tc.min_duration is not None:
+                    if total_min is None or tc.min_duration > total_min:
+                        total_min = tc.min_duration
+                if tc.max_duration is not None:
+                    if total_max is None or tc.max_duration < total_max:
+                        total_max = tc.max_duration
+        
+        # Check for timing conflicts between min and max
+        if total_min is not None and total_max is not None and total_min > total_max:
+            self._errors.append(
+                f"Timing conflict: minimum duration ({total_min}s) exceeds "
+                f"maximum duration ({total_max}s) across timing rules"
+            )
+        
+        return (len(self._errors) == 0, self._errors)
+    
+    def _validate_single_rule(
+        self, 
+        rule: FormatRule, 
+        index: int,
+        asset_groups: Optional[List[AssetGroup]] = None
+    ) -> None:
+        """Validate a single format rule."""
+        prefix = f"FormatRule[{index}] '{rule.description}'"
+        
+        # Validate rule type specific requirements
+        if rule.rule_type == RuleType.CUTTING:
+            if not rule.segment_structure:
+                self._errors.append(
+                    f"{prefix}: CUTTING rules require segment_structure"
+                )
+            elif rule.segment_structure.segment_count <= 0:
+                self._errors.append(
+                    f"{prefix}: segment_count must be > 0"
+                )
+        
+        # Validate timing constraint
+        if rule.timing_constraint:
+            self._validate_timing_constraint(rule.timing_constraint, prefix)
+        
+        # Validate transitions reference valid segments
+        if rule.transitions and rule.segment_structure:
+            max_segment = rule.segment_structure.segment_count - 1
+            for j, trans in enumerate(rule.transitions):
+                self._validate_transition(trans, j, prefix, max_segment)
+        
+        # Validate fallback rules exist
+        if rule.fallback_rules:
+            for fallback in rule.fallback_rules:
+                if not fallback or not fallback.strip():
+                    self._errors.append(
+                        f"{prefix}: Empty fallback rule name"
+                    )
+    
+    def _validate_timing_constraint(
+        self, 
+        tc: TimingConstraint, 
+        prefix: str
+    ) -> None:
+        """Validate a timing constraint."""
+        # Check logical consistency (already handled in __post_init__, but double-check)
+        if tc.min_duration is not None and tc.max_duration is not None:
+            if tc.min_duration > tc.max_duration:
+                self._errors.append(
+                    f"{prefix}: min_duration ({tc.min_duration}s) exceeds "
+                    f"max_duration ({tc.max_duration}s)"
+                )
+        
+        # Check negative durations (should be caught by __post_init__)
+        if tc.exact_duration is not None and tc.exact_duration < 0:
+            self._errors.append(
+                f"{prefix}: exact_duration must be >= 0"
+            )
+        if tc.min_duration is not None and tc.min_duration < 0:
+            self._errors.append(
+                f"{prefix}: min_duration must be >= 0"
+            )
+        if tc.max_duration is not None and tc.max_duration < 0:
+            self._errors.append(
+                f"{prefix}: max_duration must be >= 0"
+            )
+    
+    def _validate_transition(
+        self, 
+        trans: TransitionRule, 
+        index: int,
+        prefix: str,
+        max_segment: int
+    ) -> None:
+        """Validate a transition rule."""
+        trans_prefix = f"{prefix}.Transition[{index}]"
+        
+        # Check segment boundaries
+        if trans.from_segment is not None:
+            if trans.from_segment < 0 or trans.from_segment > max_segment:
+                self._errors.append(
+                    f"{trans_prefix}: from_segment ({trans.from_segment}) "
+                    f"exceeds max segment ({max_segment})"
+                )
+        
+        if trans.to_segment is not None:
+            if trans.to_segment < 0 or trans.to_segment > max_segment:
+                self._errors.append(
+                    f"{trans_prefix}: to_segment ({trans.to_segment}) "
+                    f"exceeds max segment ({max_segment})"
+                )
+        
+        # Validate transition type
+        valid_types = ["cut", "dissolve", "fade", "wipe"]
+        if trans.transition_type not in valid_types:
+            self._errors.append(
+                f"{trans_prefix}: Invalid transition_type '{trans.transition_type}'. "
+                f"Must be one of: {', '.join(valid_types)}"
+            )
+    
+    def validate_matching_criteria(
+        self,
+        criteria_list: List[MediaMatchingCriteria],
+        asset_groups: List[AssetGroup]
+    ) -> Tuple[bool, List[str]]:
+        """
+        Validate media matching criteria.
+        
+        Checks:
+        - Each criteria references a valid asset group
+        - Matching rules have valid attributes and conditions
+        - No duplicate criteria for same asset group
+        
+        Args:
+            criteria_list: List of MediaMatchingCriteria to validate
+            asset_groups: List of valid AssetGroup objects
+            
+        Returns:
+            Tuple of (is_valid, list of error messages)
+        """
+        self._errors = []
+        
+        if not criteria_list:
+            return True, []
+        
+        # Build set of valid asset group names
+        valid_group_names = {g.name for g in asset_groups}
+        seen_groups = set()
+        
+        for i, criteria in enumerate(criteria_list):
+            prefix = f"MediaMatchingCriteria[{i}] '{criteria.target_asset_group}'"
+            
+            # Check asset group exists
+            if criteria.target_asset_group not in valid_group_names:
+                self._errors.append(
+                    f"{prefix}: References unknown asset group "
+                    f"'{criteria.target_asset_group}'"
+                )
+            
+            # Check for duplicates
+            if criteria.target_asset_group in seen_groups:
+                self._errors.append(
+                    f"{prefix}: Duplicate criteria for asset group "
+                    f"'{criteria.target_asset_group}'"
+                )
+            else:
+                seen_groups.add(criteria.target_asset_group)
+            
+            # Validate matching rules
+            for j, rule in enumerate(criteria.matching_rules):
+                self._validate_matching_rule(rule, j, prefix)
+        
+        return (len(self._errors) == 0, self._errors)
+    
+    def _validate_matching_rule(
+        self, 
+        rule: MatchingRule, 
+        index: int,
+        prefix: str
+    ) -> None:
+        """Validate a matching rule."""
+        rule_prefix = f"{prefix}.MatchingRule[{index}]"
+        
+        # Check for valid condition
+        valid_conditions = ["equals", "contains", "greater_than", "less_than", "matches"]
+        if rule.condition not in valid_conditions:
+            self._errors.append(
+                f"{rule_prefix}: Invalid condition '{rule.condition}'. "
+                f"Must be one of: {', '.join(valid_conditions)}"
+            )
+        
+        # Check attribute is not empty
+        if not rule.attribute or not rule.attribute.strip():
+            self._errors.append(
+                f"{rule_prefix}: attribute is required"
+            )
+        
+        # Check weight is in valid range (0.0-1.0)
+        if not 0.0 <= rule.weight <= 1.0:
+            self._errors.append(
+                f"{rule_prefix}: weight ({rule.weight}) must be between 0.0 and 1.0"
+            )
 
 
 class TemplateValidator:

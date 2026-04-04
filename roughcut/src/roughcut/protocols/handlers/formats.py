@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from ...backend.formats import TemplateScanner
 from ...backend.formats.parser import TemplateParser
+from ...backend.formats.cache import get_template_cache
 from ...backend.workflows.session import get_session_manager
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,14 @@ ERROR_CODES = {
     "TEMPLATE_NOT_FOUND": "TEMPLATE_NOT_FOUND",
     "TEMPLATE_PARSE_ERROR": "TEMPLATE_PARSE_ERROR",
     "SESSION_NOT_FOUND": "SESSION_NOT_FOUND",
-    "INVALID_STATE": "INVALID_STATE"
+    "INVALID_STATE": "INVALID_STATE",
+    # Story 3.6 error codes
+    "RULES_FETCH_FAILED": "RULES_FETCH_FAILED",
+    "RULES_FORMAT_FAILED": "RULES_FORMAT_FAILED",
+    "INVALID_FORMAT_RULE": "INVALID_FORMAT_RULE",
+    "MISSING_RULE_FIELD": "MISSING_RULE_FIELD",
+    "TIMING_CONFLICT": "TIMING_CONFLICT",
+    "UNKNOWN_ASSET_GROUP": "UNKNOWN_ASSET_GROUP"
 }
 
 
@@ -396,6 +404,239 @@ def select_format_template(params: Dict[str, Any] | None) -> Dict[str, Any]:
         }
 
 
+def get_format_rules(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for get_format_rules method.
+    
+    Returns parsed format rules for a template.
+    
+    Args:
+        params: Request parameters containing:
+            - template_id: Template slug to get rules for (required)
+    
+    Returns:
+        Dictionary with format_rules and matching_criteria
+        or error response if template not found
+    """
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Invalid parameters: expected object",
+                "suggestion": "Check request format"
+            }
+        }
+    
+    template_id = params.get("template_id")
+    if not template_id or not isinstance(template_id, str):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Missing required parameter: template_id",
+                "suggestion": "Provide a template_id string in the params object"
+            }
+        }
+    
+    try:
+        # Try to get from cache first
+        cache = get_template_cache()
+        template = cache.get(template_id)
+        
+        if template is None:
+            # Try to load from file
+            sanitized_id = _sanitize_template_id(template_id)
+            if not sanitized_id:
+                return {
+                    "error": {
+                        "code": ERROR_CODES["INVALID_PARAMS"],
+                        "category": "validation",
+                        "message": f"Invalid template_id: '{template_id}'",
+                        "suggestion": "Template ID should be alphanumeric with dashes"
+                    }
+                }
+            
+            templates_dir = _find_templates_directory()
+            template_file = templates_dir / f"{sanitized_id}.md"
+            
+            if not template_file.exists():
+                return {
+                    "error": {
+                        "code": ERROR_CODES["TEMPLATE_NOT_FOUND"],
+                        "category": "not_found",
+                        "message": f"Template '{template_id}' not found",
+                        "suggestion": "Check that the template file exists in templates/formats/"
+                    }
+                }
+            
+            parser = TemplateParser()
+            template = parser.parse_file(template_file)
+            
+            if template is None:
+                return {
+                    "error": {
+                        "code": ERROR_CODES["TEMPLATE_PARSE_ERROR"],
+                        "category": "parse_error",
+                        "message": f"Failed to parse template '{template_id}'",
+                        "suggestion": "Template file may be malformed or missing required fields"
+                    }
+                }
+            
+            # Cache the template
+            cache.set(template)
+        
+        # Serialize format rules
+        rules = [r.to_dict() for r in template.format_rules]
+        criteria = [c.to_dict() for c in template.matching_criteria]
+        
+        return {
+            "result": {
+                "template_id": template_id,
+                "format_rules": rules,
+                "matching_criteria": criteria,
+                "total_rules": len(rules),
+                "total_criteria": len(criteria)
+            }
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error getting format rules: {e}")
+        return {
+            "error": {
+                "code": ERROR_CODES["RULES_FETCH_FAILED"],
+                "category": "internal",
+                "message": f"Failed to get format rules: {str(e)}",
+                "suggestion": "Try again or check template file"
+            }
+        }
+
+
+def get_format_rules_for_ai(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for get_format_rules_for_ai method.
+    
+    Returns format rules formatted as AI-readable prompt text.
+    
+    Args:
+        params: Request parameters containing:
+            - template_id: Template slug to get rules for (required)
+            - transcript_length_seconds: Optional transcript length for context
+    
+    Returns:
+        Dictionary with formatted_rules text ready for AI consumption
+        or error response if template not found
+    """
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Invalid parameters: expected object",
+                "suggestion": "Check request format"
+            }
+        }
+    
+    template_id = params.get("template_id")
+    if not template_id or not isinstance(template_id, str):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Missing required parameter: template_id",
+                "suggestion": "Provide a template_id string in the params object"
+            }
+        }
+    
+    transcript_length = params.get("transcript_length_seconds", 0)
+    
+    try:
+        # Try to get from cache first
+        cache = get_template_cache()
+        template = cache.get(template_id)
+        
+        if template is None:
+            # Try to load from file
+            sanitized_id = _sanitize_template_id(template_id)
+            if not sanitized_id:
+                return {
+                    "error": {
+                        "code": ERROR_CODES["INVALID_PARAMS"],
+                        "category": "validation",
+                        "message": f"Invalid template_id: '{template_id}'",
+                        "suggestion": "Template ID should be alphanumeric with dashes"
+                    }
+                }
+            
+            templates_dir = _find_templates_directory()
+            template_file = templates_dir / f"{sanitized_id}.md"
+            
+            if not template_file.exists():
+                return {
+                    "error": {
+                        "code": ERROR_CODES["TEMPLATE_NOT_FOUND"],
+                        "category": "not_found",
+                        "message": f"Template '{template_id}' not found",
+                        "suggestion": "Check that the template file exists in templates/formats/"
+                    }
+                }
+            
+            parser = TemplateParser()
+            template = parser.parse_file(template_file)
+            
+            if template is None:
+                return {
+                    "error": {
+                        "code": ERROR_CODES["TEMPLATE_PARSE_ERROR"],
+                        "category": "parse_error",
+                        "message": f"Failed to parse template '{template_id}'",
+                        "suggestion": "Template file may be malformed or missing required fields"
+                    }
+                }
+            
+            # Cache the template
+            cache.set(template)
+        
+        # Format rules for AI
+        from ...backend.formats.prompt_formatter import FormatRulePromptFormatter
+        formatter = FormatRulePromptFormatter()
+        
+        if transcript_length and transcript_length > 0:
+            formatted_rules = formatter.format_for_transcript_cutting(
+                template.format_rules,
+                transcript_length
+            )
+        else:
+            formatted_rules = formatter.format_rules_for_ai(
+                template.format_rules,
+                template.matching_criteria
+            )
+        
+        return {
+            "result": {
+                "template_id": template_id,
+                "formatted_rules": formatted_rules,
+                "rule_count": len(template.format_rules),
+                "criteria_count": len(template.matching_criteria)
+            }
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error formatting rules for AI: {e}")
+        return {
+            "error": {
+                "code": ERROR_CODES["RULES_FORMAT_FAILED"],
+                "category": "internal",
+                "message": f"Failed to format rules for AI: {str(e)}",
+                "suggestion": "Try again or check template file"
+            }
+        }
+
+
 def _sanitize_template_id(template_id: str) -> str:
     """Sanitize template ID to prevent path traversal attacks.
     
@@ -492,4 +733,7 @@ FORMAT_HANDLERS = {
     "get_available_formats": get_available_formats,
     "get_template_preview": get_template_preview,
     "select_format_template": select_format_template,
+    # Story 3.6 additions
+    "get_format_rules": get_format_rules,
+    "get_format_rules_for_ai": get_format_rules_for_ai,
 }

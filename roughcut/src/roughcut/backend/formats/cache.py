@@ -98,6 +98,19 @@ class TemplateCache:
                 source_path=source_path
             )
     
+    def set(self, template: FormatTemplate) -> None:
+        """
+        Store template in cache (convenience method without requiring mtime/path).
+        Uses current time and template's file_path if available.
+        
+        Args:
+            template: FormatTemplate to cache
+        """
+        import time
+        file_mtime = time.time()
+        source_path = template.file_path if hasattr(template, 'file_path') else Path()
+        self.store(template, file_mtime, source_path)
+    
     def is_stale(self, slug: str, current_mtime: float) -> bool:
         """
         Check if cached template is stale based on file modification time.
