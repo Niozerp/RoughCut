@@ -113,3 +113,9 @@
 ### Import cycle risk in client.py
 - **Reason:** Pre-existing architectural pattern, not blocking
 - **Context:** `sync_media_database()` imports `NotionSyncOrchestrator` inside method to avoid circular import. This is a workaround indicating potential architectural coupling. Should refactor to proper dependency injection or module restructuring.
+
+## Deferred from: code review of 3-5-template-asset-groups (2026-04-04)
+
+### Parser Not Integrated with Template Loading
+- **Reason:** Integration requires coordination with Story 3.4 and Story 3.6
+- **Context:** AssetGroupParser exists as standalone class but no integration with FormatTemplate loading workflow from Story 3.4. FormatTemplate dataclass doesn't have asset_groups field yet. Integration should be done as part of Story 3.6 (Parse Format Rules) which extends FormatTemplate.
