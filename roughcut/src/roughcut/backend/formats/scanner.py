@@ -249,6 +249,9 @@ class TemplateScanner:
         if not content.startswith("---"):
             return None
         
+        # Normalize Windows line endings (CRLF) to Unix (LF) for consistent parsing
+        content = content.replace('\r\n', '\n')
+        
         # Find the end of frontmatter (first --- on its own line after start)
         # Use regex-like approach to handle --- inside YAML values
         lines = content.split('\n')

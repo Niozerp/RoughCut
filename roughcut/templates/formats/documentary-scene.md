@@ -44,6 +44,24 @@ This format creates compelling documentary scenes that balance information deliv
 - **Content**: Reflective moment, summary, or forward-looking statement
 - **Music**: Resolve to neutral bed or fade
 
+## Asset Groups
+
+### Music
+- **establishing_texture**: Ambient location bed (atmospheric, subtle)
+- **intro_underscore**: Subtle anticipation music (minimal, building)
+- **emotional_bed**: Story-following emotional music (cinematic, dynamic)
+- **climax_swell**: Emotional peak support (dramatic, swelling)
+- **resolution_fade**: Closure music (soft, resolving)
+
+### SFX
+- **location_tone**: Room tone and environmental ambience (natural, immersive)
+- **transition_drift**: Soft scene transitions (subtle, seamless)
+
+### VFX
+- **location_title**: Location identifier graphic (subtle, elegant)
+- **archival_frame**: Historical photo treatment (aged, contextual)
+- **chapter_marker**: Scene transition indicator (minimal, clean)
+
 ## Ideal Use Cases
 
 - Character profiles

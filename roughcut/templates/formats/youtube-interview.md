@@ -32,6 +32,21 @@ The format follows a three-act structure designed to hook viewers quickly, deliv
 - **Content**: Summary, subscribe prompt, end screen
 - **Music**: Branded outro sting with swell
 
+## Asset Groups
+
+### Music
+- **intro_music**: High-energy corporate music (upbeat, professional)
+- **narrative_bed**: Subtle background music (corporate, neutral)
+- **outro_music**: Branded outro sting with swell (triumphant, branded)
+
+### SFX
+- **intro_whoosh**: Subtle entrance sound for title card (swish, airy)
+- **outro_chime**: Success sound for call-to-action (bright, positive)
+
+### VFX
+- **lower_third_intro**: Speaker name and title at 0:15 (clean, corporate)
+- **subscribe_animation**: End screen CTA graphics at 3:30 (animated, branded)
+
 ## Ideal Use Cases
 
 - Executive interviews

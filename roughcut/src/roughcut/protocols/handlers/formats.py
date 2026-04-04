@@ -4,10 +4,12 @@ Handles JSON-RPC requests for format template discovery and retrieval.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 from ...backend.formats import TemplateScanner
+from ...backend.formats.parser import TemplateParser
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +18,9 @@ ERROR_CODES = {
     "FORMAT_SCAN_ERROR": "FORMAT_SCAN_ERROR",
     "INVALID_PARAMS": "INVALID_PARAMS",
     "DIRECTORY_NOT_FOUND": "DIRECTORY_NOT_FOUND",
-    "PERMISSION_DENIED": "PERMISSION_DENIED"
+    "PERMISSION_DENIED": "PERMISSION_DENIED",
+    "TEMPLATE_NOT_FOUND": "TEMPLATE_NOT_FOUND",
+    "TEMPLATE_PARSE_ERROR": "TEMPLATE_PARSE_ERROR"
 }
 
 
@@ -102,6 +106,152 @@ def get_available_formats(params: Dict[str, Any] | None) -> Dict[str, Any]:
         }
 
 
+def get_template_preview(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for get_template_preview method.
+    
+    Loads a specific template file and returns full preview details
+    including structure, timing segments, and asset groups.
+    
+    Args:
+        params: Request parameters containing:
+            - template_id: The template slug to preview (required)
+        
+    Returns:
+        Dictionary with "preview" key containing full template details
+        or error response if loading fails
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        logger.warning(f"Invalid params type: {type(params)}")
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Invalid parameters: expected object",
+                "suggestion": "Check request format"
+            }
+        }
+    
+    # Extract template_id
+    template_id = params.get("template_id")
+    if not template_id or not isinstance(template_id, str):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Missing required parameter: template_id",
+                "suggestion": "Provide a template_id string in the params object"
+            }
+        }
+    
+    try:
+        # Sanitize template_id to prevent path traversal
+        sanitized_id = _sanitize_template_id(template_id)
+        if not sanitized_id:
+            return {
+                "error": {
+                    "code": ERROR_CODES["INVALID_PARAMS"],
+                    "category": "validation",
+                    "message": f"Invalid template_id: '{template_id}'",
+                    "suggestion": "Template ID should be alphanumeric with dashes"
+                }
+            }
+        
+        # Find templates directory
+        templates_dir = _find_templates_directory()
+        
+        # Construct template file path
+        template_file = templates_dir / f"{sanitized_id}.md"
+        
+        # Check if file exists
+        if not template_file.exists():
+            logger.warning(f"Template not found: {template_file}")
+            return {
+                "error": {
+                    "code": ERROR_CODES["TEMPLATE_NOT_FOUND"],
+                    "category": "not_found",
+                    "message": f"Template '{template_id}' not found",
+                    "suggestion": "Check that the template file exists in templates/formats/"
+                }
+            }
+        
+        # Parse the template file with full structure
+        parser = TemplateParser()
+        template = parser.parse_file(template_file)
+        
+        if template is None:
+            return {
+                "error": {
+                    "code": ERROR_CODES["TEMPLATE_PARSE_ERROR"],
+                    "category": "parse_error",
+                    "message": f"Failed to parse template '{template_id}'",
+                    "suggestion": "Template file may be malformed or missing required fields"
+                }
+            }
+        
+        # Return preview data
+        return {
+            "preview": template.to_preview_dict()
+        }
+        
+    except PermissionError as e:
+        logger.error(f"Permission denied accessing template: {e}")
+        return {
+            "error": {
+                "code": ERROR_CODES["PERMISSION_DENIED"],
+                "category": "filesystem",
+                "message": f"Permission denied: {str(e)}",
+                "suggestion": "Check file permissions for the template"
+            }
+        }
+    except Exception as e:
+        logger.exception(f"Unexpected error loading template preview: {e}")
+        return {
+            "error": {
+                "code": ERROR_CODES["TEMPLATE_PARSE_ERROR"],
+                "category": "internal",
+                "message": f"Failed to load template preview: {str(e)}",
+                "suggestion": "Check that the template file is readable and properly formatted"
+            }
+        }
+
+
+def _sanitize_template_id(template_id: str) -> str:
+    """Sanitize template ID to prevent path traversal attacks.
+    
+    Args:
+        template_id: Raw template ID from request
+        
+    Returns:
+        Sanitized template ID or empty string if invalid
+    """
+    if not template_id:
+        return ""
+    
+    # Enforce maximum length (255 chars for most filesystems)
+    if len(template_id) > 255:
+        return ""
+    
+    # Block single dot (hidden files) and double dots (path traversal)
+    if template_id == "." or template_id == "..":
+        return ""
+    
+    # Use allowlist approach: only allow alphanumeric, dashes, and underscores
+    # This is more secure than sequential replace which can be bypassed
+    if not re.match(r'^[\w\-]+$', template_id):
+        return ""
+    
+    # Additional check: reject if result is all dots or empty after basic filtering
+    sanitized = template_id.strip()
+    if not sanitized or all(c == '.' for c in sanitized):
+        return ""
+    
+    return sanitized
+
+
 def _find_templates_directory() -> Path:
     """Find the templates/formats/ directory.
     
@@ -163,4 +313,5 @@ def _find_templates_directory() -> Path:
 # Handler registry
 FORMAT_HANDLERS = {
     "get_available_formats": get_available_formats,
+    "get_template_preview": get_template_preview,
 }

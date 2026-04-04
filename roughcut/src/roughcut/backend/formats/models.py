@@ -136,9 +136,12 @@ class FormatTemplate:
         # Add asset groups summary
         if self.asset_groups:
             lines.append("=== ASSETS ===")
-            # Group by category
+            # Group by category, filtering out empty category names
             by_category: Dict[str, List[AssetGroup]] = {}
             for ag in self.asset_groups:
+                # Skip assets with empty category names
+                if not ag.category or not ag.category.strip():
+                    continue
                 if ag.category not in by_category:
                     by_category[ag.category] = []
                 by_category[ag.category].append(ag)

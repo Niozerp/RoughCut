@@ -1,7 +1,7 @@
 -- RoughCut Format Management Window
 -- Displays list of available video format templates
 -- Compatible with DaVinci Resolve's Lua scripting environment
--- Version: 1.1.0
+-- Version: 1.2.0
 
 local formatManagement = {}
 
@@ -60,7 +60,9 @@ local WINDOW_CONFIG = {
 -- State tracking
 local parentWindowRef = nil
 local currentWindowRef = nil
+local currentView = "list" -- "list" or "preview"
 local formatsList = {}
+local currentPreview = nil
 local isLoading = false
 local selectedFormatSlug = nil
 local requestCounter = 0
@@ -98,10 +100,11 @@ function formatManagement.create(uiManager, parentWindow)
     end
     
     currentWindowRef = window
+    currentView = "list"
     
     -- Build the UI
     local ok_build, err = pcall(function()
-        _buildUI(window)
+        _buildListView(window)
     end)
     
     if not ok_build then
@@ -117,9 +120,12 @@ function formatManagement.create(uiManager, parentWindow)
     return window
 end
 
--- Build the UI elements
+-- Build the list view UI elements
 -- @param window The window to add elements to
-function _buildUI(window)
+function _buildListView(window)
+    -- Clear existing items
+    _clearWindow(window)
+    
     -- Header
     local ok = pcall(function()
         window:Add({
@@ -131,7 +137,7 @@ function _buildUI(window)
         
         window:Add({
             type = "Label",
-            text = "Select a format template for rough cut generation",
+            text = "Select a format template to preview",
             font = { size = 11 },
             alignment = { alignHCenter = true }
         })
@@ -230,6 +236,508 @@ function _buildUI(window)
     
     if not ok then
         logger.warn("Failed to add back button")
+    end
+end
+
+-- Build the preview view UI elements
+-- @param window The window to add elements to
+function _buildPreviewView(window)
+    -- Clear existing items
+    _clearWindow(window)
+    
+    if not currentPreview then
+        logger.error("No preview data available")
+        _showListView()
+        return
+    end
+    
+    local preview = currentPreview
+    
+    -- Header with template name
+    local ok = pcall(function()
+        window:Add({
+            type = "Label",
+            text = preview.name or "Template Preview",
+            font = { size = 20, bold = true },
+            alignment = { alignHCenter = true },
+            wrap = true
+        })
+    end)
+    
+    if not ok then
+        logger.warn("Failed to add preview header")
+    end
+    
+    -- Loading indicator (for preview loading)
+    ok = pcall(function()
+        window:Add({
+            type = "Label",
+            id = "lblPreviewLoading",
+            text = "",
+            font = { size = 12, italic = true },
+            alignment = { alignHCenter = true },
+            height = 0,
+            visible = false
+        })
+    end)
+    
+    -- Status/error message
+    ok = pcall(function()
+        window:Add({
+            type = "Label",
+            id = "lblPreviewStatus",
+            text = "",
+            font = { size = 11, color = "red" },
+            alignment = { alignHCenter = true },
+            height = 0,
+            visible = false
+        })
+    end)
+    
+    -- Scrollable content container
+    ok = pcall(function()
+        window:Add({
+            type = "Label",
+            text = "",
+            height = 5
+        })
+        
+        -- Main content area
+        local contentContainer = window:Add({
+            type = "VGroup",
+            id = "grpPreviewContent",
+            spacing = 8
+        })
+        
+        -- Description section
+        if preview.description then
+            contentContainer:Add({
+                type = "Label",
+                text = "Description",
+                font = { size = 14, bold = true },
+                alignment = { alignLeft = true }
+            })
+            
+            contentContainer:Add({
+                type = "Label",
+                text = preview.description,
+                font = { size = 11 },
+                alignment = { alignLeft = true },
+                wrap = true
+            })
+            
+            contentContainer:Add({
+                type = "Label",
+                text = "",
+                height = 10
+            })
+        end
+        
+        -- Structure section
+        if preview.structure and preview.structure ~= "" then
+            contentContainer:Add({
+                type = "Label",
+                text = "Structure Overview",
+                font = { size = 14, bold = true },
+                alignment = { alignLeft = true }
+            })
+            
+            contentContainer:Add({
+                type = "Label",
+                text = preview.structure,
+                font = { size = 11 },
+                alignment = { alignLeft = true },
+                wrap = true
+            })
+            
+            contentContainer:Add({
+                type = "Label",
+                text = "",
+                height = 10
+            })
+        end
+        
+        -- Timing Specifications section
+        if preview.segments and #preview.segments > 0 then
+            contentContainer:Add({
+                type = "Label",
+                text = "Timing Specifications",
+                font = { size = 14, bold = true },
+                alignment = { alignLeft = true }
+            })
+            
+            for i, segment in ipairs(preview.segments) do
+                local segmentText = string.format("%s: %s-%s (%s)",
+                    segment.name or "Segment " .. i,
+                    segment.start_time or "?",
+                    segment.end_time or "?",
+                    segment.duration or "Unknown"
+                )
+                
+                contentContainer:Add({
+                    type = "Label",
+                    text = segmentText,
+                    font = { size = 11 },
+                    alignment = { alignLeft = true }
+                })
+                
+                if segment.purpose and segment.purpose ~= "" then
+                    contentContainer:Add({
+                        type = "Label",
+                        text = "  Purpose: " .. segment.purpose,
+                        font = { size = 10, italic = true },
+                        alignment = { alignLeft = true },
+                        wrap = true
+                    })
+                end
+            end
+            
+            contentContainer:Add({
+                type = "Label",
+                text = "",
+                height = 10
+            })
+        end
+        
+        -- Asset Groups section
+        if preview.asset_groups and #preview.asset_groups > 0 then
+            contentContainer:Add({
+                type = "Label",
+                text = "Asset Groups",
+                font = { size = 14, bold = true },
+                alignment = { alignLeft = true }
+            })
+            
+            -- Group by category
+            local categories = {}
+            for _, asset in ipairs(preview.asset_groups) do
+                local cat = asset.category or "Other"
+                if not categories[cat] then
+                    categories[cat] = {}
+                end
+                table.insert(categories[cat], asset)
+            end
+            
+            -- Display by category
+            for category, assets in pairs(categories) do
+                contentContainer:Add({
+                    type = "Label",
+                    text = category .. ":",
+                    font = { size = 12, bold = true },
+                    alignment = { alignLeft = true }
+                })
+                
+                for _, asset in ipairs(assets) do
+                    local assetText = string.format("  • %s: %s",
+                        asset.name or "Unknown",
+                        asset.description or "No description"
+                    )
+                    
+                    contentContainer:Add({
+                        type = "Label",
+                        text = assetText,
+                        font = { size = 10 },
+                        alignment = { alignLeft = true },
+                        wrap = true
+                    })
+                end
+            end
+        end
+    end)
+    
+    if not ok then
+        logger.warn("Failed to build preview content")
+    end
+    
+    -- Spacer
+    pcall(function()
+        window:Add({
+            type = "Label",
+            text = "",
+            height = 20
+        })
+    end)
+    
+    -- Footer buttons
+    ok = pcall(function()
+        local btnGroup = window:Add({
+            type = "HGroup",
+            id = "grpPreviewButtons",
+            spacing = 10
+        })
+        
+        -- Back to List button
+        local backBtn = btnGroup:Add({
+            type = "Button",
+            id = "btnBackToList",
+            text = "← Back to List",
+            height = 35,
+            width = 150
+        })
+        
+        if backBtn then
+            backBtn.Clicked = function()
+                _showListView()
+            end
+        end
+        
+        -- Use This Template button
+        local useBtn = btnGroup:Add({
+            type = "Button",
+            id = "btnUseTemplate",
+            text = "Use This Template →",
+            height = 35,
+            width = 180
+        })
+        
+        if useBtn then
+            useBtn.Clicked = function()
+                _onUseTemplate()
+            end
+        end
+    end)
+    
+    if not ok then
+        logger.warn("Failed to add preview buttons")
+    end
+end
+
+-- Clear all items from window
+-- @param window The window to clear
+function _clearWindow(window)
+    if not window then
+        return
+    end
+    
+    pcall(function()
+        local items = window:GetItems()
+        if items then
+            for i = #items, 1, -1 do
+                if items[i] then
+                    window:Remove(items[i])
+                end
+            end
+        end
+    end)
+end
+
+-- Show the list view
+function _showListView()
+    currentView = "list"
+    currentPreview = nil
+    
+    local window = currentWindowRef
+    if not window then
+        return
+    end
+    
+    local ok = pcall(function()
+        _buildListView(window)
+        _populateFormatsList()
+    end)
+    
+    if not ok then
+        logger.error("Failed to switch to list view")
+    end
+end
+
+-- Show the preview view for a template
+-- @param slug The template slug to preview
+function _showPreviewView(slug)
+    if not slug then
+        logger.error("No slug provided for preview")
+        return
+    end
+    
+    currentView = "preview"
+    selectedFormatSlug = slug
+    
+    local window = currentWindowRef
+    if not window then
+        return
+    end
+    
+    -- Show loading state
+    _updatePreviewLoadingState(true)
+    
+    -- Load preview data
+    _loadTemplatePreviewAsync(slug, function(success, preview, errorMsg)
+        _updatePreviewLoadingState(false)
+        
+        if not success then
+            _showPreviewStatus("Error: " .. (errorMsg or "Failed to load preview"))
+            return
+        end
+        
+        currentPreview = preview
+        
+        local ok = pcall(function()
+            _buildPreviewView(window)
+        end)
+        
+        if not ok then
+            logger.error("Failed to build preview view")
+            _showPreviewStatus("Error displaying preview")
+        end
+    end)
+end
+
+-- Update preview loading state
+-- @param loading Whether loading is in progress
+function _updatePreviewLoadingState(loading)
+    local window = currentWindowRef
+    if not window then
+        return
+    end
+    
+    local ok = pcall(function()
+        for _, child in ipairs(window:GetItems() or {}) do
+            if child and child.id == "lblPreviewLoading" then
+                child.Height = loading and 30 or 0
+                child.Visible = loading
+                child.Text = loading and "Loading preview..." or ""
+            end
+        end
+    end)
+    
+    if not ok then
+        logger.debug("Failed to update preview loading state")
+    end
+end
+
+-- Show preview status message
+-- @param message The message to display (empty to hide)
+function _showPreviewStatus(message)
+    local window = currentWindowRef
+    if not window then
+        return
+    end
+    
+    local ok = pcall(function()
+        for _, child in ipairs(window:GetItems() or {}) do
+            if child and child.id == "lblPreviewStatus" then
+                child.Text = message or ""
+                child.Height = (message and #message > 0) and 30 or 0
+                child.Visible = (message and #message > 0)
+            end
+        end
+    end)
+    
+    if not ok then
+        logger.debug("Failed to update preview status")
+    end
+end
+
+-- Load template preview asynchronously
+-- @param slug The template slug
+-- @param callback Function(success, previewData, errorMsg)
+function _loadTemplatePreviewAsync(slug, callback)
+    if not slug then
+        if callback then
+            callback(false, nil, "No template slug provided")
+        end
+        return
+    end
+    
+    -- Generate unique request ID
+    requestCounter = requestCounter + 1
+    local requestId = string.format("preview_%d_%d_%d", os.time(), requestCounter, math.random(10000))
+    
+    -- Make protocol request
+    local request = {
+        method = "get_template_preview",
+        params = { template_id = slug },
+        id = requestId
+    }
+    
+    -- Send request with callback
+    local sendOk, sendErr = pcall(function()
+        protocol.sendRequest(request, function(response)
+            _handlePreviewResponse(response, callback)
+        end)
+    end)
+    
+    if not sendOk then
+        if callback then
+            callback(false, nil, "Failed to send request: " .. tostring(sendErr))
+        end
+    end
+end
+
+-- Handle the preview response
+-- @param response The response table from protocol
+-- @param callback User callback function
+function _handlePreviewResponse(response, callback)
+    -- Validate response
+    if type(response) ~= "table" then
+        local errMsg = "Invalid response: expected table, got " .. type(response)
+        logger.error(errMsg)
+        if callback then
+            callback(false, nil, errMsg)
+        end
+        return
+    end
+    
+    -- Check for error
+    if response.error then
+        local errorMsg = "Unknown error"
+        if type(response.error) == "table" then
+            errorMsg = tostring(response.error.message or response.error.code or "Unknown error")
+        elseif type(response.error) == "string" then
+            errorMsg = response.error
+        end
+        logger.error("Failed to load preview: " .. errorMsg)
+        if callback then
+            callback(false, nil, errorMsg)
+        end
+        return
+    end
+    
+    -- Validate result
+    if type(response.result) ~= "table" then
+        local errMsg = "Invalid result: expected table, got " .. type(response.result)
+        logger.error(errMsg)
+        if callback then
+            callback(false, nil, errMsg)
+        end
+        return
+    end
+    
+    if not response.result.preview then
+        local errMsg = "Invalid response: missing 'preview' field"
+        logger.error(errMsg)
+        if callback then
+            callback(false, nil, errMsg)
+        end
+        return
+    end
+    
+    -- Success
+    if callback then
+        callback(true, response.result.preview, nil)
+    end
+end
+
+-- Handle "Use This Template" button click
+function _onUseTemplate()
+    if not selectedFormatSlug or not currentPreview then
+        logger.error("No template selected to use")
+        return
+    end
+    
+    logger.info("User selected template: " .. selectedFormatSlug)
+    
+    -- TODO: For Story 3.3 integration
+    -- This will trigger the rough cut generation workflow
+    -- For now, just log and show confirmation
+    
+    local ok = pcall(function()
+        -- Show a simple confirmation (in real implementation, would proceed to next step)
+        _showPreviewStatus("Template selected: " .. currentPreview.name)
+    end)
+    
+    if not ok then
+        logger.error("Failed to handle template selection")
     end
 end
 
@@ -523,37 +1031,17 @@ function _addFormatItem(container, format, index)
     end
 end
 
--- Select a format
+-- Select a format and show preview
 -- @param slug The slug of the selected format
 function _selectFormat(slug)
-    selectedFormatSlug = slug
-    logger.info("Selected format: " .. tostring(slug))
-    
-    -- Update visual selection state
-    local window = currentWindowRef
-    if not window then
+    if not slug then
         return
     end
     
-    pcall(function()
-        for _, child in ipairs(window:GetItems() or {}) do
-            if child and child.id == "grpFormatsList" then
-                for _, item in ipairs(child:GetItems() or {}) do
-                    if item and item.id == "fmt_" .. tostring(slug) then
-                        -- Highlight selected item
-                        item.styleSheet = [[
-                            background-color: #e0e0e0;
-                            border: 1px solid #666;
-                        ]]
-                    else
-                        -- Reset other items
-                        item.styleSheet = ""
-                    end
-                end
-                break
-            end
-        end
-    end)
+    logger.info("Selected format: " .. tostring(slug))
+    
+    -- Navigate to preview view
+    _showPreviewView(slug)
 end
 
 -- Update loading state visibility
@@ -659,8 +1147,11 @@ function formatManagement.close()
             parentWindowRef:Show()
         end
         
-        -- Clear reference
+        -- Clear references
         currentWindowRef = nil
+        currentView = "list"
+        currentPreview = nil
+        selectedFormatSlug = nil
     end)
     
     if not ok then
@@ -684,6 +1175,8 @@ function formatManagement.destroy()
     
     currentWindowRef = nil
     parentWindowRef = nil
+    currentView = "list"
+    currentPreview = nil
     formatsList = {}
     selectedFormatSlug = nil
     isLoading = false

@@ -74,6 +74,40 @@
 - **Reason:** Pre-existing ConfigManager pattern
 - **Context:** `get_config_manager()` returns `ConfigManager()` which eagerly loads config from disk in `__init__`. Import-time side effects from ConfigManager singleton pattern used across all stories. Architectural refactoring required.
 
+## Deferred from: code review of 3-2-preview-template-structure (2026-04-04)
+
+### TOCTOU race condition in get_template_preview
+- **Reason:** Pre-existing pattern in codebase
+- **Context:** File existence is checked before parsing, creating a race condition window. Same pattern exists in scanner.py and other file operations. Architectural cleanup needed.
+
+### YAML parses to non-dict type
+- **Reason:** Warning exists, acceptable behavior
+- **Context:** Frontmatter that parses to list or scalar is silently discarded with a warning. This is graceful degradation, not an error.
+
+### Fractional seconds not handled in time parsing
+- **Reason:** Not in requirements, edge case
+- **Context:** Time formats like "1:30.5" are not supported. Current templates use whole seconds only.
+
+### Single number time format not handled
+- **Reason:** Not in requirements, edge case
+- **Context:** Simple second counts like "15" for 15 seconds are not parsed. All templates use MM:SS format.
+
+### Case-sensitive .MD extension
+- **Reason:** Rare edge case
+- **Context:** Uppercase .MD files not recognized on case-sensitive filesystems. All templates use lowercase .md.
+
+### Hard link path traversal
+- **Reason:** Platform-specific, edge case
+- **Reason:** Hard links to files outside templates directory not blocked. Symlinks are blocked but hard links are not. Low risk scenario.
+
+### Frontmatter with --- inside quoted YAML value
+- **Reason:** Complex edge case
+- **Context:** YAML values containing "---" may truncate parsing. No templates currently use this pattern.
+
+### Unsorted files sliced arbitrarily
+- **Reason:** Already using sorted()
+- **Context:** File ordering is deterministic with sorted(). First 1000 templates by filename is acceptable behavior.
+
 ## Deferred from: code review of 2-7-notion-sync (2026-04-04)
 
 ### Import cycle risk in client.py

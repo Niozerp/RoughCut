@@ -6,7 +6,7 @@ Tests FormatTemplate dataclass and related models.
 from pathlib import Path
 from unittest import TestCase
 
-from roughcut.backend.formats.models import FormatTemplate, FormatTemplateCollection
+from roughcut.backend.formats.models import FormatTemplate, FormatTemplateCollection, TemplateSegment, AssetGroup
 
 
 class TestFormatTemplate(TestCase):
@@ -28,6 +28,35 @@ class TestFormatTemplate(TestCase):
         self.assertEqual(template.description, "A test template")
         self.assertEqual(template.file_path, Path("/test/template.md"))
     
+    def test_format_template_with_structure_data(self):
+        """Test creating FormatTemplate with structure data."""
+        # Arrange
+        segments = [
+            TemplateSegment("Hook", "0:00", "0:15", "15 seconds", "Grab attention"),
+            TemplateSegment("Outro", "3:15", "3:45", "30 seconds", "Call to action")
+        ]
+        assets = [
+            AssetGroup("Music", "intro_music", "Upbeat intro", ["upbeat", "corporate"])
+        ]
+        
+        # Act
+        template = FormatTemplate(
+            slug="structured",
+            name="Structured Template",
+            description="Has structure data",
+            file_path=Path("/test.md"),
+            structure="Three act format",
+            segments=segments,
+            asset_groups=assets,
+            raw_markdown="# Full content"
+        )
+        
+        # Assert
+        self.assertEqual(template.structure, "Three act format")
+        self.assertEqual(len(template.segments), 2)
+        self.assertEqual(len(template.asset_groups), 1)
+        self.assertEqual(template.raw_markdown, "# Full content")
+    
     def test_format_template_to_dict(self):
         """Test converting FormatTemplate to dictionary."""
         # Arrange
@@ -46,6 +75,69 @@ class TestFormatTemplate(TestCase):
         self.assertEqual(result["name"], "YouTube Interview")
         self.assertEqual(result["description"], "Corporate interview format")
         self.assertNotIn("file_path", result)  # file_path should not be in dict output
+    
+    def test_format_template_to_preview_dict(self):
+        """Test converting FormatTemplate to preview dictionary."""
+        # Arrange
+        segments = [
+            TemplateSegment("Hook", "0:00", "0:15", "15s", "Grab attention")
+        ]
+        assets = [
+            AssetGroup("Music", "intro", "Intro music", ["upbeat"])
+        ]
+        template = FormatTemplate(
+            slug="preview-test",
+            name="Preview Test",
+            description="Test preview",
+            file_path=Path("/test.md"),
+            structure="Test structure",
+            segments=segments,
+            asset_groups=assets
+        )
+        
+        # Act
+        result = template.to_preview_dict()
+        
+        # Assert
+        self.assertEqual(result["slug"], "preview-test")
+        self.assertEqual(result["name"], "Preview Test")
+        self.assertEqual(result["structure"], "Test structure")
+        self.assertEqual(len(result["segments"]), 1)
+        self.assertEqual(len(result["asset_groups"]), 1)
+        self.assertIn("formatted_display", result)
+    
+    def test_format_template_formatted_display(self):
+        """Test formatted display text generation."""
+        # Arrange
+        segments = [
+            TemplateSegment("Hook", "0:00", "0:15", "15 seconds", "Grab attention"),
+            TemplateSegment("Main", "0:15", "3:15", "3 minutes", "Core content")
+        ]
+        assets = [
+            AssetGroup("Music", "intro_music", "Upbeat intro", ["upbeat"]),
+            AssetGroup("Music", "outro_music", "Outro sting", []),
+            AssetGroup("SFX", "whoosh", "Transition", ["swish"])
+        ]
+        template = FormatTemplate(
+            slug="display-test",
+            name="Display Test",
+            description="Test",
+            file_path=Path("/test.md"),
+            segments=segments,
+            asset_groups=assets
+        )
+        
+        # Act
+        display = template._format_display_text()
+        
+        # Assert
+        self.assertIn("=== TIMING ===", display)
+        self.assertIn("Hook: 0:00-0:15 (15 seconds)", display)
+        self.assertIn("Main: 0:15-3:15 (3 minutes)", display)
+        self.assertIn("=== ASSETS ===", display)
+        self.assertIn("Music:", display)
+        self.assertIn("SFX:", display)
+        self.assertIn("intro_music:", display)
     
     def test_format_template_validation_valid(self):
         """Test validation with valid template."""
@@ -273,3 +365,97 @@ class TestFormatTemplateCollection(TestCase):
         
         # Assert
         self.assertEqual(slugs, ["test"])
+
+
+class TestTemplateSegment(TestCase):
+    """Test cases for TemplateSegment dataclass."""
+    
+    def test_template_segment_creation(self):
+        """Test creating TemplateSegment."""
+        # Arrange & Act
+        segment = TemplateSegment(
+            name="Hook",
+            start_time="0:00",
+            end_time="0:15",
+            duration="15 seconds",
+            purpose="Grab attention"
+        )
+        
+        # Assert
+        self.assertEqual(segment.name, "Hook")
+        self.assertEqual(segment.start_time, "0:00")
+        self.assertEqual(segment.end_time, "0:15")
+        self.assertEqual(segment.duration, "15 seconds")
+        self.assertEqual(segment.purpose, "Grab attention")
+    
+    def test_template_segment_to_dict(self):
+        """Test converting TemplateSegment to dict."""
+        # Arrange
+        segment = TemplateSegment(
+            name="Narrative",
+            start_time="0:15",
+            end_time="3:15",
+            duration="3 minutes",
+            purpose="Main content"
+        )
+        
+        # Act
+        result = segment.to_dict()
+        
+        # Assert
+        self.assertEqual(result["name"], "Narrative")
+        self.assertEqual(result["start_time"], "0:15")
+        self.assertEqual(result["end_time"], "3:15")
+        self.assertEqual(result["duration"], "3 minutes")
+        self.assertEqual(result["purpose"], "Main content")
+
+
+class TestAssetGroup(TestCase):
+    """Test cases for AssetGroup dataclass."""
+    
+    def test_asset_group_creation(self):
+        """Test creating AssetGroup."""
+        # Arrange & Act
+        asset = AssetGroup(
+            category="Music",
+            name="intro_music",
+            description="Upbeat corporate intro",
+            search_tags=["upbeat", "corporate"]
+        )
+        
+        # Assert
+        self.assertEqual(asset.category, "Music")
+        self.assertEqual(asset.name, "intro_music")
+        self.assertEqual(asset.description, "Upbeat corporate intro")
+        self.assertEqual(asset.search_tags, ["upbeat", "corporate"])
+    
+    def test_asset_group_default_search_tags(self):
+        """Test AssetGroup with default empty search_tags."""
+        # Arrange & Act
+        asset = AssetGroup(
+            category="SFX",
+            name="whoosh",
+            description="Transition sound"
+        )
+        
+        # Assert
+        self.assertEqual(asset.search_tags, [])
+    
+    def test_asset_group_to_dict(self):
+        """Test converting AssetGroup to dict."""
+        # Arrange
+        asset = AssetGroup(
+            category="VFX",
+            name="lower_third",
+            description="Name graphic",
+            search_tags=["clean", "modern"]
+        )
+        
+        # Act
+        result = asset.to_dict()
+        
+        # Assert
+        self.assertEqual(result["category"], "VFX")
+        self.assertEqual(result["name"], "lower_third")
+        self.assertEqual(result["description"], "Name graphic")
+        self.assertEqual(result["search_tags"], ["clean", "modern"])

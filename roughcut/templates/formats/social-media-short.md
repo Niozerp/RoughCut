@@ -45,6 +45,26 @@ This format prioritizes immediate engagement and maintains attention through qui
 - **Content**: Logo, handle display, or subscribe animation
 - **Music**: Fade or signature sound
 
+## Asset Groups
+
+### Music
+- **hook_hit**: High-energy intro sound (catchy, trending)
+- **driving_beat**: Energetic background track (upbeat, modern)
+- **outro_punch**: Satisfying conclusion sound (punchy, memorable)
+- **signature_sound**: Brand audio identifier (short, recognizable)
+
+### SFX
+- **scroll_stop**: Impact sound for hook (boom, whoosh)
+- **transition_swipe**: Quick cut transition (swish, zip)
+- **pop_reveal**: Element appearance sound (pop, ding)
+- **follow_prompt**: Call-to-action sound (chime, bell)
+
+### VFX
+- **hook_text**: Bold opening text overlay (large, animated)
+- **setup_caption**: Context text elements (clean, readable)
+- **cut_transition**: Fast transition effect (dynamic, energetic)
+- **outro_card**: Follow/subscribe animation (branded, animated)
+
 ## Platform-Specific Notes
 
 ### Vertical (9:16)
