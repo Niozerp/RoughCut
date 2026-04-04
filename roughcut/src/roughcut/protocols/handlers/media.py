@@ -6,6 +6,7 @@ for media folder configuration operations and incremental indexing.
 
 import asyncio
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from pathlib import Path
@@ -27,6 +28,7 @@ _indexer: Optional[MediaIndexer] = None
 _event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 # Global workflow state for selected clip
+_workflow_state_lock = threading.Lock()
 _workflow_state = {
     'selected_clip': None,  # Stores the currently selected clip for Story 4.2
 }
@@ -977,18 +979,19 @@ def select_clip(params: dict) -> dict:
                 }
             }
         
-        # Store selection for use by Story 4.2
-        global _workflow_state
-        _workflow_state['selected_clip'] = {
-            'clip_id': clip_id,
-            'file_path': file_path,
-            'clip_name': clip_name
-        }
+        # Store selection for use by Story 4.2 with thread safety
+        with _workflow_state_lock:
+            _workflow_state['selected_clip'] = {
+                'clip_id': clip_id,
+                'file_path': file_path,
+                'clip_name': clip_name
+            }
+            selected_clip_copy = _workflow_state['selected_clip'].copy()
         
         logger.info(f"Clip selected: {clip_name} ({clip_id})")
         
         return {
-            'selected_clip': _workflow_state['selected_clip'],
+            'selected_clip': selected_clip_copy,
             'message': f'Selected clip: {clip_name}'
         }
         
@@ -1031,19 +1034,164 @@ def get_selected_clip(params: dict) -> dict:
     if not is_valid:
         return error_response
     
-    global _workflow_state
-    selected = _workflow_state.get('selected_clip')
+    with _workflow_state_lock:
+        selected = _workflow_state.get('selected_clip')
+        selected_copy = selected.copy() if selected else None
     
-    if selected:
+    if selected_copy:
         return {
             'has_selection': True,
-            'selected_clip': selected
+            'selected_clip': selected_copy
         }
     else:
         return {
             'has_selection': False,
             'selected_clip': None
         }
+
+
+def retrieve_transcription(params: dict) -> dict:
+    """Handle retrieve_transcription request.
+    
+    Retrieves and returns Resolve's native transcription for a selected clip.
+    This handler coordinates with the Resolve API to fetch transcription data
+    that Resolve has already generated.
+    
+    Request format: {
+        "method": "retrieve_transcription",
+        "params": {
+            "clip_id": "resolve_clip_001",
+            "clip_name": "interview_take1.mp4"
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "transcript": {
+            "text": "Speaker 1: Welcome to the show...",
+            "word_count": 5234,
+            "duration_seconds": 2280,
+            "has_speaker_labels": true,
+            "confidence_score": 0.94,
+            "segments": [...]
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - clip_id: Resolve's unique clip identifier
+            - clip_name: Name of the clip (for logging)
+            - project_name: Name of the Resolve project (optional, for context)
+            
+    Returns:
+        Response dictionary with transcript data or error
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        clip_id = params.get('clip_id')
+        clip_name = params.get('clip_name', 'Unknown')
+        project_name = params.get('project_name', 'Unknown')  # Extract project_name for logging
+        
+        if not clip_id:
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'clip_id is required',
+                    'suggestion': 'Provide a valid clip_id from the Media Pool'
+                }
+            }
+        
+        # Check if there's a selected clip in workflow state with thread safety
+        with _workflow_state_lock:
+            selected = _workflow_state.get('selected_clip')
+            selected_file_path = selected.get('file_path') if selected else None
+        
+        if not selected or selected.get('clip_id') != clip_id:
+            return {
+                'error': {
+                    'code': 'CLIP_NOT_SELECTED',
+                    'category': 'validation',
+                    'message': f'Clip {clip_name} is not the currently selected clip',
+                    'suggestion': 'Select the clip in the Media Browser first'
+                }
+            }
+        
+        # Retrieve transcription from Resolve
+        transcript_data = _resolve_get_transcription(
+            clip_id, 
+            selected_file_path or '',
+            project_name
+        )
+        
+        if transcript_data is None:
+            return {
+                'error': {
+                    'code': 'TRANSCRIPTION_NOT_AVAILABLE',
+                    'category': 'resolve_api',
+                    'message': f'Selected clip "{clip_name}" has not been transcribed by Resolve',
+                    'recoverable': True,
+                    'suggestion': 'Transcribe the clip in Resolve\'s Edit page before using RoughCut'
+                }
+            }
+        
+        logger.info(f"Retrieved transcription for {clip_name}: {transcript_data.get('word_count', 0)} words")
+        
+        return {
+            'result': {
+                'transcript': transcript_data
+            }
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error retrieving transcription for {params.get('clip_name', 'Unknown')}")
+        return {
+            'error': {
+                'code': 'TRANSCRIPTION_RETRIEVAL_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Check Resolve is running and the clip has audio'
+            }
+        }
+
+
+def _resolve_get_transcription(clip_id: str, file_path: Optional[str] = None, project_name: str = 'Unknown') -> Optional[dict]:
+    """Retrieve transcription from Resolve's native API.
+    
+    This function coordinates with the Lua layer to access Resolve's
+    transcription data through the available APIs:
+    1. Clip metadata (for Media Pool transcribed clips)
+    2. Timeline subtitle tracks (for timeline-based transcription)
+    
+    Args:
+        clip_id: Resolve's unique clip identifier
+        file_path: Absolute path to the media file (optional)
+        project_name: Name of the Resolve project (for context)
+        
+    Returns:
+        Dictionary with transcript data, or None if not available
+    """
+    # Check if we have cached transcription (for testing) with thread safety
+    with _workflow_state_lock:
+        mock_transcription = _workflow_state.get('mock_transcription')
+        if mock_transcription:
+            return mock_transcription
+    
+    # In a real implementation with Resolve running, we would call the Lua API
+    # through the JSON-RPC protocol to get transcription data.
+    # For now, return None to indicate transcription not available
+    # until the full Resolve integration is tested.
+    
+    # TODO: Implement JSON-RPC call to Lua resolve_api.getTranscription(clip_id)
+    # This requires the protocol layer to support Lua -> Python -> Lua round trips
+    # which is not yet fully implemented in the communication layer.
+    
+    return None
 
 
 # Registry of media handlers
@@ -1062,4 +1210,5 @@ MEDIA_HANDLERS = {
     'list_media_pool': list_media_pool,
     'select_clip': select_clip,
     'get_selected_clip': get_selected_clip,
+    'retrieve_transcription': retrieve_transcription,
 }

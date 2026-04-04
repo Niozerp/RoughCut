@@ -305,3 +305,161 @@ class ScanResult:
             'deleted_files': self.deleted_files,
             'total_scanned': self.total_scanned
         }
+
+
+@dataclass
+class TranscriptSegment:
+    """Represents a single segment of a transcript with timecodes.
+    
+    Attributes:
+        start_time: Start time in seconds
+        end_time: End time in seconds
+        text: Text content for this segment
+        speaker: Optional speaker label (e.g., "Speaker 1", "John")
+    """
+    start_time: float
+    end_time: float
+    text: str
+    speaker: Optional[str] = None
+    
+    def __post_init__(self):
+        """Validate segment timing."""
+        if self.start_time < 0:
+            raise ValueError(f"start_time must be >= 0, got {self.start_time}")
+        if self.end_time < 0:
+            raise ValueError(f"end_time must be >= 0, got {self.end_time}")
+        if self.start_time >= self.end_time:
+            raise ValueError(f"start_time ({self.start_time}) must be < end_time ({self.end_time})")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'text': self.text,
+            'speaker': self.speaker
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TranscriptSegment':
+        """Create TranscriptSegment from dictionary."""
+        try:
+            start_time = float(data.get('start_time', 0))
+        except (ValueError, TypeError):
+            start_time = 0.0
+        
+        try:
+            end_time = float(data.get('end_time', 0))
+        except (ValueError, TypeError):
+            end_time = 0.0
+        
+        return cls(
+            start_time=start_time,
+            end_time=end_time,
+            text=data.get('text', ''),
+            speaker=data.get('speaker')
+        )
+
+
+@dataclass
+class Transcript:
+    """Represents a complete transcript with metadata.
+    
+    Attributes:
+        text: Full transcript text
+        word_count: Total word count
+        duration_seconds: Clip duration in seconds
+        has_speaker_labels: Whether speaker separation exists
+        confidence_score: Optional quality metric (0.0-1.0)
+        segments: Optional list of time-coded segments
+    """
+    text: str
+    word_count: int
+    duration_seconds: float
+    has_speaker_labels: bool = False
+    confidence_score: Optional[float] = None
+    segments: Optional[List[TranscriptSegment]] = None
+    
+    def __post_init__(self):
+        """Validate transcript data on creation."""
+        if self.word_count < 0:
+            raise ValueError(f"word_count must be >= 0, got {self.word_count}")
+        
+        if self.duration_seconds <= 0:
+            raise ValueError(f"duration_seconds must be > 0, got {self.duration_seconds}")
+        
+        if self.confidence_score is not None:
+            import math
+            if math.isnan(self.confidence_score):
+                raise ValueError("confidence_score cannot be NaN")
+            if not 0.0 <= self.confidence_score <= 1.0:
+                raise ValueError(f"confidence_score must be between 0.0 and 1.0, got {self.confidence_score}")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON-RPC responses."""
+        result = {
+            'text': self.text,
+            'word_count': self.word_count,
+            'duration_seconds': self.duration_seconds,
+            'has_speaker_labels': self.has_speaker_labels,
+            'confidence_score': self.confidence_score,
+            'segments': None
+        }
+        
+        if self.segments is not None:
+            result['segments'] = [s.to_dict() for s in self.segments]
+        
+        return result
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Transcript':
+        """Create Transcript from dictionary.
+        
+        Args:
+            data: Dictionary containing transcript data
+            
+        Returns:
+            Transcript instance
+        """
+        segments = None
+        raw_segments = data.get('segments')
+        if raw_segments is not None and isinstance(raw_segments, list):
+            segments = [TranscriptSegment.from_dict(s) for s in raw_segments]
+        
+        # Safely convert numeric values
+        try:
+            word_count = int(data.get('word_count', 0))
+        except (ValueError, TypeError):
+            word_count = 0
+        
+        try:
+            duration_seconds = float(data.get('duration_seconds', 0))
+        except (ValueError, TypeError):
+            duration_seconds = 0.0
+        
+        return cls(
+            text=data.get('text', ''),
+            word_count=word_count,
+            duration_seconds=duration_seconds,
+            has_speaker_labels=bool(data.get('has_speaker_labels', False)),
+            confidence_score=data.get('confidence_score'),
+            segments=segments
+        )
+    
+    def get_formatted_text(self) -> str:
+        """Get transcript text formatted with speaker labels.
+        
+        Returns:
+            Formatted transcript text with speaker labels if available
+        """
+        if not self.segments:
+            return self.text
+        
+        lines = []
+        for segment in self.segments:
+            if segment.speaker:
+                lines.append(f"{segment.speaker}: {segment.text}")
+            else:
+                lines.append(segment.text)
+        
+        return '\n'.join(lines)

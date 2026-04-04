@@ -68,6 +68,23 @@ function ResolveAPI.getCurrentProject()
 end
 
 --[[
+    Get the name of the current project.
+    
+    Returns:
+        projectName: String name of the current project, or nil if no project is open
+        error: Error message if project is not available
+--]]
+function ResolveAPI.getCurrentProjectName()
+    local project, err = ResolveAPI.getCurrentProject()
+    if not project then
+        return nil, err
+    end
+    
+    local projectName = project:GetName()
+    return projectName, nil
+end
+
+--[[
     Get the Media Pool from the current project.
     
     Returns:
@@ -270,6 +287,280 @@ function ResolveAPI.getErrorMessage(errorCode)
     }
     
     return messages[errorCode] or "Unknown error: " .. tostring(errorCode)
+end
+
+--[[
+    Get transcription data for a specific clip.
+    
+    Resolve 18+ stores transcription data as:
+    1. Clip metadata (for clips transcribed in the Media Pool)
+    2. Subtitle track data on timelines (for clips in timelines)
+    
+    Args:
+        clipId: The unique clip ID from Resolve
+        
+    Returns:
+        transcriptionData: Table containing:
+            {
+                text = "full transcript text",
+                word_count = 5234,
+                duration_seconds = 2280.5,
+                has_speaker_labels = true,
+                segments = {
+                    {start_time=0.0, end_time=3.5, text="Hello", speaker="Speaker 1"},
+                    ...
+                }
+            }
+        error: Error message if transcription cannot be retrieved
+--]]
+function ResolveAPI.getTranscription(clipId)
+    if not clipId or clipId == "" then
+        return nil, "CLIP_ID_REQUIRED"
+    end
+    
+    local mediaPool, err = ResolveAPI.getMediaPool()
+    if not mediaPool then
+        return nil, err
+    end
+    
+    -- Try to find the clip by ID in the Media Pool
+    local clip = ResolveAPI._findClipById(mediaPool:GetRootFolder(), clipId)
+    if not clip then
+        return nil, "CLIP_NOT_FOUND"
+    end
+    
+    -- Method 1: Check clip metadata for transcription
+    local metadata = clip:GetMetadata()
+    if metadata and metadata["Transcription"] then
+        -- Transcription stored in metadata
+        return ResolveAPI._parseTranscriptionFromMetadata(metadata["Transcription"], clip:GetDuration())
+    end
+    
+    -- Method 2: Check for transcription via timeline/subtitle tracks
+    -- This requires the clip to be in a timeline with subtitle data
+    local transcription = ResolveAPI._getTranscriptionFromTimeline(clip)
+    if transcription then
+        return transcription, nil
+    end
+    
+    -- No transcription available
+    return nil, "TRANSCRIPTION_NOT_AVAILABLE"
+end
+
+--[[
+    Find a clip by ID recursively in the Media Pool.
+    
+    Args:
+        folder: MediaPoolFolder to search
+        clipId: Clip ID to find
+        
+    Returns:
+        clip: The MediaPoolItem if found, nil otherwise
+--]]
+function ResolveAPI._findClipById(folder, clipId)
+    if not folder or not clipId then
+        return nil
+    end
+    
+    -- Check clips in current folder
+    local clips = folder:GetClipList()
+    if clips then
+        for _, clip in ipairs(clips) do
+            if clip:GetUniqueID() == clipId then
+                return clip
+            end
+        end
+    end
+    
+    -- Recurse into subfolders
+    local subfolders = folder:GetSubFolderList()
+    if subfolders then
+        for _, subfolder in ipairs(subfolders) do
+            local found = ResolveAPI._findClipById(subfolder, clipId)
+            if found then
+                return found
+            end
+        end
+    end
+    
+    return nil
+end
+
+--[[
+    Parse transcription data from clip metadata string.
+    
+    Args:
+        metadataStr: JSON or formatted string containing transcription
+        duration: Total clip duration in seconds
+        
+    Returns:
+        transcriptionData: Parsed transcription table
+--]]
+function ResolveAPI._parseTranscriptionFromMetadata(metadataStr, duration)
+    -- Try to parse as JSON first
+    local json = require("utils.json")
+    local ok, data = pcall(json.decode, metadataStr)
+    
+    if ok and data then
+        -- JSON format
+        return {
+            text = data.text or "",
+            word_count = data.word_count or 0,
+            duration_seconds = duration or 0,
+            has_speaker_labels = data.has_speaker_labels or false,
+            segments = data.segments or nil
+        }
+    end
+    
+    -- Plain text format - count words and create single segment
+    local text = tostring(metadataStr)
+    local wordCount = 0
+    for _ in text:gmatch("%S+") do
+        wordCount = wordCount + 1
+    end
+    
+    return {
+        text = text,
+        word_count = wordCount,
+        duration_seconds = duration or 0,
+        has_speaker_labels = false,
+        segments = nil
+    }
+end
+
+--[[
+    Get transcription from timeline subtitle tracks.
+    
+    This searches all timelines for instances of the clip and
+    extracts subtitle track data if available.
+    
+    Args:
+        clip: MediaPoolItem to find transcription for
+        
+    Returns:
+        transcriptionData: Table with transcription data, or nil if not found
+--]]
+function ResolveAPI._getTranscriptionFromTimeline(clip)
+    local project, err = ResolveAPI.getCurrentProject()
+    if not project then
+        return nil
+    end
+    
+    local timelineCount = project:GetTimelineCount()
+    if timelineCount == 0 then
+        return nil
+    end
+    
+    -- Search through all timelines
+    for i = 1, timelineCount do
+        local timeline = project:GetTimelineByIndex(i)
+        if timeline then
+            -- Check if this timeline contains the clip
+            local transcription = ResolveAPI._extractSubtitlesFromTimeline(timeline, clip)
+            if transcription then
+                return transcription
+            end
+        end
+    end
+    
+    return nil
+end
+
+--[[
+    Extract subtitle data from a timeline for a specific clip.
+    
+    Args:
+        timeline: Timeline object
+        targetClip: MediaPoolItem to find subtitles for
+        
+    Returns:
+        transcriptionData: Table with subtitle data, or nil
+--]]
+function ResolveAPI._extractSubtitlesFromTimeline(timeline, targetClip)
+    if not timeline or not targetClip then
+        return nil
+    end
+    
+    local trackCount = timeline:GetTrackCount("subtitle")
+    if trackCount == 0 then
+        return nil
+    end
+    
+    local targetClipName = targetClip:GetName()
+    local allSegments = {}
+    local fullText = {}
+    local hasSpeakers = false
+    
+    -- Iterate through subtitle tracks
+    for trackIndex = 1, trackCount do
+        local itemCount = timeline:GetItemCountInTrack("subtitle", trackIndex)
+        
+        for itemIndex = 1, itemCount do
+            local item = timeline:GetItemOnTrack("subtitle", trackIndex, itemIndex)
+            if item then
+                -- Check if this subtitle belongs to our target clip
+                -- by comparing names or checking source clip reference
+                local subtitleText = item:GetName() or ""
+                local startFrame = item:GetStart()
+                local endFrame = item:GetEnd()
+                
+                -- Convert frames to seconds (assuming 24fps as default)
+                local fps = timeline:GetSetting("timelineFrameRate") or 24
+                local startTime = startFrame / fps
+                local endTime = endFrame / fps
+                
+                -- Check for speaker label in text
+                local speaker = nil
+                local text = subtitleText
+                
+                -- Pattern: "Speaker Name: Text" or "Speaker 1: Text"
+                local speakerMatch = subtitleText:match("^([^:]+):%s*(.+)$")
+                if speakerMatch then
+                    speaker = speakerMatch:gsub("^%s*", ""):gsub("%s*$", "")
+                    text = subtitleText:match(":%s*(.+)$")
+                    hasSpeakers = true
+                end
+                
+                table.insert(allSegments, {
+                    start_time = startTime,
+                    end_time = endTime,
+                    text = text,
+                    speaker = speaker
+                })
+                
+                if speaker then
+                    table.insert(fullText, speaker .. ": " .. text)
+                else
+                    table.insert(fullText, text)
+                end
+            end
+        end
+    end
+    
+    if #allSegments == 0 then
+        return nil
+    end
+    
+    -- Calculate word count
+    local fullTextStr = table.concat(fullText, " ")
+    local wordCount = 0
+    for _ in fullTextStr:gmatch("%S+") do
+        wordCount = wordCount + 1
+    end
+    
+    -- Get total duration from last segment
+    local totalDuration = 0
+    if #allSegments > 0 then
+        totalDuration = allSegments[#allSegments].end_time
+    end
+    
+    return {
+        text = fullTextStr,
+        word_count = wordCount,
+        duration_seconds = totalDuration,
+        has_speaker_labels = hasSpeakers,
+        segments = allSegments
+    }
 end
 
 return ResolveAPI
