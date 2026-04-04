@@ -11,9 +11,12 @@ Provides AI-powered tag generation and related utilities.
 
 from .openai_client import OpenAIClient, TagResult
 from .tagger import MediaTagger
+from .tag_storage import TagStorage, TaggedAsset
 
 __all__ = [
     'OpenAIClient',
     'TagResult',
-    'MediaTagger'
+    'MediaTagger',
+    'TagStorage',
+    'TaggedAsset'
 ]

@@ -99,9 +99,13 @@ class OpenAIClient:
             )
             
             tags = self._parse_tags(response)
+            
+            # Calculate confidence based on parsing success
+            confidence = self._calculate_confidence(tags, response)
+            
             return TagResult(
                 tags=tags,
-                confidence=0.9,
+                confidence=confidence,
                 raw_response=response
             )
             
@@ -137,6 +141,8 @@ class OpenAIClient:
             AIRateLimitError: If rate limit persists after retries
             AIError: For other API errors
         """
+        last_exception = None
+        
         for attempt in range(self.max_retries):
             try:
                 response = await self.client.chat.completions.create(
@@ -148,7 +154,28 @@ class OpenAIClient:
                     temperature=0.3,
                     max_tokens=100
                 )
-                return response.choices[0].message.content
+                
+                # Validate response has content
+                if not response.choices or len(response.choices) == 0:
+                    raise AIError(
+                        code="AI_EMPTY_RESPONSE",
+                        category="external_api",
+                        message="API returned empty choices list",
+                        recoverable=True,
+                        suggestion="Retry the request"
+                    )
+                
+                content = response.choices[0].message.content
+                if content is None:
+                    raise AIError(
+                        code="AI_NO_CONTENT",
+                        category="external_api",
+                        message="API returned no content",
+                        recoverable=True,
+                        suggestion="Retry the request"
+                    )
+                
+                return content
                 
             except openai.RateLimitError as e:
                 if attempt < self.max_retries - 1:
@@ -167,7 +194,40 @@ class OpenAIClient:
                     recoverable=True,
                     suggestion="Verify your OpenAI API key in settings"
                 )
+            except openai.APIConnectionError as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise AIError(
+                        code="AI_CONNECTION_ERROR",
+                        category="external_api",
+                        message=f"Connection error: {str(e)}",
+                        recoverable=True,
+                        suggestion="Check network connection and retry"
+                    )
+            except openai.BadRequestError as e:
+                raise AIError(
+                    code="AI_BAD_REQUEST",
+                    category="external_api",
+                    message=f"Invalid request: {str(e)}",
+                    recoverable=False,
+                    suggestion="Check file metadata format"
+                )
+            except openai.InternalServerError as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise AIError(
+                        code="AI_SERVER_ERROR",
+                        category="external_api",
+                        message=f"OpenAI server error: {str(e)}",
+                        recoverable=True,
+                        suggestion="Retry after a short delay"
+                    )
             except openai.APIError as e:
+                last_exception = e
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                 else:
@@ -178,6 +238,15 @@ class OpenAIClient:
                         recoverable=True,
                         suggestion="Retry or check OpenAI status page"
                     )
+        
+        # Should never reach here if max_retries >= 1, but for type safety
+        raise AIError(
+            code="AI_RETRY_EXHAUSTED",
+            category="external_api",
+            message="All retry attempts exhausted",
+            recoverable=True,
+            suggestion="Retry after a short delay"
+        )
     
     def _build_prompt(self, file_name: str, folder_path: str, category: str) -> str:
         """Build prompt for tag generation.
@@ -212,7 +281,53 @@ For VFX files, consider: effect type, style, use case, visual style
 Output format: Return ONLY a comma-separated list of tags.
 Example: corporate, upbeat, bright, theme, electronic, background"""
     
+    def _calculate_confidence(self, tags: List[str], raw_response: str) -> float:
+        """Calculate confidence score based on parsing quality.
+        
+        Args:
+            tags: Parsed tags
+            raw_response: Raw API response
+            
+        Returns:
+            Confidence score between 0.0 and 1.0
+        """
+        if not raw_response or not raw_response.strip():
+            return 0.0
+        
+        if not tags:
+            # Response received but no tags could be parsed
+            return 0.3
+        
+        # Check if response was properly comma-separated
+        expected_format = ',' in raw_response
+        
+        if expected_format and len(tags) >= 3:
+            # Good parsing with multiple tags
+            return 0.95
+        elif expected_format and len(tags) >= 1:
+            # Decent parsing but fewer tags
+            return 0.8
+        else:
+            # Response received but format was unexpected
+            return 0.6
+    
     def _parse_tags(self, response: str) -> List[str]:
+        """Parse comma-separated tags from AI response.
+        
+        Performs basic parsing only. Full cleaning/normalization 
+        should be done by MediaTagger._clean_tags().
+        
+        Args:
+            response: Raw API response text
+            
+        Returns:
+            List of tag strings (may contain duplicates, need cleaning)
+        """
+        if not response:
+            return []
+        
+        # Basic split by comma - let tagger do the thorough cleaning
+        return [tag.strip() for tag in response.split(',') if tag.strip()]
         """Parse comma-separated tags from AI response.
         
         Args:

@@ -230,3 +230,48 @@ class SyncResult:
             'error_message': self.error_message,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None
         }
+
+
+class SyncStatus(Enum):
+    """Status of a sync operation.
+    
+    Values:
+        PENDING: Sync is queued but not started
+        IN_PROGRESS: Sync is currently running
+        COMPLETED: Sync completed successfully
+        FAILED: Sync failed with errors
+        PARTIAL: Some items synced, some failed
+    """
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PARTIAL = "partial"
+
+
+@dataclass
+class MediaAssetNotionMapping:
+    """Maps a SpacetimeDB media asset to its Notion page.
+    
+    Attributes:
+        asset_id: SpacetimeDB asset ID
+        notion_page_id: Notion page ID
+        notion_database_id: Notion database ID
+        last_synced: Timestamp of last sync
+        sync_status: Last sync status
+    """
+    asset_id: str
+    notion_page_id: str
+    notion_database_id: str
+    last_synced: datetime = field(default_factory=datetime.now)
+    sync_status: SyncStatus = SyncStatus.PENDING
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'asset_id': self.asset_id,
+            'notion_page_id': self.notion_page_id,
+            'notion_database_id': self.notion_database_id,
+            'last_synced': self.last_synced.isoformat(),
+            'sync_status': self.sync_status.value
+        }

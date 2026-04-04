@@ -6,6 +6,7 @@ to validate Notion API connection and retrieve status.
 
 from ...backend.notion.client import NotionClient
 from ...backend.notion.models import ConnectionStatus
+from ...backend.notion.sync import get_sync_orchestrator
 
 
 def validate_notion_connection(params: dict) -> dict:
@@ -176,9 +177,150 @@ def test_notion_sync(params: dict) -> dict:
         }
 
 
+def get_notion_sync_status(params: dict) -> dict:
+    """Handle get_notion_sync_status request.
+    
+    Returns current sync status including statistics and queue information.
+    
+    Request format: {"method": "get_notion_sync_status", "params": {}, "id": "..."}
+    
+    Response format: {
+        "enabled": bool,
+        "configured": bool,
+        "queue_size": int,
+        "statistics": {
+            "total_synced": int,
+            "total_failed": int,
+            "last_sync_time": str or None,
+            "last_error_time": str or None,
+            "error_count_24h": int
+        }
+    }
+    
+    Args:
+        params: Request parameters (unused)
+        
+    Returns:
+        Response dictionary with sync status
+    """
+    try:
+        orchestrator = get_sync_orchestrator()
+        status = orchestrator.get_sync_status()
+        
+        return {
+            'enabled': status['enabled'],
+            'configured': status['configured'],
+            'queue_size': status['queue_size'],
+            'statistics': status['statistics']
+        }
+    except Exception as e:
+        return {
+            'enabled': False,
+            'configured': False,
+            'queue_size': 0,
+            'statistics': {},
+            'error': {
+                'code': 'STATUS_CHECK_ERROR',
+                'message': str(e)
+            }
+        }
+
+
+def trigger_manual_notion_sync(params: dict) -> dict:
+    """Handle trigger_manual_notion_sync request.
+    
+    Forces an immediate sync of all pending items.
+    
+    Request format: {"method": "trigger_manual_notion_sync", "params": {}, "id": "..."}
+    
+    Response format: {
+        "success": bool,
+        "message": str,
+        "triggered": bool
+    }
+    
+    Args:
+        params: Request parameters (unused but validated for safety)
+        
+    Returns:
+        Response dictionary with trigger result
+    """
+    # Defensive validation of params
+    if not isinstance(params, dict):
+        params = {}
+    
+    try:
+        orchestrator = get_sync_orchestrator()
+        
+        if not orchestrator.is_sync_enabled():
+            return {
+                'success': False,
+                'triggered': False,
+                'message': 'Notion sync is not enabled or configured'
+            }
+        
+        # Trigger immediate sync
+        orchestrator._trigger_sync()
+        
+        return {
+            'success': True,
+            'triggered': True,
+            'message': 'Manual sync triggered'
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'triggered': False,
+            'message': f'Failed to trigger sync: {str(e)}'
+        }
+
+
+def get_notion_database_url(params: dict) -> dict:
+    """Handle get_notion_database_url request.
+    
+    Returns the Notion database URL for UI linking.
+    
+    Request format: {"method": "get_notion_database_url", "params": {}, "id": "..."}
+    
+    Response format: {
+        "has_database": bool,
+        "database_url": str or None,
+        "page_url": str or None
+    }
+    
+    Args:
+        params: Request parameters (unused)
+        
+    Returns:
+        Response dictionary with database URL information
+    """
+    try:
+        orchestrator = get_sync_orchestrator()
+        client = NotionClient()
+        
+        database_url = orchestrator.get_database_url()
+        page_url = client.get_page_url()
+        
+        return {
+            'has_database': database_url is not None,
+            'database_url': database_url,
+            'page_url': page_url
+        }
+    except Exception as e:
+        return {
+            'has_database': False,
+            'database_url': None,
+            'page_url': None,
+            'error': str(e)
+        }
+
+
 # Registry of Notion handlers
 NOTION_HANDLERS = {
     'validate_notion_connection': validate_notion_connection,
     'get_connection_status': get_connection_status,
     'test_notion_sync': test_notion_sync,
+    'get_notion_sync_status': get_notion_sync_status,
+    'trigger_manual_notion_sync': trigger_manual_notion_sync,
+    'get_notion_database_url': get_notion_database_url,
 }

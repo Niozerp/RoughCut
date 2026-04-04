@@ -9,6 +9,8 @@ from typing import Any, Callable, Dict, Optional
 
 from .handlers.config import CONFIG_HANDLERS
 from .handlers.notion import NOTION_HANDLERS
+from .handlers.media import MEDIA_HANDLERS
+from .handlers.formats import FORMAT_HANDLERS
 
 
 class ProtocolDispatcher:
@@ -30,6 +32,8 @@ class ProtocolDispatcher:
         # Register built-in handlers
         self.register_handlers(CONFIG_HANDLERS)
         self.register_handlers(NOTION_HANDLERS)
+        self.register_handlers(MEDIA_HANDLERS)
+        self.register_handlers(FORMAT_HANDLERS)
     
     def register_handler(self, method: str, handler: Callable) -> None:
         """Register a single handler for a method.

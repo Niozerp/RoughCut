@@ -1,6 +1,6 @@
 # Story 2.3: AI-Powered Tag Generation
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -657,3 +657,58 @@ class MockOpenAIClient:
 - `pyproject.toml` - Added `openai` dependency
 - `src/roughcut/config/models.py` - Added AIConfig dataclass, updated AppConfig
 - `src/roughcut/config/settings.py` - Added AI configuration management methods
+
+### Review Findings
+
+**Date:** 2026-04-03
+
+#### Decision-Needed (RESOLVED → PATCHED)
+
+- [x] [Review][Decision→Patch] **Hardcoded confidence value** — FIXED: Calculate confidence based on response parsing success (1.0 if parsing succeeds, lower if issues) [openai_client.py:163, _calculate_confidence method added]
+
+- [x] [Review][Decision→Patch] **Missing SpacetimeDB Integration** — FIXED: Implemented storage integration with TagStorage class for tag persistence [tag_storage.py created]
+
+- [x] [Review][Decision→Patch] **Missing Searchable Tag Implementation** — FIXED: Implemented tag search with TagStorage.search_by_tags() method supporting relevance ranking and category filtering
+
+- [x] [Review][Decision→Patch] **Incomplete Recovery Options (NFR #12)** — FIXED: Added recovery_mode configuration option ("automatic" or "manual") to AIConfig [models.py]
+
+#### Patch (COMPLETED - all 14 items fixed)
+
+- [x] [Review][Patch] **Non-portable `fcntl` import** — FIXED: Made fcntl import conditional for Windows compatibility [settings.py:1-16]
+
+- [x] [Review][Patch] **Empty response handling** — FIXED: Added guards for empty response.choices and None message.content [openai_client.py:140-150]
+
+- [x] [Review][Patch] **Unhandled OpenAI exception types** — FIXED: Added handlers for APIConnectionError, BadRequestError, InternalServerError [openai_client.py:167-202]
+
+- [x] [Review][Patch] **Category validation missing** — FIXED: Added VALID_CATEGORIES set and validation in tag_media() [tagger.py:17-19, 55-60]
+
+- [x] [Review][Patch] **No rate limiting on batch requests** — FIXED: Added asyncio.Semaphore with max_concurrent parameter (default: 5) [tagger.py:134-168]
+
+- [x] [Review][Patch] **Duplicated tag cleaning logic** — FIXED: Simplified _parse_tags() to basic split only, full cleaning in _clean_tags() [openai_client.py:245-257]
+
+- [x] [Review][Patch] **Silent encryption failures** — FIXED: Added logger.warning() when encryption fails [models.py:115-119, 288-292]
+
+- [x] [Review][Patch] **No backup verification** — FIXED: Added user prompt when backup creation fails [settings.py:85-104]
+
+- [x] [Review][Patch] **Missing type annotation** — FIXED: Added Callable type hint for progress_callback [tagger.py:134]
+
+- [x] [Review][Patch] **Recursion risk in tag cleaning** — FIXED: Removed recursive processing, added None type checking [tagger.py:98-143]
+
+- [x] [Review][Patch] **Type safety issues** — FIXED: Added isinstance() checks for api_token, api_key, tag parameters [models.py:44-47, 230-231, tagger.py:107-116]
+
+- [x] [Review][Patch] **Empty config file handling** — FIXED: Check for empty content before JSON parsing [settings.py:62-66]
+
+- [x] [Review][Patch] **Non-serializable config data** — FIXED: Added default=str parameter to json.dump() [settings.py:117]
+
+- [x] [Review][Patch] **None validation_result access** — FIXED: Added explicit None check at function start [settings.py:294-297]
+
+#### File List Update
+
+**New Files Added:**
+- `src/roughcut/backend/ai/tag_storage.py` - TagStorage and TaggedAsset classes for persistence
+- `tests/unit/backend/ai/test_tag_storage.py` - 15 unit tests for storage/search functionality
+- `tests/unit/config/test_recovery_mode.py` - 8 unit tests for recovery configuration
+
+#### Deferred (pre-existing issues)
+
+- [x] [Review][Defer] **Missing `__init__.py` files in test directories** — Pre-existing structure issue, not caused by this change. [deferred]

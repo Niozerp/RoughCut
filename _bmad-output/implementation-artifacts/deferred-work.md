@@ -39,3 +39,43 @@
 ### Automated versioning strategy
 - **Reason:** User confirmed automated versioning for future implementation
 - **Context:** Currently hardcoded "0.1.0". Need to implement automated version bumping in CI/CD or build process
+
+## Deferred from: code review of 2-2-incremental-media-indexing (2026-04-03)
+
+### SpacetimeDB integration incomplete
+- **Reason:** Deferred to Story 2.5 per architecture plan
+- **Context:** Database operations are placeholders. Full SpacetimeDB integration scheduled for Story 2.5: SpacetimeDB Storage. Models are ready but storage layer needs implementation.
+
+### No error logging framework integration
+- **Reason:** Pre-existing infrastructure pattern
+- **Context:** Errors collected in lists but not logged to file. Project has `lua/utils/logger.lua` but Python backend doesn't use unified logging. Architectural decision needed.
+
+### FFI duplicate declaration risk
+- **Reason:** Pre-existing pattern in codebase
+- **Context:** `ffi.cdef` in Lua files may error if called multiple times. Existing codebase uses this pattern, needs comprehensive fix across all Lua modules.
+
+## Deferred from: code review of 2-1-media-folder-configuration (2026-04-03)
+
+### Test flakiness on Windows for relative paths
+- **Reason:** Pre-existing test infrastructure behavior, not blocking
+- **Context:** Test expectation already accounts for platform differences between Windows and Unix path validation. The test passes with a flexible assertion that accepts either "does not exist" or "must be absolute" errors. This is acceptable behavior given platform differences.
+
+### Missing `__init__.py` files in test directories
+- **Reason:** Pre-existing structure issue, not caused by this change
+- **Context:** The test files use various import patterns including `sys.path.insert()` hacks, suggesting the test package structure is incomplete and may cause import failures in certain test runners. This is a pre-existing infrastructure issue not introduced by Story 2.3.
+
+## Deferred from: code review of 2-5-spacetimedb-storage (2026-04-04)
+
+### Double hasattr check pattern
+- **Reason:** Pre-existing pattern, not introduced by this change
+- **Context:** Repeated `hasattr(self, '_counter')` checks in indexer.py lines 464, 516, 572 are unnecessary since `_counter` is always set in `__post_init__`. These checks existed in similar patterns in previous stories. Architectural cleanup needed.
+
+### Eager singleton initialization
+- **Reason:** Pre-existing ConfigManager pattern
+- **Context:** `get_config_manager()` returns `ConfigManager()` which eagerly loads config from disk in `__init__`. Import-time side effects from ConfigManager singleton pattern used across all stories. Architectural refactoring required.
+
+## Deferred from: code review of 2-7-notion-sync (2026-04-04)
+
+### Import cycle risk in client.py
+- **Reason:** Pre-existing architectural pattern, not blocking
+- **Context:** `sync_media_database()` imports `NotionSyncOrchestrator` inside method to avoid circular import. This is a workaround indicating potential architectural coupling. Should refactor to proper dependency injection or module restructuring.

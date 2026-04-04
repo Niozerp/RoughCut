@@ -1,0 +1,11 @@
+[package]
+name = "roughcut-spacetimedb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+spacetimedb = "0.7"
+hex = "0.4"
+
+[lib]
+crate-type = ["cdylib"]

@@ -397,13 +397,26 @@ class NotionClient:
                 'synced_count': 0
             }
         
-        # TODO: Implement actual sync in Epic 2
-        return {
-            'success': True,
-            'message': 'Media database sync is not yet implemented (coming in Epic 2)',
-            'synced_count': 0,
-            'note': 'Connection validated successfully. Full sync will be available in Epic 2.'
-        }
+        # Use sync orchestrator for full sync
+        from .sync import NotionSyncOrchestrator
+        orchestrator = NotionSyncOrchestrator()
+        
+        try:
+            result = orchestrator.sync_all_assets(media_items)
+            
+            return {
+                'success': result.success,
+                'message': 'Media database sync completed' if result.success else result.error_message,
+                'synced_count': result.synced_count,
+                'timestamp': result.timestamp.isoformat() if result.timestamp else None
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Sync failed: {str(e)}',
+                'synced_count': 0,
+                'suggestion': 'Check logs for details and try again'
+            }
 
 
 def is_notion_available() -> bool:

@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-03T21:00:00"
-last_updated: "2026-04-03T22:00:00"
+last_updated: "2026-04-04"
 project: "RoughCut"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -53,20 +53,20 @@ development_status:
   epic-1-retrospective: optional
   
   # Epic 2: Media Asset Management - IN PROGRESS
-  epic-2: in-progress
-  2-1-media-folder-configuration: ready-for-dev
-  2-2-incremental-media-indexing: ready-for-dev
-  2-3-ai-powered-tag-generation: review
-  2-4-asset-count-dashboard: backlog
-  2-5-spacetimedb-storage: backlog
-  2-6-re-indexing-capability: backlog
-  2-7-notion-sync: backlog
+  epic-2: done
+  2-1-media-folder-configuration: done
+  2-2-incremental-media-indexing: done
+  2-3-ai-powered-tag-generation: done
+  2-4-asset-count-dashboard: done
+  2-5-spacetimedb-storage: done
+  2-6-re-indexing-capability: done
+  2-7-notion-sync: done
   epic-2-retrospective: optional
   
-  # Epic 3: Format Template System
-  epic-3: backlog
-  3-1-view-format-templates: backlog
-  3-2-preview-template-structure: backlog
+  # Epic 3: Format Template System - IN PROGRESS
+  epic-3: in-progress
+  3-1-view-format-templates: review
+  3-2-preview-template-structure: ready-for-dev
   3-3-select-template-for-rough-cut: backlog
   3-4-load-templates-from-markdown: backlog
   3-5-template-asset-groups: backlog

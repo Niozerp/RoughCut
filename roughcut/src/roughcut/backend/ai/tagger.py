@@ -11,10 +11,14 @@ and tag normalization for media assets.
 """
 
 from pathlib import Path
-from typing import List
+from typing import List, Callable, Optional
 
 from .openai_client import OpenAIClient, TagResult
 from ...utils.exceptions import AIError
+
+
+# Valid media categories
+VALID_CATEGORIES = {"music", "sfx", "vfx"}
 
 
 class MediaTagger:
@@ -61,11 +65,19 @@ class MediaTagger:
             
         Raises:
             AIError: If tag generation fails
+            ValueError: If category is invalid
             
         Example:
             Input: "/Music/Corporate/Upbeat/bright_corporate_theme.wav", "music"
             Output: TagResult(tags=["corporate", "upbeat", "bright", "theme", ...])
         """
+        # Validate category
+        if category not in VALID_CATEGORIES:
+            raise ValueError(
+                f"Invalid category: '{category}'. "
+                f"Must be one of: {', '.join(sorted(VALID_CATEGORIES))}"
+            )
+        
         file_name = file_path.name
         folder_path = str(file_path.parent)
         
@@ -96,15 +108,30 @@ class MediaTagger:
         - Removes duplicates while preserving order
         
         Args:
-            tags: Raw tags from AI
+            tags: Raw tags from AI (may contain None values)
             
         Returns:
             Cleaned and normalized tags
         """
+        if not tags:
+            return []
+        
         cleaned = []
         seen = set()
         
         for tag in tags:
+            # Skip None values
+            if tag is None:
+                continue
+            
+            # Ensure tag is a string
+            if not isinstance(tag, str):
+                try:
+                    tag = str(tag)
+                except:
+                    continue
+            
+            # Process tag without recursion (flat iteration)
             # Split by common delimiters first (in case AI returns joined tags)
             subtags = tag.replace('?', ',').replace('!', ',').split(',')
             
@@ -116,11 +143,11 @@ class MediaTagger:
                 for char in '.,!?;:"()[]{}':
                     subtag = subtag.replace(char, '')
                 
-                # Skip empty tags (but keep single character tags if they're not empty)
+                # Skip empty tags
                 if not subtag:
                     continue
                 
-                # Skip duplicates (case-insensitive check)
+                # Skip duplicates (case-insensitive check already done by lowercase)
                 if subtag not in seen:
                     cleaned.append(subtag)
                     seen.add(subtag)
@@ -130,41 +157,53 @@ class MediaTagger:
     async def tag_batch(
         self,
         files: List[tuple[Path, str]],
-        progress_callback = None
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        max_concurrent: int = 5
     ) -> dict[Path, TagResult]:
-        """Tag multiple files with progress tracking.
+        """Tag multiple files with progress tracking and rate limiting.
         
         Args:
             files: List of (file_path, category) tuples
             progress_callback: Optional callback(current, total, file_name)
+            max_concurrent: Maximum concurrent API calls (default: 5)
             
         Returns:
             Dictionary mapping file paths to tag results
+            
+        Raises:
+            ValueError: If files is None
         """
         import asyncio
+        
+        if files is None:
+            raise ValueError("files parameter cannot be None")
         
         results = {}
         total = len(files)
         
-        async def tag_single(index: int, file_path: Path, category: str):
-            try:
-                result = await self.tag_media(file_path, category)
-                results[file_path] = result
-                
-                if progress_callback:
-                    progress_callback(index + 1, total, file_path.name)
-                    
-            except AIError as e:
-                # Log but continue with other files
-                results[file_path] = TagResult(
-                    tags=[],
-                    confidence=0.0,
-                    raw_response=f"Error: {e.message}"
-                )
-                if progress_callback:
-                    progress_callback(index + 1, total, file_path.name)
+        # Create semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(max_concurrent)
         
-        # Process all files
+        async def tag_single(index: int, file_path: Path, category: str):
+            async with semaphore:
+                try:
+                    result = await self.tag_media(file_path, category)
+                    results[file_path] = result
+                    
+                    if progress_callback and callable(progress_callback):
+                        progress_callback(index + 1, total, file_path.name)
+                        
+                except AIError as e:
+                    # Log but continue with other files
+                    results[file_path] = TagResult(
+                        tags=[],
+                        confidence=0.0,
+                        raw_response=f"Error: {e.message}"
+                    )
+                    if progress_callback and callable(progress_callback):
+                        progress_callback(index + 1, total, file_path.name)
+        
+        # Process all files with concurrency limit
         await asyncio.gather(*[
             tag_single(i, path, cat)
             for i, (path, cat) in enumerate(files)

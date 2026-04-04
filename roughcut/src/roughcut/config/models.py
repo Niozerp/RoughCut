@@ -4,10 +4,14 @@ Defines dataclasses for configuration sections with validation,
 serialization, and encryption support.
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -18,6 +22,8 @@ class NotionConfig:
         api_token: Notion API integration token (stored encrypted in file)
         page_url: URL of the Notion page for media database sync
         enabled: Whether Notion integration is enabled
+        sync_enabled: Whether automatic sync to Notion is enabled
+        database_id: Notion database ID for media assets (created automatically)
         last_updated: Timestamp of last configuration update
         last_validation_result: Last validation result (optional)
         connection_status: Connection status from last validation
@@ -25,6 +31,8 @@ class NotionConfig:
     api_token: Optional[str] = None
     page_url: Optional[str] = None
     enabled: bool = False
+    sync_enabled: bool = True  # Default to True when Notion is configured
+    database_id: Optional[str] = None
     last_updated: datetime = field(default_factory=datetime.now)
     last_validation_result: Optional['ValidationResult'] = None
     connection_status: Optional[str] = None
@@ -37,8 +45,11 @@ class NotionConfig:
             is_valid is True if configuration is valid, False otherwise
             error_message is empty string if valid, otherwise contains error details
         """
-        # Validate API token if provided
+        # Validate API token type and content if provided
         if self.api_token is not None:
+            if not isinstance(self.api_token, str):
+                return False, "API token must be a string"
+            
             # Check maximum length to prevent memory exhaustion attacks
             if len(self.api_token) > 512:
                 return False, "API token is too long (maximum 512 characters)"
@@ -95,6 +106,8 @@ class NotionConfig:
         result = {
             'page_url': self.page_url,
             'enabled': self.enabled,
+            'sync_enabled': self.sync_enabled,
+            'database_id': self.database_id,
             'last_updated': self.last_updated.isoformat() if self.last_updated else None,
             'connection_status': self.connection_status
         }
@@ -110,8 +123,9 @@ class NotionConfig:
             if encrypt_token:
                 try:
                     result['api_token'] = encrypt_value(self.api_token)
-                except Exception:
-                    # If encryption fails, don't include the token
+                except Exception as e:
+                    # Log warning and set to None if encryption fails
+                    logger.warning(f"Failed to encrypt API token: {e}")
                     result['api_token'] = None
             else:
                 result['api_token'] = self.api_token
@@ -168,6 +182,8 @@ class NotionConfig:
             api_token=token,
             page_url=data.get('page_url'),
             enabled=data.get('enabled', False),
+            sync_enabled=data.get('sync_enabled', True),
+            database_id=data.get('database_id'),
             last_updated=last_updated,
             last_validation_result=last_validation_result,
             connection_status=data.get('connection_status')
@@ -190,6 +206,144 @@ class NotionConfig:
 
 
 @dataclass
+class MediaFolderConfig:
+    """Configuration for media category folders.
+    
+    Attributes:
+        music_folder: Absolute path to Music assets parent folder
+        sfx_folder: Absolute path to SFX assets parent folder
+        vfx_folder: Absolute path to VFX assets parent folder
+        last_updated: Timestamp of last configuration update
+    """
+    music_folder: Optional[str] = None
+    sfx_folder: Optional[str] = None
+    vfx_folder: Optional[str] = None
+    last_updated: datetime = field(default_factory=datetime.now)
+    
+    def validate(self) -> dict[str, str]:
+        """Validate all configured paths.
+        
+        Returns:
+            Dictionary of errors by category (empty if all valid)
+        """
+        errors = {}
+        from pathlib import Path
+        
+        # System directories that should not be used as media folders
+        DANGEROUS_PATHS = {
+            '/', '/bin', '/sbin', '/usr', '/etc', 
+            '/sys', '/proc', '/dev', '/boot',
+            'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
+            'C:\\System32', 'C:\\Users\\All Users'
+        }
+        
+        for category, path_str in [
+            ("music", self.music_folder),
+            ("sfx", self.sfx_folder),
+            ("vfx", self.vfx_folder)
+        ]:
+            if path_str is not None and path_str.strip():
+                try:
+                    # Check for path traversal sequences
+                    if '..' in path_str:
+                        errors[category] = "Path contains directory traversal sequences (..) which are not allowed"
+                        continue
+                    
+                    # Check for null bytes
+                    if '\x00' in path_str:
+                        errors[category] = "Path contains invalid null characters"
+                        continue
+                    
+                    path = Path(path_str)
+                    resolved_path = path.resolve()
+                    
+                    # Check against dangerous system paths
+                    path_str_normalized = str(resolved_path).rstrip('\\/')
+                    for dangerous in DANGEROUS_PATHS:
+                        if path_str_normalized.lower() == dangerous.lower().rstrip('\\/'):
+                            errors[category] = f"System directory not allowed: {dangerous}"
+                            break
+                    else:
+                        # No dangerous path match, continue validation
+                        if not path.exists():
+                            errors[category] = f"Path does not exist: {path}"
+                        elif not path.is_dir():
+                            errors[category] = f"Path is not a directory: {path}"
+                        elif not path.is_absolute():
+                            errors[category] = f"Path must be absolute: {path}"
+                except Exception as e:
+                    errors[category] = f"Invalid path format: {str(e)}"
+        
+        return errors
+    
+    def is_configured(self) -> bool:
+        """Check if any media folders are configured.
+        
+        Returns:
+            True if at least one folder path is set
+        """
+        return any([
+            self.music_folder is not None and len(self.music_folder) > 0,
+            self.sfx_folder is not None and len(self.sfx_folder) > 0,
+            self.vfx_folder is not None and len(self.vfx_folder) > 0
+        ])
+    
+    def get_configured_folders(self) -> dict[str, Optional[str]]:
+        """Get dictionary of configured folder paths.
+        
+        Returns:
+            Dictionary mapping category to path (or None if not set)
+        """
+        return {
+            "music": self.music_folder,
+            "sfx": self.sfx_folder,
+            "vfx": self.vfx_folder
+        }
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization.
+        
+        Returns:
+            Dictionary representation of the configuration
+        """
+        return {
+            'music_folder': self.music_folder,
+            'sfx_folder': self.sfx_folder,
+            'vfx_folder': self.vfx_folder,
+            'last_updated': self.last_updated.isoformat() if self.last_updated else None
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'MediaFolderConfig':
+        """Create MediaFolderConfig from dictionary.
+        
+        Args:
+            data: Dictionary containing configuration data
+            
+        Returns:
+            MediaFolderConfig instance
+        """
+        # Parse last_updated
+        last_updated_str = data.get('last_updated')
+        last_updated = None
+        if last_updated_str:
+            try:
+                last_updated = datetime.fromisoformat(last_updated_str)
+            except ValueError:
+                last_updated = datetime.now()
+        
+        if last_updated is None:
+            last_updated = datetime.now()
+        
+        return cls(
+            music_folder=data.get('music_folder'),
+            sfx_folder=data.get('sfx_folder'),
+            vfx_folder=data.get('vfx_folder'),
+            last_updated=last_updated
+        )
+
+
+@dataclass
 class AIConfig:
     """Configuration for AI services (OpenAI).
     
@@ -199,12 +353,14 @@ class AIConfig:
         enabled: Whether AI tagging is enabled
         timeout: API timeout in seconds (default: 30)
         max_retries: Max retry attempts for rate limits (default: 3)
+        recovery_mode: Error recovery mode - "automatic" or "manual" (default: automatic)
     """
     api_key: Optional[str] = None
     model: str = "gpt-3.5-turbo"
     enabled: bool = False
     timeout: float = 30.0
     max_retries: int = 3
+    recovery_mode: str = "automatic"  # "automatic" or "manual"
     
     def validate(self) -> tuple[bool, str]:
         """Validate configuration fields.
@@ -214,6 +370,10 @@ class AIConfig:
         """
         if not self.enabled:
             return True, ""
+        
+        # Type check for api_key
+        if self.api_key is not None and not isinstance(self.api_key, str):
+            return False, "API key must be a string"
         
         if not self.api_key:
             return False, "API key is required when AI is enabled"
@@ -230,6 +390,10 @@ class AIConfig:
         
         if self.max_retries < 0 or self.max_retries > 10:
             return False, "Max retries must be between 0 and 10"
+        
+        # Validate recovery_mode
+        if self.recovery_mode not in ("automatic", "manual"):
+            return False, "recovery_mode must be 'automatic' or 'manual'"
         
         return True, ""
     
@@ -256,7 +420,8 @@ class AIConfig:
             'model': self.model,
             'enabled': self.enabled,
             'timeout': self.timeout,
-            'max_retries': self.max_retries
+            'max_retries': self.max_retries,
+            'recovery_mode': self.recovery_mode
         }
         
         # Encrypt API key if requested and present
@@ -264,7 +429,9 @@ class AIConfig:
             if encrypt_token:
                 try:
                     result['api_key'] = encrypt_value(self.api_key)
-                except Exception:
+                except Exception as e:
+                    # Log warning if encryption fails
+                    logger.warning(f"Failed to encrypt API key: {e}")
                     result['api_key'] = None
             else:
                 result['api_key'] = self.api_key
@@ -298,7 +465,8 @@ class AIConfig:
             model=data.get('model', 'gpt-3.5-turbo'),
             enabled=data.get('enabled', False),
             timeout=data.get('timeout', 30.0),
-            max_retries=data.get('max_retries', 3)
+            max_retries=data.get('max_retries', 3),
+            recovery_mode=data.get('recovery_mode', 'automatic')
         )
     
     def mask_key(self) -> str:
@@ -324,10 +492,12 @@ class AppConfig:
     Attributes:
         notion: Notion integration configuration
         ai: AI service configuration
+        media_folders: Media folder configuration
         version: Configuration format version
     """
     notion: NotionConfig = field(default_factory=NotionConfig)
     ai: 'AIConfig' = field(default_factory=lambda: AIConfig())
+    media_folders: MediaFolderConfig = field(default_factory=MediaFolderConfig)
     version: str = "1.0"
     
     def to_dict(self) -> dict:
@@ -335,7 +505,8 @@ class AppConfig:
         return {
             'version': self.version,
             'notion': self.notion.to_dict(encrypt_token=True),
-            'ai': self.ai.to_dict(encrypt_token=True)
+            'ai': self.ai.to_dict(encrypt_token=True),
+            'media_folders': self.media_folders.to_dict()
         }
     
     @classmethod
@@ -347,8 +518,12 @@ class AppConfig:
         ai_data = data.get('ai', {})
         ai_config = AIConfig.from_dict(ai_data, decrypt_token=True)
         
+        media_folders_data = data.get('media_folders', {})
+        media_folders_config = MediaFolderConfig.from_dict(media_folders_data)
+        
         return cls(
             notion=notion_config,
             ai=ai_config,
+            media_folders=media_folders_config,
             version=data.get('version', '1.0')
         )
