@@ -283,6 +283,65 @@ class TemplateScanner:
         except yaml.YAMLError as e:
             logger.debug(f"YAML parse error: {e}")
             return None
+    
+    def scan_with_discovery(
+        self,
+        discovery,
+        parser,
+        validator
+    ) -> List[FormatTemplate]:
+        """
+        Scan using TemplateDiscovery integration.
+        
+        This method integrates Story 3.4's discovery system with the
+        existing scanner, using namespaced slugs for duplicate handling.
+        
+        Args:
+            discovery: TemplateDiscovery instance
+            parser: TemplateParser for parsing files
+            validator: TemplateValidator for validation
+            
+        Returns:
+            List of valid FormatTemplate instances
+        """
+        templates: List[FormatTemplate] = []
+        
+        try:
+            discovered = discovery.scan()
+        except Exception as e:
+            logger.error(f"Discovery scan failed: {e}")
+            return templates
+        
+        for disc in discovered:
+            try:
+                # Validate file
+                is_valid, errors = validator.validate_template_file(disc.file_path)
+                if not is_valid:
+                    logger.warning(f"Invalid template file {disc.filename}: {errors}")
+                    continue
+                
+                # Parse template
+                template = parser.parse_file(disc.file_path)
+                if template is None:
+                    logger.debug(f"Failed to parse {disc.filename}")
+                    continue
+                
+                # Use namespaced slug from discovery (handles duplicates)
+                template.slug = discovery.get_slug_from_path(disc.file_path)
+                
+                # Validate template content
+                is_valid, validation_errors = validator.validate_template(template)
+                if not is_valid:
+                    logger.warning(f"Template validation failed for {disc.filename}: {validation_errors}")
+                    continue
+                
+                templates.append(template)
+                
+            except Exception as e:
+                logger.error(f"Error processing {disc.filename}: {e}")
+                continue
+        
+        return templates
 
 
 class TemplateScannerError(Exception):
