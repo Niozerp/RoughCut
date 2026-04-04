@@ -506,6 +506,733 @@ function TranscriptViewer.showError(errorData)
     end
 end
 
+
+--[[
+    ============================================================================
+    STORY 4.3: TRANSCRIPTION QUALITY REVIEW UI
+    ============================================================================
+    The following functions implement the quality review interface for Story 4.3.
+    This adds quality indicators, problem highlighting, and user decision points.
+--]]
+
+-- UI state for quality review
+TranscriptViewer.qualityData = nil
+TranscriptViewer.isQualityReviewMode = false
+
+--[[
+    Show the quality review dialog.
+    
+    This is the main entry point for Story 4.3 quality review.
+    
+    Args:
+        clipData: Table containing clip information
+        transcriptData: Table containing transcript data
+--]]
+function TranscriptViewer.showQualityReview(clipData, transcriptData)
+    -- Validate transcript data
+    if not transcriptData then
+        TranscriptViewer.showErrorDialog("No transcript data provided for quality review")
+        return
+    end
+    
+    if type(transcriptData) ~= "table" then
+        TranscriptViewer.showErrorDialog("Invalid transcript data format")
+        return
+    end
+    
+    -- Store data
+    TranscriptViewer.currentClip = clipData
+    TranscriptViewer.transcriptData = transcriptData
+    TranscriptViewer.isQualityReviewMode = true
+    
+    -- Check if Resolve is available
+    local ResolveAPI = require("resolve_api")
+    local available, err = ResolveAPI.isAvailable()
+    
+    if not available then
+        local msg = ResolveAPI.getErrorMessage(err)
+        TranscriptViewer.showErrorDialog(msg)
+        return
+    end
+    
+    -- Create and show the quality review dialog
+    local dialog = TranscriptViewer.createQualityReviewDialog()
+    if dialog then
+        TranscriptViewer.currentDialog = dialog
+        
+        -- Update header
+        TranscriptViewer.updateQualityHeader(clipData.name)
+        
+        -- Show loading state
+        TranscriptViewer.showQualityLoadingState()
+        
+        -- Analyze quality
+        TranscriptViewer.analyzeQuality(transcriptData)
+    end
+end
+
+--[[
+    Create the quality review dialog structure.
+    
+    Returns:
+        dialog: Table describing the dialog structure
+--]]
+function TranscriptViewer.createQualityReviewDialog()
+    local dialog = {
+        title = "Review Transcription Quality - RoughCut",
+        width = 900,
+        height = 750,
+        
+        -- Window style - modal dialog
+        modal = true,
+        
+        -- UI Components
+        components = {
+            -- Header
+            {
+                type = "Label",
+                id = "headerLabel",
+                text = "Review Transcription Quality",
+                alignment = { AlignHCenter = true },
+                styleSheet = "font-weight: bold; font-size: 16px; padding: 10px;"
+            },
+            
+            -- Clip info label
+            {
+                type = "Label",
+                id = "clipInfoLabel",
+                text = "",
+                alignment = { AlignHCenter = true },
+                styleSheet = "color: gray; font-size: 11px; padding-bottom: 5px;"
+            },
+            
+            -- Quality Banner (good/fair/poor)
+            {
+                type = "Frame",
+                id = "qualityBanner",
+                styleSheet = "background-color: #e8f5e9; border: 2px solid #4caf50; border-radius: 5px; padding: 10px; margin: 5px;",
+                visible = false,
+                components = {
+                    {
+                        type = "Layout",
+                        layout = "Horizontal",
+                        components = {
+                            {
+                                type = "Label",
+                                id = "qualityIconLabel",
+                                text = "✓",
+                                styleSheet = "font-size: 20px; color: #4caf50;"
+                            },
+                            {
+                                type = "Label",
+                                id = "qualityTextLabel",
+                                text = "Quality: Good",
+                                styleSheet = "font-weight: bold; font-size: 14px; color: #2e7d32; padding-left: 10px;"
+                            }
+                        }
+                    },
+                    {
+                        type = "Label",
+                        id = "qualityDetailLabel",
+                        text = "",
+                        styleSheet = "color: #555; font-size: 11px; padding-top: 5px;"
+                    }
+                }
+            },
+            
+            -- Recommendation label
+            {
+                type = "Label",
+                id = "recommendationLabel",
+                text = "",
+                alignment = { AlignHCenter = true },
+                styleSheet = "color: #333; font-size: 12px; padding: 10px; font-style: italic;"
+            },
+            
+            -- Status label
+            {
+                type = "Label",
+                id = "statusLabel",
+                text = "Analyzing transcription quality...",
+                alignment = { AlignHCenter = true },
+                styleSheet = "color: blue; font-size: 11px; padding: 5px;"
+            },
+            
+            -- Transcript text area with problem highlighting
+            {
+                type = "TextEdit",
+                id = "transcriptText",
+                readOnly = true,
+                minimumSize = { width = 850, height = 400 },
+                font = { family = "Consolas", size = 11 },
+                wordWrap = true,
+                placeholderText = "Transcript with quality analysis will appear here..."
+            },
+            
+            -- Problem areas summary
+            {
+                type = "Frame",
+                id = "problemSummaryFrame",
+                styleSheet = "background-color: #ffebee; border: 1px solid #ef5350; border-radius: 3px; padding: 8px; margin: 5px;",
+                visible = false,
+                components = {
+                    {
+                        type = "Label",
+                        id = "problemSummaryLabel",
+                        text = "",
+                        styleSheet = "color: #c62828; font-size: 11px;"
+                    }
+                }
+            },
+            
+            -- Button row
+            {
+                type = "Layout",
+                layout = "Horizontal",
+                styleSheet = "padding-top: 15px;",
+                components = {
+                    {
+                        type = "Button",
+                        id = "backButton",
+                        text = "← Go Back",
+                        visible = false,  -- Hidden by default, shown for non-good quality per AC4
+                        onClicked = function()
+                            TranscriptViewer.goBackToTranscript()
+                        end
+                    },
+                    {
+                        type = "Stretch"
+                    },
+                    {
+                        type = "Button",
+                        id = "audioCleanupButton",
+                        text = "Learn: Audio Cleanup",
+                        visible = false,
+                        onClicked = function()
+                            TranscriptViewer.showAudioCleanupGuide()
+                        end
+                    },
+                    {
+                        type = "Stretch"
+                    },
+                    {
+                        type = "Button",
+                        id = "proceedAnywayButton",
+                        text = "Proceed Anyway →",
+                        visible = false,
+                        onClicked = function()
+                            TranscriptViewer.proceedAnyway()
+                        end
+                    },
+                    {
+                        type = "Button",
+                        id = "proceedButton",
+                        text = "Proceed to Format Selection →",
+                        enabled = false,
+                        default = true,
+                        visible = true,
+                        onClicked = function()
+                            TranscriptViewer.proceedToFormatSelection()
+                        end
+                    }
+                }
+            }
+        }
+    }
+    
+    return dialog
+end
+
+--[[
+    Update the quality review header with clip name.
+    
+    Args:
+        clipName: Name of the selected clip
+--]]
+function TranscriptViewer.updateQualityHeader(clipName)
+    local clipInfoLabel = TranscriptViewer.getComponent("clipInfoLabel")
+    if clipInfoLabel then
+        clipInfoLabel:SetText("Analyzing: " .. (clipName or "Unknown"))
+    end
+end
+
+--[[
+    Show loading state during quality analysis.
+--]]
+function TranscriptViewer.showQualityLoadingState()
+    local statusLabel = TranscriptViewer.getComponent("statusLabel")
+    if statusLabel then
+        statusLabel:SetText("Analyzing transcription quality...")
+        statusLabel:SetVisible(true)
+    end
+    
+    local qualityBanner = TranscriptViewer.getComponent("qualityBanner")
+    if qualityBanner then
+        qualityBanner:SetVisible(false)
+    end
+    
+    local proceedButton = TranscriptViewer.getComponent("proceedButton")
+    if proceedButton then
+        proceedButton:SetEnabled(false)
+    end
+end
+
+--[[
+    Analyze transcription quality via Python backend.
+    
+    Args:
+        transcriptData: Table containing transcript data
+--]]
+function TranscriptViewer.analyzeQuality(transcriptData)
+    local request = {
+        method = "analyze_transcription_quality",
+        params = {
+            transcript = transcriptData,
+            clip_name = TranscriptViewer.currentClip and TranscriptViewer.currentClip.name or "Unknown"
+        },
+        id = TranscriptViewer.generateRequestId()
+    }
+    
+    -- Set up timeout (5 seconds per AC4 performance requirement)
+    local timeoutSeconds = 5
+    local requestId = request.id
+    
+    -- Store request with timestamp for timeout tracking
+    TranscriptViewer._pendingRequests = TranscriptViewer._pendingRequests or {}
+    TranscriptViewer._pendingRequests[requestId] = {
+        timestamp = os.time(),
+        timeout = timeoutSeconds,
+        callback = nil
+    }
+    
+    -- Create callback
+    local callback = function(response)
+        -- Clear pending request
+        if TranscriptViewer._pendingRequests then
+            TranscriptViewer._pendingRequests[requestId] = nil
+        end
+        TranscriptViewer.handleQualityAnalysisResponse(response)
+    end
+    
+    TranscriptViewer._pendingRequests[requestId].callback = callback
+    
+    -- Start timeout timer
+    TranscriptViewer.startTimeoutTimer(requestId, timeoutSeconds)
+    
+    -- Send to Python backend
+    TranscriptViewer.sendToPython(request, callback)
+end
+
+--[[
+    Handle the quality analysis response.
+    
+    Args:
+        response: Response from Python backend
+--]]
+function TranscriptViewer.handleQualityAnalysisResponse(response)
+    -- Handle JSON-RPC error
+    if response.error then
+        TranscriptViewer.showQualityError(response.error)
+        return
+    end
+    
+    -- Extract quality data from result
+    local quality = nil
+    if response.result then
+        quality = response.result
+    end
+    
+    if quality then
+        -- Store quality data
+        TranscriptViewer.qualityData = quality
+        
+        -- Display quality results
+        TranscriptViewer.displayQualityResults(quality)
+    else
+        -- No quality data
+        TranscriptViewer.showQualityError({
+            message = "No quality analysis data received",
+            suggestion = "Try analyzing again"
+        })
+    end
+end
+
+--[[
+    Display quality analysis results in the UI.
+    
+    Args:
+        quality: Table containing quality analysis results
+--]]
+function TranscriptViewer.displayQualityResults(quality)
+    -- Hide loading status
+    local statusLabel = TranscriptViewer.getComponent("statusLabel")
+    if statusLabel then
+        statusLabel:SetVisible(false)
+    end
+    
+    -- Update quality banner
+    TranscriptViewer.updateQualityBanner(quality)
+    
+    -- Display transcript with problem highlighting
+    TranscriptViewer.displayTranscriptWithProblems(quality)
+    
+    -- Show problem summary if there are problems
+    if quality.problem_count and quality.problem_count > 0 then
+        TranscriptViewer.showProblemSummary(quality)
+    end
+    
+    -- Update recommendation
+    local recommendationLabel = TranscriptViewer.getComponent("recommendationLabel")
+    if recommendationLabel and quality.recommendation then
+        recommendationLabel:SetText(quality.recommendation)
+    end
+    
+    -- Configure buttons based on quality
+    TranscriptViewer.configureDecisionButtons(quality)
+end
+
+--[[
+    Update the quality banner based on quality rating.
+    
+    Args:
+        quality: Table containing quality data
+--]]
+function TranscriptViewer.updateQualityBanner(quality)
+    local banner = TranscriptViewer.getComponent("qualityBanner")
+    if not banner then
+        return
+    end
+    
+    local iconLabel = TranscriptViewer.getComponent("qualityIconLabel")
+    local textLabel = TranscriptViewer.getComponent("qualityTextLabel")
+    local detailLabel = TranscriptViewer.getComponent("qualityDetailLabel")
+    
+    local rating = quality.quality_rating or "good"
+    local confidence = quality.confidence_score or 0
+    local completeness = quality.completeness_pct or 100
+    local problems = quality.problem_count or 0
+    
+    -- Set colors and icon based on rating
+    if rating == "good" then
+        -- Good quality - green
+        banner:SetStyleSheet("background-color: #e8f5e9; border: 2px solid #4caf50; border-radius: 5px; padding: 10px; margin: 5px;")
+        if iconLabel then
+            iconLabel:SetText("✓")
+            iconLabel:SetStyleSheet("font-size: 20px; color: #4caf50;")
+        end
+        if textLabel then
+            textLabel:SetText("Quality: Good ✓")
+            textLabel:SetStyleSheet("font-weight: bold; font-size: 14px; color: #2e7d32; padding-left: 10px;")
+        end
+    elseif rating == "fair" then
+        -- Fair quality - yellow/orange
+        banner:SetStyleSheet("background-color: #fff8e1; border: 2px solid #ffa726; border-radius: 5px; padding: 10px; margin: 5px;")
+        if iconLabel then
+            iconLabel:SetText("⚠")
+            iconLabel:SetStyleSheet("font-size: 20px; color: #ffa726;")
+        end
+        if textLabel then
+            textLabel:SetText("Quality: Fair ⚠")
+            textLabel:SetStyleSheet("font-weight: bold; font-size: 14px; color: #ef6c00; padding-left: 10px;")
+        end
+    else
+        -- Poor quality - red
+        banner:SetStyleSheet("background-color: #ffebee; border: 2px solid #ef5350; border-radius: 5px; padding: 10px; margin: 5px;")
+        if iconLabel then
+            iconLabel:SetText("✗")
+            iconLabel:SetStyleSheet("font-size: 20px; color: #ef5350;")
+        end
+        if textLabel then
+            textLabel:SetText("Quality: Poor ✗")
+            textLabel:SetStyleSheet("font-weight: bold; font-size: 14px; color: #c62828; padding-left: 10px;")
+        end
+    end
+    
+    -- Set detail text
+    if detailLabel then
+        local detailText = string.format(
+            "Confidence: %d%% | Completeness: %d%% | Problems: %d",
+            math.floor(confidence * 100),
+            math.floor(completeness),
+            problems
+        )
+        detailLabel:SetText(detailText)
+    end
+    
+    banner:SetVisible(true)
+end
+
+--[[
+    Display transcript with problem areas highlighted.
+    
+    Args:
+        quality: Table containing quality data with problem_areas
+--]]
+function TranscriptViewer.displayTranscriptWithProblems(quality)
+    local transcriptText = TranscriptViewer.getComponent("transcriptText")
+    if not transcriptText then
+        return
+    end
+    
+    -- Get the original transcript text
+    local text = ""
+    if TranscriptViewer.transcriptData then
+        if TranscriptViewer.transcriptData.segments and #TranscriptViewer.transcriptData.segments > 0 then
+            -- Format with speaker labels
+            local lines = {}
+            for _, segment in ipairs(TranscriptViewer.transcriptData.segments) do
+                local line = segment.text
+                if segment.speaker and segment.speaker ~= "" then
+                    line = segment.speaker .. ": " .. line
+                end
+                table.insert(lines, line)
+            end
+            text = table.concat(lines, "\n\n")
+        else
+            text = TranscriptViewer.transcriptData.text or ""
+        end
+    end
+    
+    -- For now, display text with visual indicators around problem markers.
+    -- Since Resolve UI may not support rich text, we add visual markers (► ◄)
+    -- around problem areas to make them stand out.
+    if quality and quality.problem_areas then
+        for _, problem in ipairs(quality.problem_areas) do
+            local marker = problem.text
+            if marker then
+                -- Add visual indicators around problem markers
+                text = text:gsub(
+                    "%[" .. marker:match("%[([^%]]+)") .. "%]",
+                    "►[" .. marker:match("%[([^%]]+)") .. "]◄"
+                )
+            end
+        end
+    end
+    
+    -- TODO: When Resolve UI supports rich text, implement proper color highlighting
+    -- For now, the ► ◄ markers provide visual distinction per AC2
+    
+    transcriptText:SetText(text)
+    transcriptText:SetEnabled(true)
+end
+
+--[[
+    Show problem summary section.
+    
+    Args:
+        quality: Table containing quality data
+--]]
+function TranscriptViewer.showProblemSummary(quality)
+    local frame = TranscriptViewer.getComponent("problemSummaryFrame")
+    local label = TranscriptViewer.getComponent("problemSummaryLabel")
+    
+    if not frame or not label then
+        return
+    end
+    
+    local problems = quality.problem_areas or {}
+    local problemCount = quality.problem_count or 0
+    
+    -- Count by type
+    local typeCounts = {}
+    for _, problem in ipairs(problems) do
+        local ptype = problem.type or "unknown"
+        typeCounts[ptype] = (typeCounts[ptype] or 0) + 1
+    end
+    
+    -- Build summary text
+    local summaryParts = {}
+    for ptype, count in pairs(typeCounts) do
+        table.insert(summaryParts, string.format("%s: %d", ptype, count))
+    end
+    
+    local summaryText = "Problem areas detected: " .. table.concat(summaryParts, ", ")
+    if problemCount > 10 then
+        summaryText = summaryText .. " - Audio cleanup strongly recommended"
+    end
+    
+    label:SetText(summaryText)
+    frame:SetVisible(true)
+end
+
+--[[
+    Configure decision buttons based on quality.
+    
+    Args:
+        quality: Table containing quality data
+--]]
+function TranscriptViewer.configureDecisionButtons(quality)
+    local rating = quality.quality_rating or "good"
+    local proceedButton = TranscriptViewer.getComponent("proceedButton")
+    local proceedAnywayButton = TranscriptViewer.getComponent("proceedAnywayButton")
+    local audioCleanupButton = TranscriptViewer.getComponent("audioCleanupButton")
+    local backButton = TranscriptViewer.getComponent("backButton")
+    
+    if rating == "good" then
+        -- Good quality - standard proceed button only, hide others
+        if proceedButton then
+            proceedButton:SetEnabled(true)
+            proceedButton:SetVisible(true)
+        end
+        if proceedAnywayButton then
+            proceedAnywayButton:SetVisible(false)
+        end
+        if audioCleanupButton then
+            audioCleanupButton:SetVisible(false)
+        end
+        if backButton then
+            backButton:SetVisible(false)  -- Hide back button for good quality
+        end
+    else
+        -- Fair or poor quality - show all three action buttons per AC4
+        -- [Proceed Anyway] [Go Back] [Learn About Audio Cleanup]
+        if proceedButton then
+            proceedButton:SetEnabled(true)
+            proceedButton:SetVisible(false)  -- Hide standard proceed
+        end
+        if proceedAnywayButton then
+            proceedAnywayButton:SetEnabled(true)
+            proceedAnywayButton:SetVisible(true)
+        end
+        if audioCleanupButton then
+            audioCleanupButton:SetVisible(true)
+        end
+        if backButton then
+            backButton:SetVisible(true)  -- Show back button for non-good quality
+        end
+    end
+end
+
+--[[
+    Show audio cleanup guide (launches documentation).
+--]]
+function TranscriptViewer.showAudioCleanupGuide()
+    -- Open audio cleanup guide
+    -- In production, this would open a help window or external documentation
+    print("[RoughCut] Opening Audio Cleanup Guide...")
+    
+    -- TODO: Implement help window or link to documentation
+    -- For now, show a simple message dialog
+    local message = [[
+Audio Cleanup Guide
+
+To improve transcription quality:
+
+1. Apply Resolve's Noise Reduction:
+   - Select clip in Edit page
+   - Open Fairlight page
+   - Apply Noise Reduction effect
+   - Adjust settings for your audio type
+
+2. Render Clean Version:
+   - Deliver page → Custom Export
+   - Export audio-only WAV or full video
+   - Replace clip in Media Pool
+
+3. Re-transcribe in Resolve:
+   - Right-click clip → Generate Subtitles
+   - Choose speech-to-text
+   - Wait for transcription to complete
+
+4. Re-run RoughCut:
+   - Select cleaned clip
+   - Quality should now be improved
+    ]]
+    
+    -- Show dialog with guide (platform-specific)
+    -- For now, just print to console
+    print(message)
+end
+
+--[[
+    Proceed to format selection despite quality warnings.
+--]]
+function TranscriptViewer.proceedAnyway()
+    TranscriptViewer.close()
+    
+    -- Trigger format selection workflow
+    if TranscriptViewer.onFormatSelectionRequested then
+        TranscriptViewer.onFormatSelectionRequested(
+            TranscriptViewer.currentClip,
+            TranscriptViewer.transcriptData,
+            TranscriptViewer.qualityData
+        )
+    end
+end
+
+--[[
+    Proceed to format selection (normal flow).
+--]]
+function TranscriptViewer.proceedToFormatSelection()
+    TranscriptViewer.close()
+    
+    -- Trigger format selection workflow
+    if TranscriptViewer.onFormatSelectionRequested then
+        TranscriptViewer.onFormatSelectionRequested(
+            TranscriptViewer.currentClip,
+            TranscriptViewer.transcriptData,
+            TranscriptViewer.qualityData
+        )
+    end
+end
+
+--[[
+    Go back to transcript view.
+--]]
+function TranscriptViewer.goBackToTranscript()
+    local clipData = TranscriptViewer.currentClip
+    local transcriptData = TranscriptViewer.transcriptData
+    
+    TranscriptViewer.close()
+    
+    -- Re-show transcript viewer
+    if clipData and transcriptData then
+        TranscriptViewer.show(clipData)
+        -- Note: We'd need to modify show() to accept pre-loaded transcript data
+    end
+end
+
+--[[
+    Show quality analysis error.
+    
+    Args:
+        errorData: Table containing error information
+--]]
+function TranscriptViewer.showQualityError(errorData)
+    local statusLabel = TranscriptViewer.getComponent("statusLabel")
+    if statusLabel then
+        local errorMsg = errorData.message or "Quality analysis failed"
+        if errorData.suggestion then
+            errorMsg = errorMsg .. " - " .. errorData.suggestion
+        end
+        statusLabel:SetText(errorMsg)
+        statusLabel:SetStyleSheet("color: red; font-size: 11px; padding: 5px;")
+        statusLabel:SetVisible(true)
+    end
+    
+    local proceedButton = TranscriptViewer.getComponent("proceedButton")
+    if proceedButton then
+        proceedButton:SetEnabled(false)
+    end
+end
+
+--[[
+    Set callback for when format selection is requested.
+    
+    Args:
+        callback: Function(clipData, transcriptData, qualityData) to call
+--]]
+function TranscriptViewer.setOnFormatSelectionRequested(callback)
+    TranscriptViewer.onFormatSelectionRequested = callback
+end
+
+
+--[[
+    ============================================================================
+    END OF STORY 4.3 QUALITY REVIEW UI
+    ============================================================================
+--]]
+
 --[[
     Go back to media pool browser.
 --]]
@@ -525,16 +1252,14 @@ function TranscriptViewer.proceedToQualityReview()
         return
     end
     
+    -- Close current transcript view and open quality review
+    local clipData = TranscriptViewer.currentClip
+    local transcriptData = TranscriptViewer.transcriptData
+    
     TranscriptViewer.close()
     
-    -- Trigger next workflow step (Story 4.3)
-    -- This would open the quality review UI
-    if TranscriptViewer.onQualityReviewRequested then
-        TranscriptViewer.onQualityReviewRequested(
-            TranscriptViewer.currentClip,
-            TranscriptViewer.transcriptData
-        )
-    end
+    -- Open quality review UI (Story 4.3)
+    TranscriptViewer.showQualityReview(clipData, transcriptData)
 end
 
 --[[

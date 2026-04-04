@@ -8,8 +8,108 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from enum import Enum
 import hashlib
 import uuid
+import re
+import math
+
+
+class QualityRating(Enum):
+    """Quality rating classifications for transcription analysis.
+    
+    Used by Story 4.3 (Review Transcription Quality) to classify
+    transcript quality based on confidence scores and problem markers.
+    """
+    GOOD = "good"
+    FAIR = "fair"
+    POOR = "poor"
+
+
+@dataclass
+class TranscriptQuality:
+    """Quality analysis results for a transcript.
+    
+    Added in Story 4.3 (Review Transcription Quality) to provide
+    detailed quality metrics for transcription review.
+    
+    Attributes:
+        quality_rating: Overall quality classification (good/fair/poor)
+        confidence_score: Overall confidence score (0.0-1.0)
+        completeness_pct: Percentage of expected words captured
+        problem_count: Number of problem areas detected
+        problem_areas: List of problem areas with type and position
+        recommendation: Human-readable recommendation text
+    """
+    quality_rating: QualityRating = field(default=QualityRating.GOOD)
+    confidence_score: float = field(default=1.0)
+    completeness_pct: float = field(default=100.0)
+    problem_count: int = field(default=0)
+    problem_areas: List[Dict[str, Any]] = field(default_factory=list)
+    recommendation: str = field(default="")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON-RPC responses.
+        
+        Returns:
+            Dictionary representation of quality analysis
+        """
+        return {
+            'quality_rating': self.quality_rating.value,
+            'confidence_score': self.confidence_score,
+            'completeness_pct': self.completeness_pct,
+            'problem_count': self.problem_count,
+            'problem_areas': self.problem_areas,
+            'recommendation': self.recommendation
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TranscriptQuality':
+        """Create TranscriptQuality from dictionary.
+        
+        Args:
+            data: Dictionary containing quality data
+            
+        Returns:
+            TranscriptQuality instance
+        """
+        # Parse quality rating from string
+        rating_str = data.get('quality_rating', 'good')
+        try:
+            quality_rating = QualityRating(rating_str)
+        except ValueError:
+            quality_rating = QualityRating.GOOD
+        
+        # Safely convert numeric values
+        try:
+            confidence_score = float(data.get('confidence_score', 1.0))
+        except (ValueError, TypeError):
+            confidence_score = 1.0
+        
+        try:
+            completeness_pct = float(data.get('completeness_pct', 100.0))
+        except (ValueError, TypeError):
+            completeness_pct = 100.0
+        
+        try:
+            problem_count = int(data.get('problem_count', 0))
+        except (ValueError, TypeError):
+            problem_count = 0
+        
+        problem_areas = data.get('problem_areas', [])
+        if not isinstance(problem_areas, list):
+            problem_areas = []
+        
+        recommendation = str(data.get('recommendation', ''))
+        
+        return cls(
+            quality_rating=quality_rating,
+            confidence_score=confidence_score,
+            completeness_pct=completeness_pct,
+            problem_count=problem_count,
+            problem_areas=problem_areas,
+            recommendation=recommendation
+        )
 
 
 @dataclass
@@ -463,3 +563,203 @@ class Transcript:
                 lines.append(segment.text)
         
         return '\n'.join(lines)
+    
+    def analyze_quality(self) -> TranscriptQuality:
+        """Analyze transcript quality and return detailed quality metrics.
+        
+        Implemented for Story 4.3 (Review Transcription Quality).
+        Evaluates confidence scores, problem markers, and completeness.
+        
+        Returns:
+            TranscriptQuality with detailed analysis results
+        """
+        # Find problem markers in the text
+        problem_markers = self._find_problem_markers()
+        problem_count = len(problem_markers)
+        
+        # Calculate completeness percentage
+        completeness_pct = self._calculate_completeness()
+        
+        # Determine confidence score (default to 0.0 if None)
+        confidence_score = self.confidence_score if self.confidence_score is not None else 0.0
+        
+        # Determine quality rating based on multiple factors
+        quality_rating = self._determine_quality_rating(
+            confidence_score, completeness_pct, problem_count
+        )
+        
+        # Generate recommendation text
+        recommendation = self._generate_recommendation(
+            quality_rating, confidence_score, completeness_pct, problem_count
+        )
+        
+        return TranscriptQuality(
+            quality_rating=quality_rating,
+            confidence_score=confidence_score,
+            completeness_pct=completeness_pct,
+            problem_count=problem_count,
+            problem_areas=problem_markers,
+            recommendation=recommendation
+        )
+    
+    def _find_problem_markers(self) -> List[Dict[str, Any]]:
+        """Find all problem markers in the transcript text.
+        
+        Detects: [inaudible], [garbled], [unintelligible], [crosstalk]
+        
+        Returns:
+            List of problem areas with type, position, and text
+        """
+        markers = []
+        
+        # Guard against None text
+        if not self.text:
+            return markers
+        
+        # Pattern to match problem markers (case-insensitive)
+        pattern = r'\[(inaudible|garbled|unintelligible|crosstalk)\]'
+        
+        for match in re.finditer(pattern, self.text, re.IGNORECASE):
+            markers.append({
+                'type': match.group(1).lower(),
+                'position': match.start(),
+                'text': match.group(0)
+            })
+        
+        return markers
+    
+    def _find_inaudible_markers(self) -> List[Dict[str, Any]]:
+        """Find [inaudible] markers specifically.
+        
+        Returns:
+            List of inaudible markers
+        """
+        return [m for m in self._find_problem_markers() if m['type'] == 'inaudible']
+    
+    def _calculate_completeness(self) -> float:
+        """Calculate transcript completeness percentage.
+        
+        Compares word count to expected word count based on duration.
+        Expected: ~130-150 words per minute for normal speech.
+        
+        Returns:
+            Completeness percentage (0-100+)
+        """
+        if self.duration_seconds <= 0:
+            return 0.0
+        
+        # Calculate expected words: 140 wpm * (duration / 60)
+        expected_words = 140 * (self.duration_seconds / 60)
+        
+        if expected_words <= 0:
+            return 0.0
+        
+        # Calculate percentage
+        completeness = (self.word_count / expected_words) * 100
+        
+        return round(completeness, 1)
+    
+    def _determine_quality_rating(
+        self, 
+        confidence_score: float, 
+        completeness_pct: float, 
+        problem_count: int
+    ) -> QualityRating:
+        """Determine overall quality rating from metrics.
+        
+        Rating logic:
+        - GOOD: >90% confidence, >80% completeness, <5 problem markers
+        - FAIR: 70-90% confidence, 50-80% completeness, or 5-10 problems
+        - POOR: <70% confidence, <50% completeness, or >10 problem markers
+        
+        Args:
+            confidence_score: Overall confidence (0.0-1.0)
+            completeness_pct: Completeness percentage
+            problem_count: Number of problem markers
+            
+        Returns:
+            QualityRating classification
+        """
+        # Handle NaN values explicitly
+        if math.isnan(confidence_score):
+            return QualityRating.POOR
+        
+        # Check for poor quality indicators
+        if confidence_score < 0.70:
+            return QualityRating.POOR
+        if completeness_pct < 50 or completeness_pct <= 0:
+            return QualityRating.POOR
+        if problem_count > 10:
+            return QualityRating.POOR
+        
+        # Check for fair quality indicators
+        if confidence_score < 0.90:
+            return QualityRating.FAIR
+        if completeness_pct < 80:
+            return QualityRating.FAIR
+        if problem_count >= 5:
+            return QualityRating.FAIR
+        
+        # Otherwise good quality
+        return QualityRating.GOOD
+    
+    def _generate_recommendation(
+        self,
+        quality_rating: QualityRating,
+        confidence_score: float,
+        completeness_pct: float,
+        problem_count: int
+    ) -> str:
+        """Generate human-readable recommendation based on quality.
+        
+        Args:
+            quality_rating: Overall quality classification
+            confidence_score: Confidence score
+            completeness_pct: Completeness percentage
+            problem_count: Number of problems
+            
+        Returns:
+            Recommendation text
+        """
+        if quality_rating == QualityRating.GOOD:
+            return f"Quality: Good ✓ ({int(confidence_score * 100)}% confidence). Proceed with AI processing."
+        
+        elif quality_rating == QualityRating.FAIR:
+            issues = []
+            if confidence_score < 0.90:
+                issues.append(f"{int((1 - confidence_score) * 100)}% uncertain")
+            if completeness_pct < 80:
+                issues.append(f"{int(100 - completeness_pct)}% incomplete")
+            if problem_count > 0:
+                issues.append(f"{problem_count} problem areas")
+            
+            return f"Quality: Fair ⚠ ({', '.join(issues)}). Review before proceeding."
+        
+        else:  # POOR
+            issues = []
+            if confidence_score < 0.70:
+                issues.append(f"low confidence ({int(confidence_score * 100)}%)")
+            if completeness_pct < 50:
+                issues.append(f"very incomplete ({int(completeness_pct)}%)")
+            if problem_count > 0:
+                issues.append(f"{problem_count} problems")
+            
+            return f"Quality: Poor ⚠ Audio cleanup recommended - {', '.join(issues)}"
+    
+    def _quality_rating_from_confidence(self, confidence_score: float) -> QualityRating:
+        """Get quality rating based on confidence score alone.
+        
+        Helper method for testing and simple classifications.
+        
+        Args:
+            confidence_score: Confidence score (0.0-1.0)
+            
+        Returns:
+            QualityRating based on confidence
+        """
+        if confidence_score > 0.90:
+            return QualityRating.GOOD
+        elif confidence_score >= 0.70:
+            return QualityRating.FAIR
+        else:
+            return QualityRating.POOR

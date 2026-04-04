@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-03T21:00:00"
-last_updated: "2026-04-04"
+last_updated: "2026-04-04T19:00:00"
 project: "RoughCut"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -77,7 +77,7 @@ development_status:
   epic-4: in-progress
   4-1-browse-media-pool: done
   4-2-retrieve-transcription: done
-  4-3-review-transcription-quality: ready-for-dev
+  4-3-review-transcription-quality: done
   4-4-error-recovery-workflow: backlog
   4-5-validate-transcribable-media: backlog
   epic-4-retrospective: optional

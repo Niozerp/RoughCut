@@ -14,7 +14,7 @@ from pathlib import Path
 from ...config.settings import ConfigManager
 from ...config.models import MediaFolderConfig
 from ...backend.indexing import MediaIndexer, FileScanner
-from ...backend.database.models import MediaAsset, IndexResult
+from ...backend.database.models import MediaAsset, IndexResult, Transcript, TranscriptQuality
 from ...backend.media.models import MediaPoolItem, MediaType
 
 # Valid media categories
@@ -1194,6 +1194,107 @@ def _resolve_get_transcription(clip_id: str, file_path: Optional[str] = None, pr
     return None
 
 
+def analyze_transcription_quality(params: dict) -> dict:
+    """Handle analyze_transcription_quality request.
+    
+    Analyzes transcript quality and returns detailed metrics.
+    Used by Story 4.3 (Review Transcription Quality) to determine
+    if transcription is suitable for AI processing.
+    
+    Request format: {
+        "method": "analyze_transcription_quality",
+        "params": {
+            "transcript": {
+                "text": "Speaker 1: Welcome... [inaudible]...",
+                "word_count": 5234,
+                "duration_seconds": 2280,
+                "has_speaker_labels": true,
+                "confidence_score": 0.67
+            },
+            "clip_name": "interview_footage_01.mp4"
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "quality_rating": "poor",
+            "confidence_score": 0.67,
+            "completeness_pct": 45,
+            "problem_count": 12,
+            "problem_areas": [
+                {"type": "inaudible", "position": 234, "text": "[inaudible]"}
+            ],
+            "recommendation": "Audio cleanup recommended - 12 problem areas detected"
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - transcript: Transcript data dictionary
+            - clip_name: Name of clip (for logging)
+            
+    Returns:
+        Response dictionary with quality analysis
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        transcript_data = params.get('transcript')
+        clip_name = params.get('clip_name', 'Unknown')
+        
+        if not transcript_data:
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'transcript data is required',
+                    'suggestion': 'Provide transcript data from retrieve_transcription'
+                }
+            }
+        
+        # Parse transcript from dictionary
+        try:
+            transcript = Transcript.from_dict(transcript_data)
+        except (ValueError, TypeError) as e:
+            return {
+                'error': {
+                    'code': 'INVALID_TRANSCRIPT',
+                    'category': 'validation',
+                    'message': f'Invalid transcript data: {str(e)}',
+                    'suggestion': 'Check transcript format and required fields'
+                }
+            }
+        
+        # Analyze quality
+        quality = transcript.analyze_quality()
+        
+        logger.info(
+            f"Analyzed transcription quality for {clip_name}: "
+            f"{quality.quality_rating.value}, "
+            f"{quality.problem_count} problems"
+        )
+        
+        return {
+            'result': quality.to_dict()
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error analyzing transcription quality for {params.get('clip_name', 'Unknown')}")
+        return {
+            'error': {
+                'code': 'QUALITY_ANALYSIS_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Check transcript data format and try again'
+            }
+        }
+
+
 # Registry of media handlers
 MEDIA_HANDLERS = {
     'get_media_folders': get_media_folders,
@@ -1211,4 +1312,6 @@ MEDIA_HANDLERS = {
     'select_clip': select_clip,
     'get_selected_clip': get_selected_clip,
     'retrieve_transcription': retrieve_transcription,
+    # Story 4.3 - Quality Analysis
+    'analyze_transcription_quality': analyze_transcription_quality,
 }
