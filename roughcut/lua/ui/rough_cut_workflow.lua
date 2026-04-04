@@ -190,41 +190,63 @@ function _showMediaSelectionStep()
         })
     end)
     
-    -- Placeholder for media list (Epic 4 will implement full media browser)
+    -- Launch Media Browser button
     ok = pcall(function()
         currentWindowRef:Add({
             type = "Label",
-            text = "Media Pool Browser",
+            text = "Step 1: Select your source media",
             font = { size = 14, bold = true }
         })
         
         currentWindowRef:Add({
             type = "Label",
-            text = "(Media selection will be implemented in Epic 4)",
+            text = "Browse your Resolve Media Pool and select the video clip you want to use for the rough cut.",
             font = { size = 11, italic = true },
-            alignment = { alignHCenter = true }
+            wordWrap = true
         })
         
-        -- Mock media selection for Story 3.3
         currentWindowRef:Add({
             type = "Label",
             text = "",
-            height = 10
+            height = 15
         })
         
-        -- Simulate media selection button
-        local mockBtn = currentWindowRef:Add({
+        -- Launch Media Browser button
+        local launchBtn = currentWindowRef:Add({
             type = "Button",
-            id = "btnMockMediaSelect",
-            text = "Select Mock Media for Testing",
-            height = 40,
-            alignment = { alignHCenter = true }
+            id = "btnLaunchMediaBrowser",
+            text = "Browse Media Pool...",
+            height = 45,
+            width = 200,
+            alignment = { alignHCenter = true },
+            font = { size = 12, bold = true }
         })
         
-        if mockBtn then
-            mockBtn.Clicked = function()
-                _selectMockMedia()
+        if launchBtn then
+            launchBtn.Clicked = function()
+                _launchMediaBrowser()
             end
+        end
+        
+        -- Selected clip display (initially empty)
+        currentWindowRef:Add({
+            type = "Label",
+            text = "",
+            height = 20
+        })
+        
+        local selectedLabel = currentWindowRef:Add({
+            type = "Label",
+            id = "lblSelectedClip",
+            text = "No clip selected",
+            font = { size = 11, italic = true },
+            alignment = { alignHCenter = true },
+            color = { 0.5, 0.5, 0.5 }
+        })
+        
+        -- Store reference for updating
+        if selectedLabel then
+            currentWindowRef.lblSelectedClip = selectedLabel
         end
     end)
     
@@ -233,33 +255,70 @@ function _showMediaSelectionStep()
     end
     
     -- Navigation buttons
-    _buildNavigationButtons(currentWindowRef, true, false)
+    _buildNavigationButtons(currentWindowRef, false, false)
 end
 
--- Simulate selecting mock media
+-- Launch the Media Browser dialog
+function _launchMediaBrowser()
+    logger.info("Launching Media Browser")
+    
+    -- Import MediaBrowser module
+    local MediaBrowser = require("media_browser")
+    
+    -- Set callback for when selection is confirmed
+    MediaBrowser.setOnSelectionConfirmed(function(clipData)
+        logger.info("Media selected: " .. tostring(clipData.name))
+        
+        -- Update UI with selected clip
+        _updateSelectedClipDisplay(clipData)
+        
+        -- Send to protocol to store for Epic 4.2
+        local result = protocol.request({
+            method = "select_clip",
+            params = {
+                clip_id = clipData.id,
+                file_path = clipData.path,
+                clip_name = clipData.name
+            }
+        })
+        
+        if result.error then
+            _showError("Failed to store clip selection: " .. tostring(result.error.message))
+            return
+        end
+        
+        -- Enable Next button
+        _enableNextButton(true)
+    end)
+    
+    -- Show the media browser
+    MediaBrowser.show()
+end
+
+-- Update the selected clip display
+function _updateSelectedClipDisplay(clipData)
+    pcall(function()
+        if currentWindowRef and currentWindowRef.lblSelectedClip then
+            local duration = ""
+            if clipData.duration then
+                local mins = math.floor(clipData.duration / 60)
+                local secs = math.floor(clipData.duration % 60)
+                duration = string.format(" (%d:%02d)", mins, secs)
+            end
+            
+            currentWindowRef.lblSelectedClip.Text = 
+                "Selected: " .. tostring(clipData.name) .. duration
+            currentWindowRef.lblSelectedClip.Color = { 0, 0.6, 0 } -- Green
+            currentWindowRef.lblSelectedClip.Font = { size = 11, bold = true }
+        end
+    end)
+end
+
+-- Simulate selecting mock media (deprecated - replaced by MediaBrowser)
+-- Kept for backwards compatibility but no longer used
 function _selectMockMedia()
-    if not sessionId then
-        _showError("No active session")
-        return
-    end
-    
-    -- Call protocol to select media
-    local result = protocol.request({
-        method = "select_media_for_session",
-        params = {
-            session_id = sessionId,
-            clip_id = "mock_clip_001",
-            clip_name = "Test Interview Segment"
-        }
-    })
-    
-    if result.error then
-        _showError("Failed to select media: " .. tostring(result.error.message))
-        return
-    end
-    
-    -- Simulate transcription review (bypass to format selection for Story 3.3)
-    _simulateTranscriptionReview()
+    logger.warn("_selectMockMedia is deprecated, use MediaBrowser instead")
+    _launchMediaBrowser()
 end
 
 -- Simulate transcription review step

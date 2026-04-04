@@ -14,6 +14,7 @@ from ...config.settings import ConfigManager
 from ...config.models import MediaFolderConfig
 from ...backend.indexing import MediaIndexer, FileScanner
 from ...backend.database.models import MediaAsset, IndexResult
+from ...backend.media.models import MediaPoolItem, MediaType
 
 # Valid media categories
 VALID_CATEGORIES = {'music', 'sfx', 'vfx', 'folder'}
@@ -24,6 +25,11 @@ MAX_PATH_LENGTH = 4096
 # Global indexer instance
 _indexer: Optional[MediaIndexer] = None
 _event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+# Global workflow state for selected clip
+_workflow_state = {
+    'selected_clip': None,  # Stores the currently selected clip for Story 4.2
+}
 
 
 # Set up logger
@@ -831,6 +837,215 @@ def trigger_reindex(params: dict) -> dict:
             logger.warning(f"Error disconnecting from database: {e}")
 
 
+def list_media_pool(params: dict) -> dict:
+    """Handle list_media_pool request.
+    
+    Lists all video clips from Resolve's Media Pool.
+    Called by Lua layer after querying Resolve API.
+    
+    Request format: {
+        "method": "list_media_pool",
+        "params": {
+            "clips": [...]  # Clip data from Resolve
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "clips": [
+            {
+                "clip_name": "interview_take1",
+                "file_path": "/path/to/clip.mov",
+                "duration_seconds": 2280.5,
+                "clip_id": "resolve_clip_001",
+                "media_type": "video",
+                "is_transcribable": true
+            }
+        ],
+        "total_count": 15,
+        "video_count": 12
+    }
+    
+    Args:
+        params: Request parameters containing clips from Resolve
+        
+    Returns:
+        Response dictionary with processed clip data
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        # Get clips data from Lua (Resolve already queried)
+        clips_data = params.get('clips', [])
+        
+        if not isinstance(clips_data, list):
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'clips must be a list',
+                    'suggestion': 'Provide clips as an array'
+                }
+            }
+        
+        # Convert to MediaPoolItem objects
+        clips: List[MediaPoolItem] = []
+        for clip_data in clips_data:
+            try:
+                item = MediaPoolItem.from_resolve_clip(clip_data)
+                clips.append(item)
+            except ValueError as e:
+                # Skip invalid clips but log warning
+                logger.warning(f"Skipping invalid clip: {e}")
+                continue
+        
+        # Filter to transcribable (video) clips only
+        video_clips = [c for c in clips if c.is_transcribable()]
+        
+        return {
+            'clips': [c.to_dict() for c in video_clips],
+            'total_count': len(clips),
+            'video_count': len(video_clips)
+        }
+        
+    except Exception as e:
+        logger.exception("Error listing media pool")
+        return {
+            'error': {
+                'code': 'MEDIA_POOL_FETCH_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'suggestion': 'Check Resolve is running and a project is open'
+            }
+        }
+
+
+def select_clip(params: dict) -> dict:
+    """Handle select_clip request.
+    
+    Confirms clip selection for rough cut workflow.
+    Stores the selected clip for use by Story 4.2 (transcription retrieval).
+    
+    Request format: {
+        "method": "select_clip",
+        "params": {
+            "clip_id": "resolve_clip_001",
+            "file_path": "/path/to/clip.mov",
+            "clip_name": "interview_take1"
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "selected_clip": {
+            "clip_id": "resolve_clip_001",
+            "file_path": "/path/to/clip.mov",
+            "clip_name": "interview_take1"
+        },
+        "message": "Selected clip: interview_take1"
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - clip_id: Resolve's unique clip identifier
+            - file_path: Absolute path to media file
+            - clip_name: Display name of clip
+            
+    Returns:
+        Response dictionary confirming selection
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        clip_id = params.get('clip_id')
+        file_path = params.get('file_path')
+        clip_name = params.get('clip_name')
+        
+        if not all([clip_id, file_path, clip_name]):
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'clip_id, file_path, and clip_name are required',
+                    'suggestion': 'Provide all required clip information'
+                }
+            }
+        
+        # Store selection for use by Story 4.2
+        global _workflow_state
+        _workflow_state['selected_clip'] = {
+            'clip_id': clip_id,
+            'file_path': file_path,
+            'clip_name': clip_name
+        }
+        
+        logger.info(f"Clip selected: {clip_name} ({clip_id})")
+        
+        return {
+            'selected_clip': _workflow_state['selected_clip'],
+            'message': f'Selected clip: {clip_name}'
+        }
+        
+    except Exception as e:
+        logger.exception("Error selecting clip")
+        return {
+            'error': {
+                'code': 'CLIP_SELECTION_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'suggestion': 'Try selecting the clip again'
+            }
+        }
+
+
+def get_selected_clip(params: dict) -> dict:
+    """Handle get_selected_clip request.
+    
+    Returns the currently selected clip (for Story 4.2).
+    
+    Request format: {"method": "get_selected_clip", "params": {}, "id": "..."}
+    
+    Response format: {
+        "has_selection": true,
+        "selected_clip": {
+            "clip_id": "resolve_clip_001",
+            "file_path": "/path/to/clip.mov",
+            "clip_name": "interview_take1"
+        }
+    }
+    
+    Args:
+        params: Request parameters (unused)
+        
+    Returns:
+        Response dictionary with current selection state
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    global _workflow_state
+    selected = _workflow_state.get('selected_clip')
+    
+    if selected:
+        return {
+            'has_selection': True,
+            'selected_clip': selected
+        }
+    else:
+        return {
+            'has_selection': False,
+            'selected_clip': None
+        }
+
+
 # Registry of media handlers
 MEDIA_HANDLERS = {
     'get_media_folders': get_media_folders,
@@ -843,4 +1058,8 @@ MEDIA_HANDLERS = {
     'cancel_indexing': cancel_indexing,
     'get_asset_counts': get_asset_counts,
     'trigger_reindex': trigger_reindex,
+    # Epic 4 - Media Selection handlers
+    'list_media_pool': list_media_pool,
+    'select_clip': select_clip,
+    'get_selected_clip': get_selected_clip,
 }
