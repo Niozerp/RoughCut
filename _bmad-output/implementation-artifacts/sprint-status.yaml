@@ -65,8 +65,8 @@ development_status:
   
   # Epic 3: Format Template System - IN PROGRESS
   epic-3: in-progress
-  3-1-view-format-templates: review
-  3-2-preview-template-structure: ready-for-dev
+  3-1-view-format-templates: done
+  3-2-preview-template-structure: in-progress
   3-3-select-template-for-rough-cut: backlog
   3-4-load-templates-from-markdown: backlog
   3-5-template-asset-groups: backlog

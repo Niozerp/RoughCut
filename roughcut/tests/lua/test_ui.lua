@@ -224,7 +224,7 @@ end
 
 -- Test 8: Format Management Window Creation
 function tests.testFormatManagementWindow()
-    local formatManagement = require("ui.format_management")
+    local formatManagement = require("ui.formats_manager")
     local mockUI = createMockUIManager()
     local mockParent = { id = "ParentWindow" }
     
@@ -266,7 +266,7 @@ function tests.testChildWindowsBackButtons()
     assert(hasBackButton, "Media management window should have back button")
     
     -- Test format management
-    local formatManagement = require("ui.format_management")
+    local formatManagement = require("ui.formats_manager")
     local formatWindow = formatManagement.create(mockUI, mockParent)
     hasBackButton = false
     for _, child in ipairs(formatWindow.children) do

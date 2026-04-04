@@ -6,12 +6,20 @@ metadata from YAML frontmatter.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import yaml
 
 from .models import FormatTemplate, FormatTemplateCollection
+
+logger = logging.getLogger(__name__)
+
+# Maximum file size to read (10MB) to prevent DoS
+MAX_FILE_SIZE = 10 * 1024 * 1024
+# Maximum number of templates to load to prevent DoS
+MAX_TEMPLATES = 1000
 
 
 class TemplateScanner:
@@ -26,7 +34,12 @@ class TemplateScanner:
         
         Args:
             templates_dir: Path to the templates/formats/ directory
+            
+        Raises:
+            ValueError: If templates_dir is empty or None
         """
+        if not templates_dir:
+            raise ValueError("templates_dir is required")
         self._templates_dir = Path(templates_dir)
         self._cache: Optional[FormatTemplateCollection] = None
         self._cache_mtime: float = 0
@@ -40,13 +53,23 @@ class TemplateScanner:
         Returns:
             List of valid FormatTemplate instances
         """
-        # Check if cache is still valid
-        current_mtime = self._get_directory_mtime()
-        if self._cache is not None and current_mtime <= self._cache_mtime:
+        # Check if cache is still valid (use strict < to avoid stale cache)
+        try:
+            current_mtime = self._get_directory_mtime()
+        except (OSError, FileNotFoundError, PermissionError) as e:
+            logger.warning(f"Failed to get directory mtime: {e}")
+            return []
+        
+        if self._cache is not None and current_mtime < self._cache_mtime:
             return self._cache.get_all()
         
         # Scan directory for templates
-        templates = self._perform_scan()
+        try:
+            templates = self._perform_scan()
+        except Exception as e:
+            logger.error(f"Failed to perform scan: {e}")
+            self._cache = None
+            return []
         
         # Update cache
         self._cache = FormatTemplateCollection(templates)
@@ -67,17 +90,44 @@ class TemplateScanner:
         
         Returns:
             Most recent mtime of directory or any .md file within it
+            
+        Raises:
+            OSError: If directory operations fail
+            FileNotFoundError: If directory doesn't exist
+            PermissionError: If permission denied
         """
-        if not self._templates_dir.exists():
+        try:
+            if not self._templates_dir.exists():
+                return 0
+            
+            max_mtime = self._templates_dir.stat().st_mtime
+        except (OSError, FileNotFoundError, PermissionError) as e:
+            logger.warning(f"Failed to stat directory {self._templates_dir}: {e}")
             return 0
         
-        max_mtime = self._templates_dir.stat().st_mtime
-        
         # Check all markdown files
-        for md_file in self._templates_dir.glob("*.md"):
-            file_mtime = md_file.stat().st_mtime
-            if file_mtime > max_mtime:
-                max_mtime = file_mtime
+        try:
+            md_files = list(self._templates_dir.glob("*.md"))
+            # Limit number of files to prevent DoS
+            if len(md_files) > MAX_TEMPLATES:
+                logger.warning(f"Too many template files ({len(md_files)}), limiting to {MAX_TEMPLATES}")
+                md_files = md_files[:MAX_TEMPLATES]
+            
+            for md_file in md_files:
+                # Skip symlinks to prevent path traversal
+                if md_file.is_symlink():
+                    logger.debug(f"Skipping symlink: {md_file}")
+                    continue
+                
+                try:
+                    file_mtime = md_file.stat().st_mtime
+                    if file_mtime > max_mtime:
+                        max_mtime = file_mtime
+                except (OSError, PermissionError) as e:
+                    logger.debug(f"Failed to stat file {md_file}: {e}")
+                    continue
+        except OSError as e:
+            logger.warning(f"Failed to glob markdown files: {e}")
         
         return max_mtime
     
@@ -93,7 +143,22 @@ class TemplateScanner:
             return templates
         
         # Find all markdown files
-        for md_file in sorted(self._templates_dir.glob("*.md")):
+        try:
+            md_files = list(self._templates_dir.glob("*.md"))
+            # Limit number of files to prevent DoS
+            if len(md_files) > MAX_TEMPLATES:
+                logger.warning(f"Too many template files ({len(md_files)}), limiting to {MAX_TEMPLATES}")
+                md_files = md_files[:MAX_TEMPLATES]
+        except OSError as e:
+            logger.error(f"Failed to glob directory: {e}")
+            return templates
+        
+        for md_file in sorted(md_files):
+            # Skip symlinks to prevent path traversal
+            if md_file.is_symlink():
+                logger.debug(f"Skipping symlink: {md_file}")
+                continue
+            
             template = self._parse_template_file(md_file)
             if template is not None:
                 templates.append(template)
@@ -113,33 +178,57 @@ class TemplateScanner:
             FormatTemplate if valid, None otherwise
         """
         try:
+            # Check file size before reading
+            try:
+                file_size = file_path.stat().st_size
+                if file_size > MAX_FILE_SIZE:
+                    logger.warning(f"Skipping large file {file_path}: {file_size} bytes > {MAX_FILE_SIZE}")
+                    return None
+            except (OSError, FileNotFoundError, PermissionError) as e:
+                logger.warning(f"Failed to stat file {file_path}: {e}")
+                return None
+            
             content = file_path.read_text(encoding="utf-8")
             
             # Parse frontmatter
             frontmatter = self._extract_frontmatter(content)
             if frontmatter is None:
+                logger.debug(f"No frontmatter found in {file_path}")
                 return None
             
-            # Extract required fields
-            name = frontmatter.get("name", "").strip()
-            description = frontmatter.get("description", "").strip()
+            # Validate frontmatter is a dict
+            if not isinstance(frontmatter, dict):
+                logger.warning(f"Invalid frontmatter type in {file_path}: {type(frontmatter)}")
+                return None
+            
+            # Extract required fields and convert to string
+            name = str(frontmatter.get("name", "")).strip()
+            description = str(frontmatter.get("description", "")).strip()
             
             # Validate required fields
             if not name or not description:
+                logger.debug(f"Missing required fields in {file_path}")
                 return None
             
-            # Generate ID from filename
-            template_id = FormatTemplate.id_from_path(file_path)
+            # Generate slug from filename with sanitization
+            try:
+                slug = FormatTemplate.slug_from_path(file_path)
+            except Exception as e:
+                logger.warning(f"Failed to generate slug for {file_path}: {e}")
+                return None
             
             return FormatTemplate(
-                id=template_id,
+                slug=slug,
                 name=name,
                 description=description,
                 file_path=file_path
             )
             
-        except Exception:
-            # Skip files that can't be read or parsed
+        except UnicodeDecodeError as e:
+            logger.warning(f"Unicode decode error in {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to parse template file {file_path}: {e}")
             return None
     
     def _extract_frontmatter(self, content: str) -> Optional[Dict[str, Any]]:
@@ -160,17 +249,36 @@ class TemplateScanner:
         if not content.startswith("---"):
             return None
         
-        # Find the end of frontmatter
-        end_marker = content.find("\n---", 3)
-        if end_marker == -1:
+        # Find the end of frontmatter (first --- on its own line after start)
+        # Use regex-like approach to handle --- inside YAML values
+        lines = content.split('\n')
+        if len(lines) < 2:
+            return None
+        
+        # Find the closing --- (must be on its own line)
+        end_idx = -1
+        for i in range(1, len(lines)):
+            if lines[i].strip() == '---':
+                end_idx = i
+                break
+        
+        if end_idx == -1:
             return None
         
         # Extract YAML content
-        yaml_content = content[3:end_marker].strip()
+        yaml_lines = lines[1:end_idx]
+        yaml_content = '\n'.join(yaml_lines)
+        
+        if not yaml_content.strip():
+            # Empty frontmatter is valid, return empty dict
+            return {}
         
         try:
-            return yaml.safe_load(yaml_content) or {}
-        except yaml.YAMLError:
+            result = yaml.safe_load(yaml_content)
+            # yaml.safe_load returns None for empty string, convert to dict
+            return result if result is not None else {}
+        except yaml.YAMLError as e:
+            logger.debug(f"YAML parse error: {e}")
             return None
 
 

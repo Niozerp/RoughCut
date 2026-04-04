@@ -49,7 +49,7 @@ description: "Corporate interview format"
         
         # Assert
         self.assertEqual(len(templates), 1)
-        self.assertEqual(templates[0].id, "youtube-interview")
+        self.assertEqual(templates[0].slug, "youtube-interview")
         self.assertEqual(templates[0].name, "YouTube Interview")
         self.assertEqual(templates[0].description, "Corporate interview format")
     

@@ -4,7 +4,7 @@
 
 -- Import placeholder windows for navigation
 local mediaManagement = require("ui.media_management")
-local formatManagement = require("ui.format_management")
+local formatManagement = require("ui.formats_manager")
 local roughCutWorkflow = require("ui.rough_cut_workflow")
 
 local navigation = {}

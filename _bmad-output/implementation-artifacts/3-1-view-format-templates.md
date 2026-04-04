@@ -257,11 +257,44 @@ No debug logs generated - implementation completed successfully.
 
 ## Story Completion Status
 
-**Status:** review
+**Status:** done
 
-**Completion Note:** Story 3.1 implementation complete. Format template discovery, data models, protocol handlers, Lua GUI, and sample templates all implemented and tested.
+**Completion Note:** Story 3.1 implementation complete. All code review findings have been addressed and fixed. Format template discovery, data models, protocol handlers, Lua GUI, and sample templates all implemented, tested, and reviewed.
+
+### Review Findings (2026-04-04)
+
+**Decision-Needed Findings (Resolved):**
+- [x] [Review][Decision] Lua Module Filename Deviation — Renamed `format_management.lua` to `formats_manager.lua` per spec
+- [x] [Review][Decision] Model Field Name Deviation — Renamed `id` field to `slug` in FormatTemplate per spec
+
+**Patch Findings (All Fixed):**
+- [x] [Review][Patch] Missing Protocol Module Dependency [formats_manager.lua:1] — Added safe require with fallback stub
+- [x] [Review][Patch] Unbounded File Reading DoS Risk [scanner.py:51-52] — Added 10MB file size limit and MAX_TEMPLATES=1000
+- [x] [Review][Patch] Path Traversal via Filename [scanner.py:37] — Added path sanitization in slug_from_path()
+- [x] [Review][Patch] Cache Invalidation Bug [scanner.py:45] — Fixed <= to < for proper cache invalidation
+- [x] [Review][Patch] Race Condition in Concurrent Loading [formats_manager.lua:166-168] — Added isLoading guard
+- [x] [Review][Patch] Non-Functional Selection Mechanism [formats_manager.lua:299-307] — Implemented _selectFormat() with visual feedback
+- [x] [Review][Patch] Silent Exception Swallowing [scanner.py:141-143] — Added logging for all exception cases
+- [x] [Review][Patch] Missing Request ID Collision Handling [formats_manager.lua:174] — Added counter + random for unique IDs
+- [x] [Review][Patch] Directory/Symlink Race Conditions [scanner.py:33-38] — Added symlink checks and OSError handling
+- [x] [Review][Patch] Frontmatter Type Validation Missing [scanner.py:53-56] — Added isinstance(frontmatter, dict) check
+- [x] [Review][Patch] Naive Frontmatter Parsing [scanner.py:69] — Rewrote to handle --- inside YAML values
+- [x] [Review][Patch] Missing Duplicate ID Protection [models.py:87-93] — Added _slugs set and duplicate rejection
+- [x] [Review][Patch] mkdir Permission Failure Handling [formats.py:33-34] — Added explicit PermissionError handling
+- [x] [Review][Patch] Lua nil Response Guards [formats_manager.lua:181-188] — Added type validation for response
+- [x] [Review][Patch] Lua Type Validation [formats_manager.lua:188-217] — Added validation for result.formats structure
+- [x] [Review][Patch] Input Validation on Protocol Params [formats.py:13] — Added params validation
+- [x] [Review][Patch] Empty YAML Content Handling [scanner.py:69] — Handle empty frontmatter returning {}
+- [x] [Review][Patch] Exception Handling for ID Generation [scanner.py:59] — Added try/except around slug_from_path()
+- [x] [Review][Patch] Standardize Error Response Format [formats.py:43-48] — Added ERROR_CODES dict and specific error types
+- [x] [Review][Patch] Unbounded File List DoS [scanner.py:42] — Added MAX_TEMPLATES limit
+- [x] [Review][Patch] pcall Error Recovery Pattern [formats_manager.lua] — Added proper error handling with logging
+
+**Deferred Findings:**
+- [x] [Review][Defer] Unbounded Cache Growth — Architectural limitation, acceptable for expected <50 templates
+- [x] [Review][Defer] Thread Safety in FormatTemplateCollection — Python GIL provides sufficient protection for current use
 
 **Next Steps:**
-1. Run `code-review` for peer review
-2. After review passes, story status will be marked as "done"
+1. ✅ Code review completed
+2. ✅ All findings addressed
 3. Continue with Story 3.2 implementation
