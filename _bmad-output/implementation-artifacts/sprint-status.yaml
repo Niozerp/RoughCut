@@ -67,7 +67,7 @@ development_status:
   epic-3: in-progress
   3-1-view-format-templates: done
   3-2-preview-template-structure: done
-  3-3-select-template-for-rough-cut: backlog
+  3-3-select-template-for-rough-cut: done
   3-4-load-templates-from-markdown: backlog
   3-5-template-asset-groups: backlog
   3-6-parse-format-rules: backlog

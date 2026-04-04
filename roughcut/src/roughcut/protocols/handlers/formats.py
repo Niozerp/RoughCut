@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from ...backend.formats import TemplateScanner
 from ...backend.formats.parser import TemplateParser
+from ...backend.workflows.session import get_session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,9 @@ ERROR_CODES = {
     "DIRECTORY_NOT_FOUND": "DIRECTORY_NOT_FOUND",
     "PERMISSION_DENIED": "PERMISSION_DENIED",
     "TEMPLATE_NOT_FOUND": "TEMPLATE_NOT_FOUND",
-    "TEMPLATE_PARSE_ERROR": "TEMPLATE_PARSE_ERROR"
+    "TEMPLATE_PARSE_ERROR": "TEMPLATE_PARSE_ERROR",
+    "SESSION_NOT_FOUND": "SESSION_NOT_FOUND",
+    "INVALID_STATE": "INVALID_STATE"
 }
 
 
@@ -219,6 +222,180 @@ def get_template_preview(params: Dict[str, Any] | None) -> Dict[str, Any]:
         }
 
 
+def select_format_template(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for select_format_template method.
+    
+    Selects a format template for the current rough cut session.
+    Updates session state and returns confirmation with template metadata.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - template_id: Template slug to select (required)
+    
+    Returns:
+        Dictionary with session_id, template_id, template_name, status, and can_generate flag
+        or error response if selection fails
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        logger.warning(f"Invalid params type: {type(params)}")
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Invalid parameters: expected object",
+                "suggestion": "Check request format"
+            }
+        }
+    
+    # Extract required parameters
+    session_id = params.get("session_id")
+    template_id = params.get("template_id")
+    
+    if not session_id or not isinstance(session_id, str):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Missing required parameter: session_id",
+                "suggestion": "Provide a session_id string in the params object"
+            }
+        }
+    
+    if not template_id or not isinstance(template_id, str):
+        return {
+            "error": {
+                "code": ERROR_CODES["INVALID_PARAMS"],
+                "category": "validation",
+                "message": "Missing required parameter: template_id",
+                "suggestion": "Provide a template_id string in the params object"
+            }
+        }
+    
+    try:
+        # Get session manager and retrieve session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            logger.warning(f"Session not found: {session_id}")
+            return {
+                "error": {
+                    "code": ERROR_CODES["SESSION_NOT_FOUND"],
+                    "category": "not_found",
+                    "message": f"Session '{session_id}' not found",
+                    "suggestion": "Create a new rough cut session or check the session ID"
+                }
+            }
+        
+        # Sanitize template_id
+        sanitized_id = _sanitize_template_id(template_id)
+        if not sanitized_id:
+            return {
+                "error": {
+                    "code": ERROR_CODES["INVALID_PARAMS"],
+                    "category": "validation",
+                    "message": f"Invalid template_id: '{template_id}'",
+                    "suggestion": "Template ID should be alphanumeric with dashes"
+                }
+            }
+        
+        # Find templates directory and locate template
+        templates_dir = _find_templates_directory()
+        template_file = templates_dir / f"{sanitized_id}.md"
+        
+        if not template_file.exists():
+            logger.warning(f"Template not found: {template_file}")
+            return {
+                "error": {
+                    "code": ERROR_CODES["TEMPLATE_NOT_FOUND"],
+                    "category": "not_found",
+                    "message": f"Template '{template_id}' not found",
+                    "suggestion": "Check that the template file exists in templates/formats/"
+                }
+            }
+        
+        # Parse the template
+        parser = TemplateParser()
+        template = parser.parse_file(template_file)
+        
+        if template is None:
+            return {
+                "error": {
+                    "code": ERROR_CODES["TEMPLATE_PARSE_ERROR"],
+                    "category": "parse_error",
+                    "message": f"Failed to parse template '{template_id}'",
+                    "suggestion": "Template file may be malformed or missing required fields"
+                }
+            }
+        
+        # Validate session state for format selection
+        if not session.can_select_format():
+            logger.warning(
+                f"Invalid state for format selection: {session.status} "
+                f"(session: {session_id})"
+            )
+            return {
+                "error": {
+                    "code": ERROR_CODES["INVALID_STATE"],
+                    "category": "validation",
+                    "message": f"Cannot select format from current state: {session.status}",
+                    "suggestion": "Complete transcription review before selecting a format template"
+                }
+            }
+        
+        # Update session with selected template
+        try:
+            session.select_format(template)
+            session_manager.update_session(session)
+        except ValueError as e:
+            logger.error(f"Failed to select format: {e}")
+            return {
+                "error": {
+                    "code": ERROR_CODES["INVALID_STATE"],
+                    "category": "validation",
+                    "message": f"Cannot select format: {str(e)}",
+                    "suggestion": "Check session state and try again"
+                }
+            }
+        
+        # Return success response
+        return {
+            "result": {
+                "session_id": session.session_id,
+                "template_id": template.slug,
+                "template_name": template.name,
+                "status": session.status,
+                "can_generate": session.can_generate()
+            }
+        }
+        
+    except PermissionError as e:
+        logger.error(f"Permission denied: {e}")
+        return {
+            "error": {
+                "code": ERROR_CODES["PERMISSION_DENIED"],
+                "category": "filesystem",
+                "message": f"Permission denied: {str(e)}",
+                "suggestion": "Check file permissions for the template"
+            }
+        }
+    except Exception as e:
+        logger.exception(f"Unexpected error selecting format template: {e}")
+        return {
+            "error": {
+                "code": ERROR_CODES["TEMPLATE_PARSE_ERROR"],
+                "category": "internal",
+                "message": f"Failed to select format template: {str(e)}",
+                "suggestion": "Try again or contact support if the problem persists"
+            }
+        }
+
+
 def _sanitize_template_id(template_id: str) -> str:
     """Sanitize template ID to prevent path traversal attacks.
     
@@ -314,4 +491,5 @@ def _find_templates_directory() -> Path:
 FORMAT_HANDLERS = {
     "get_available_formats": get_available_formats,
     "get_template_preview": get_template_preview,
+    "select_format_template": select_format_template,
 }
