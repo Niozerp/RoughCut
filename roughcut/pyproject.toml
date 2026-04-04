@@ -1,0 +1,22 @@
+[project]
+name = "roughcut"
+version = "0.1.0"
+description = "AI-powered DaVinci Resolve plugin for rough cut automation"
+authors = [
+    {name = "Jon Ausherman",email = "6740250+Niozerp@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml (>=6.0.3,<7.0.0)",
+    "cryptography (>=41.0.0,<45.0.0)",
+    "notion-client (>=2.2.0,<3.0.0)",
+    "openai (>=1.0.0,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "roughcut", from = "src"}]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

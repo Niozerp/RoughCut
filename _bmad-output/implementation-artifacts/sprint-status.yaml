@@ -1,0 +1,106 @@
+# generated: 2026-04-03T21:00:00
+# last_updated: 2026-04-03T21:00:00
+# project: RoughCut
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: /Users/niozerp/Documents/AI_context_stuff/repos/RoughCut/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: "2026-04-03T21:00:00"
+last_updated: "2026-04-03T22:00:00"
+project: "RoughCut"
+project_key: "NOKEY"
+tracking_system: "file-system"
+story_location: "/Users/niozerp/Documents/AI_context_stuff/repos/RoughCut/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: Foundation & Installation
+  epic-1: done
+  1-1-drag-and-drop-installation: done
+  1-2-scripts-menu-integration: done
+  1-3-python-backend-auto-installation: done
+  1-4-main-window-navigation: done
+  1-5-optional-notion-configuration: done
+  1-6-notion-connection-validation: done
+  epic-1-retrospective: optional
+  
+  # Epic 2: Media Asset Management - IN PROGRESS
+  epic-2: in-progress
+  2-1-media-folder-configuration: ready-for-dev
+  2-2-incremental-media-indexing: ready-for-dev
+  2-3-ai-powered-tag-generation: review
+  2-4-asset-count-dashboard: backlog
+  2-5-spacetimedb-storage: backlog
+  2-6-re-indexing-capability: backlog
+  2-7-notion-sync: backlog
+  epic-2-retrospective: optional
+  
+  # Epic 3: Format Template System
+  epic-3: backlog
+  3-1-view-format-templates: backlog
+  3-2-preview-template-structure: backlog
+  3-3-select-template-for-rough-cut: backlog
+  3-4-load-templates-from-markdown: backlog
+  3-5-template-asset-groups: backlog
+  3-6-parse-format-rules: backlog
+  epic-3-retrospective: optional
+  
+  # Epic 4: Media Selection & Transcription
+  epic-4: backlog
+  4-1-browse-media-pool: backlog
+  4-2-retrieve-transcription: backlog
+  4-3-review-transcription-quality: backlog
+  4-4-error-recovery-workflow: backlog
+  4-5-validate-transcribable-media: backlog
+  epic-4-retrospective: optional
+  
+  # Epic 5: AI-Powered Rough Cut Generation
+  epic-5: backlog
+  5-1-initiate-rough-cut-generation: backlog
+  5-2-send-data-to-ai-service: backlog
+  5-3-ai-transcript-cutting: backlog
+  5-4-ai-music-matching: backlog
+  5-5-ai-sfx-matching: backlog
+  5-6-ai-vfx-template-matching: backlog
+  5-7-chunked-context-processing: backlog
+  5-8-review-ai-generated-rough-cut-document: backlog
+  epic-5-retrospective: optional
+  
+  # Epic 6: Timeline Creation & Media Placement
+  epic-6: backlog
+  6-1-create-new-timeline: backlog
+  6-2-import-suggested-media: backlog
+  6-3-cut-footage-to-segments: backlog
+  6-4-place-music-on-timeline: backlog
+  6-5-layer-sfx-on-separate-tracks: backlog
+  6-6-position-vfx-templates: backlog
+  6-7-rough-cut-output-for-refinement: backlog
+  epic-6-retrospective: optional
