@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-03T21:00:00"
-last_updated: "2026-04-04"
+last_updated: "2026-04-05"
 project: "RoughCut"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -100,7 +100,7 @@ development_status:
   6-2-import-suggested-media: done
   6-3-cut-footage-to-segments: done
   6-4-place-music-on-timeline: done
-  6-5-layer-sfx-on-separate-tracks: backlog
+  6-5-layer-sfx-on-separate-tracks: review
   6-6-position-vfx-templates: backlog
   6-7-rough-cut-output-for-refinement: backlog
   epic-6-retrospective: optional

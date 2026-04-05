@@ -11,6 +11,7 @@ from ...backend.timeline.builder import TimelineBuilder
 from ...backend.timeline.cutter import FootageCutter, CutResult
 from ...backend.timeline.importer import MediaImporter, ImportResult
 from ...backend.timeline.music_placer import MusicPlacer, MusicPlacerResult
+from ...backend.timeline.sfx_placer import SfxPlacer, SfxPlacerResult
 from ...backend.workflows.session import get_session_manager
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,10 @@ ERROR_CODES = {
     "SOURCE_CLIP_NOT_FOUND": "SOURCE_CLIP_NOT_FOUND",
     "SEGMENT_VALIDATION_FAILED": "SEGMENT_VALIDATION_FAILED",
     "MUSIC_PLACEMENT_FAILED": "MUSIC_PLACEMENT_FAILED",
-    "MISSING_MUSIC_SEGMENTS": "MISSING_MUSIC_SEGMENTS"
+    "MISSING_MUSIC_SEGMENTS": "MISSING_MUSIC_SEGMENTS",
+    "SFX_PLACEMENT_FAILED": "SFX_PLACEMENT_FAILED",
+    "MISSING_SFX_SEGMENTS": "MISSING_SFX_SEGMENTS",
+    "TRACK_ALLOCATION_FAILED": "TRACK_ALLOCATION_FAILED"
 }
 
 
@@ -632,11 +636,143 @@ def place_music_on_timeline(params: Dict[str, Any] | None) -> Dict[str, Any]:
         )
 
 
+def place_sfx_on_timeline(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Place AI-suggested SFX clips on the timeline.
+    
+    This handler is called from the Lua GUI after music placement to place
+    SFX clips on the timeline's dedicated SFX tracks (Tracks 3-10).
+    
+    Args:
+        params: Request parameters containing:
+            - timeline_id: Target timeline ID (required)
+            - sfx_segments: List of SFX segment dictionaries (required)
+            
+    Returns:
+        Dictionary with SFX placement result or error
+    """
+    if params is None:
+        params = {}
+    
+    # Validate required parameters
+    timeline_id = params.get("timeline_id")
+    if not timeline_id:
+        logger.error("Missing timeline_id parameter")
+        return _error_response(
+            ERROR_CODES["TIMELINE_NOT_FOUND"],
+            "validation",
+            "Timeline ID is required",
+            "Ensure timeline was created successfully before placing SFX",
+            recoverable=True
+        )
+    
+    sfx_segments = params.get("sfx_segments")
+    if sfx_segments is None:
+        logger.error("Missing sfx_segments parameter")
+        return _error_response(
+            ERROR_CODES["MISSING_SFX_SEGMENTS"],
+            "validation",
+            "No sfx_segments parameter provided",
+            "Generate a rough cut with AI SFX suggestions first",
+            recoverable=True
+        )
+    
+    if not isinstance(sfx_segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "sfx_segments must be a list",
+            "Provide a list of SFX segment dictionaries with file paths and timing",
+            recoverable=True
+        )
+    
+    if len(sfx_segments) == 0:
+        logger.info("Empty sfx_segments list - nothing to place")
+        return {
+            "clips_placed": 0,
+            "tracks_used": [],
+            "total_duration_frames": 0,
+            "total_duration_timecode": "0:00:00",
+            "timeline_positions": [],
+            "success": True,
+            "warning": "No SFX segments to place"
+        }
+    
+    logger.info(f"Placing {len(sfx_segments)} SFX clips on timeline {timeline_id}")
+    
+    try:
+        # Create placer and perform placement
+        placer = SfxPlacer()
+        
+        # Progress callback that emits JSON-RPC progress messages
+        def progress_callback(current: int, total: int, message: str):
+            logger.info(f"Progress: {message} ({current}/{total})")
+        
+        result = placer.place_sfx_clips(
+            timeline_id=timeline_id,
+            sfx_segments=sfx_segments,
+            progress_callback=progress_callback
+        )
+        
+        if result.success:
+            # Convert placements to serializable format
+            timeline_positions = []
+            for placement in result.timeline_positions:
+                timeline_positions.append({
+                    "segment_index": placement.segment_index,
+                    "track_number": placement.track_number,
+                    "timeline_start_frame": placement.timeline_start_frame,
+                    "timeline_end_frame": placement.timeline_end_frame,
+                    "sfx_file_path": placement.sfx_file_path,
+                    "clip_id": placement.clip_id,
+                    "fade_in_frames": placement.fade_in_frames,
+                    "fade_out_frames": placement.fade_out_frames,
+                    "volume_db": placement.volume_db,
+                    "moment_type": placement.moment_type,
+                    "handle_frames": placement.handle_frames
+                })
+            
+            logger.info(
+                f"SFX placement complete: {result.clips_placed} clips, "
+                f"tracks used: {result.tracks_used}, "
+                f"duration: {result.total_duration_timecode}"
+            )
+            
+            return {
+                "clips_placed": result.clips_placed,
+                "tracks_used": result.tracks_used,
+                "total_duration_frames": result.total_duration_frames,
+                "total_duration_timecode": result.total_duration_timecode,
+                "timeline_positions": timeline_positions,
+                "success": True
+            }
+        else:
+            # Return error from placer
+            error = result.error or {}
+            return _error_response(
+                error.get("code", ERROR_CODES["SFX_PLACEMENT_FAILED"]),
+                error.get("category", "internal"),
+                error.get("message", "SFX placement failed"),
+                error.get("suggestion", "Check Resolve is running and SFX files are accessible"),
+                error.get("recoverable", True)
+            )
+            
+    except Exception as e:
+        logger.exception(f"Error placing SFX on timeline: {e}")
+        return _error_response(
+            ERROR_CODES["INTERNAL_ERROR"],
+            "internal",
+            f"Unexpected error during SFX placement: {str(e)}",
+            "Check application logs and retry the operation",
+            recoverable=True
+        )
+
+
 # Handler registry for the dispatcher
 TIMELINE_HANDLERS: Dict[str, Callable] = {
     "create_timeline_from_document": create_timeline_from_document,
     "create_timeline": create_timeline,
     "import_suggested_media": import_suggested_media,
     "cut_footage_to_segments": cut_footage_to_segments,
-    "place_music_on_timeline": place_music_on_timeline
+    "place_music_on_timeline": place_music_on_timeline,
+    "place_sfx_on_timeline": place_sfx_on_timeline
 }
