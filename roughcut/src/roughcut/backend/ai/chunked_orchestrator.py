@@ -20,6 +20,14 @@ from .chunk import (
     TranscriptChunk,
 )
 from .chunker import ContextChunker, estimate_token_count
+from .document_models import (
+    MusicSuggestion,
+    RoughCutDocument,
+    RoughCutSection,
+    SFXSuggestion,
+    TranscriptSegment,
+    VFXSuggestion,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +79,9 @@ def with_retry(max_attempts: int = DEFAULT_RETRY_ATTEMPTS, base_delay: float = R
                             f"{func.__name__} failed after {max_attempts} attempts. "
                             f"Final error: {e}"
                         )
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError(f"{func.__name__} failed but no exception was captured")
         return wrapper
     return decorator
 
@@ -577,6 +587,318 @@ class ChunkedOrchestrator:
             processing_time_ms=processing_time,
             status="success",
             warnings=[]
+        )
+
+    def assemble_rough_cut_document(
+        self,
+        assembled: AssembledRoughCut,
+        source_clip: str,
+        format_template: dict,
+        format_template_name: str
+    ) -> RoughCutDocument:
+        """Assemble a RoughCutDocument from AssembledRoughCut.
+        
+        Converts raw chunk results into a structured document for user review.
+        
+        Args:
+            assembled: AssembledRoughCut from chunk processing
+            source_clip: Source clip name/path
+            format_template: Format template dictionary with sections
+            format_template_name: Name of the format template
+            
+        Returns:
+            RoughCutDocument for user review
+        """
+        # Build sections from format template
+        sections = self._build_sections_from_assembly(
+            assembled,
+            format_template
+        )
+        
+        # Calculate total duration from last section
+        total_duration = 0.0
+        if sections:
+            total_duration = sections[-1].end_time
+        
+        # Build document
+        document = RoughCutDocument(
+            title=f"Rough Cut: {source_clip}",
+            source_clip=source_clip,
+            format_template=format_template_name,
+            total_duration=total_duration,
+            sections=sections,
+            assembly_metadata=assembled.assembly_metadata
+        )
+        
+        return document
+    
+    def _build_sections_from_assembly(
+        self,
+        assembled: AssembledRoughCut,
+        format_template: dict
+    ) -> list[RoughCutSection]:
+        """Build RoughCutSection list from AssembledRoughCut.
+        
+        Args:
+            assembled: AssembledRoughCut instance
+            format_template: Format template with section definitions
+            
+        Returns:
+            List of RoughCutSection objects
+        """
+        sections: list[RoughCutSection] = []
+        template_sections = format_template.get("sections", [])
+        
+        if not template_sections:
+            # Fallback: create single section with all content
+            section = self._create_single_section(assembled)
+            return [section]
+        
+        # Group content by section based on time ranges
+        current_time = 0.0
+        for section_def in template_sections:
+            section_name = section_def.get("name", "section")
+            section_duration = section_def.get("duration", 60)
+            section_end = current_time + section_duration
+            
+            # Find transcript segments for this section
+            section_segments = [
+                TranscriptSegment(
+                    start_time=seg.get("start", 0.0),
+                    end_time=seg.get("end", 0.0),
+                    text=seg.get("text", ""),
+                    speaker=seg.get("speaker")
+                )
+                for seg in assembled.transcript_segments
+                if current_time <= seg.get("start", 0.0) < section_end
+            ]
+            
+            # Find music for this section
+            section_music = self._find_music_for_section(
+                assembled.music_matches,
+                current_time,
+                section_end
+            )
+            
+            # Find SFX for this section
+            section_sfx = self._find_sfx_for_section(
+                assembled.sfx_matches,
+                current_time,
+                section_end
+            )
+            
+            # Find VFX for this section
+            section_vfx = self._find_vfx_for_section(
+                assembled.vfx_matches,
+                current_time,
+                section_end
+            )
+            
+            # Create section
+            section = RoughCutSection(
+                name=section_name,
+                start_time=current_time,
+                end_time=section_end,
+                transcript_segments=section_segments,
+                music=section_music,
+                sfx=section_sfx,
+                vfx=section_vfx
+            )
+            
+            sections.append(section)
+            current_time = section_end
+        
+        return sections
+    
+    def _create_single_section(self, assembled: AssembledRoughCut) -> RoughCutSection:
+        """Create a single section when no format template sections defined.
+        
+        Args:
+            assembled: AssembledRoughCut instance
+            
+        Returns:
+            RoughCutSection with all content
+        """
+        # Calculate time range from transcript segments
+        all_starts = [seg.get("start", 0.0) for seg in assembled.transcript_segments]
+        all_ends = [seg.get("end", 0.0) for seg in assembled.transcript_segments]
+        
+        start_time = min(all_starts) if all_starts else 0.0
+        end_time = max(all_ends) if all_ends else 0.0
+        
+        # Create transcript segments
+        segments = [
+            TranscriptSegment(
+                start_time=seg.get("start", 0.0),
+                end_time=seg.get("end", 0.0),
+                text=seg.get("text", ""),
+                speaker=seg.get("speaker")
+            )
+            for seg in assembled.transcript_segments
+        ]
+        
+        # Find music (first match only for single section)
+        music = None
+        if assembled.music_matches:
+            match = assembled.music_matches[0]
+            music = self._create_music_suggestion(match)
+        
+        # Find SFX
+        sfx = [self._create_sfx_suggestion(m) for m in assembled.sfx_matches]
+        
+        # Find VFX
+        vfx = [self._create_vfx_suggestion(m) for m in assembled.vfx_matches]
+        
+        return RoughCutSection(
+            name="content",
+            start_time=start_time,
+            end_time=end_time,
+            transcript_segments=segments,
+            music=music,
+            sfx=sfx,
+            vfx=vfx
+        )
+    
+    def _find_music_for_section(
+        self,
+        music_matches: list[dict],
+        section_start: float,
+        section_end: float
+    ) -> Optional[MusicSuggestion]:
+        """Find the best music match for a section.
+        
+        Currently returns the first match found within the section time range.
+        Note: Multiple music tracks per section are not yet supported - only
+        the first matching track is returned.
+        
+        Args:
+            music_matches: List of music match dictionaries
+            section_start: Section start time
+            section_end: Section end time
+            
+        Returns:
+            MusicSuggestion or None if no match found
+        """
+        # Find music that starts within this section
+        # TODO: Consider supporting multiple music tracks per section
+        for match in music_matches:
+            position = match.get("position", 0.0)
+            if section_start <= position < section_end:
+                return self._create_music_suggestion(match)
+        
+        return None
+    
+    def _find_sfx_for_section(
+        self,
+        sfx_matches: list[dict],
+        section_start: float,
+        section_end: float
+    ) -> list[SFXSuggestion]:
+        """Find SFX matches for a section.
+        
+        Args:
+            sfx_matches: List of SFX match dictionaries
+            section_start: Section start time
+            section_end: Section end time
+            
+        Returns:
+            List of SFXSuggestion objects
+        """
+        suggestions = []
+        for match in sfx_matches:
+            position = match.get("position", 0.0)
+            if section_start <= position < section_end:
+                suggestions.append(self._create_sfx_suggestion(match))
+        return suggestions
+    
+    def _find_vfx_for_section(
+        self,
+        vfx_matches: list[dict],
+        section_start: float,
+        section_end: float
+    ) -> list[VFXSuggestion]:
+        """Find VFX matches for a section.
+        
+        Args:
+            vfx_matches: List of VFX match dictionaries
+            section_start: Section start time
+            section_end: Section end time
+            
+        Returns:
+            List of VFXSuggestion objects
+        """
+        suggestions = []
+        for match in vfx_matches:
+            position = match.get("position", 0.0)
+            if section_start <= position < section_end:
+                suggestions.append(self._create_vfx_suggestion(match))
+        return suggestions
+    
+    def _create_music_suggestion(self, match: dict) -> MusicSuggestion:
+        """Create MusicSuggestion from match dictionary.
+        
+        Args:
+            match: Music match dictionary
+            
+        Returns:
+            MusicSuggestion instance
+        """
+        return MusicSuggestion(
+            asset_id=match.get("asset_id", "unknown"),
+            name=match.get("name", "unknown"),
+            file_path=match.get("file_path", ""),
+            source_folder=match.get("source_folder", ""),
+            confidence=match.get("confidence", 0.5),
+            reasoning=match.get("reasoning", ""),
+            position=match.get("position", 0.0),
+            duration=match.get("duration"),
+            fade_in=match.get("fade_in"),
+            fade_out=match.get("fade_out"),
+            volume_adjustment=match.get("volume_adjustment", 0.0)
+        )
+    
+    def _create_sfx_suggestion(self, match: dict) -> SFXSuggestion:
+        """Create SFXSuggestion from match dictionary.
+        
+        Args:
+            match: SFX match dictionary
+            
+        Returns:
+            SFXSuggestion instance
+        """
+        return SFXSuggestion(
+            asset_id=match.get("asset_id", "unknown"),
+            name=match.get("name", "unknown"),
+            file_path=match.get("file_path", ""),
+            source_folder=match.get("source_folder", ""),
+            confidence=match.get("confidence", 0.5),
+            reasoning=match.get("reasoning", ""),
+            position=match.get("position", 0.0),
+            duration=match.get("duration"),
+            track_number=match.get("track_number", 1),
+            intended_moment=match.get("intended_moment", "")
+        )
+    
+    def _create_vfx_suggestion(self, match: dict) -> VFXSuggestion:
+        """Create VFXSuggestion from match dictionary.
+        
+        Args:
+            match: VFX match dictionary
+            
+        Returns:
+            VFXSuggestion instance
+        """
+        return VFXSuggestion(
+            asset_id=match.get("asset_id", "unknown"),
+            name=match.get("name", "unknown"),
+            file_path=match.get("file_path", ""),
+            source_folder=match.get("source_folder", ""),
+            confidence=match.get("confidence", 0.5),
+            reasoning=match.get("reasoning", ""),
+            position=match.get("position", 0.0),
+            duration=match.get("duration"),
+            template_name=match.get("template_name", ""),
+            configurable_params=match.get("configurable_params", {})
         )
 
 

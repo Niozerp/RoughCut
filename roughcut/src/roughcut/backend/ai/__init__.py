@@ -29,6 +29,18 @@ from .data_bundle import (
     MediaIndexSubset,
     TranscriptData,
 )
+from .document_models import (
+    AssetSuggestion,
+    AssetType,
+    ConfidenceLevel,
+    DocumentValidationResult,
+    MusicSuggestion,
+    RoughCutDocument,
+    RoughCutSection,
+    SFXSuggestion,
+    TranscriptSegment,
+    VFXSuggestion,
+)
 from .openai_client import OpenAIClient, TagResult
 from .prompt_engine import PromptBuilder, PromptConfig
 from .rough_cut_orchestrator import RoughCutOrchestrator
@@ -60,6 +72,17 @@ __all__ = [
     'MediaAssetMetadata',
     'MediaIndexSubset',
     'TranscriptData',
+    # Document models
+    'AssetSuggestion',
+    'AssetType',
+    'ConfidenceLevel',
+    'DocumentValidationResult',
+    'MusicSuggestion',
+    'RoughCutDocument',
+    'RoughCutSection',
+    'SFXSuggestion',
+    'TranscriptSegment',
+    'VFXSuggestion',
     # Client
     'OpenAIClient',
     'TagResult',

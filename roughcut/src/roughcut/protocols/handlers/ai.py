@@ -6,6 +6,7 @@ AI processing, including progress reporting and error handling.
 
 import asyncio
 import logging
+import os
 import uuid
 from typing import Any, Callable, Dict, Generator, Optional
 
@@ -64,6 +65,12 @@ ERROR_CODES = {
     "CONTINUITY_GAP_DETECTED": "CONTINUITY_GAP_DETECTED",
     "ASSET_FILTER_TOO_RESTRICTIVE": "ASSET_FILTER_TOO_RESTRICTIVE",
     "CUMULATIVE_TIMEOUT": "CUMULATIVE_TIMEOUT",
+    # Document review error codes (Story 5.8)
+    "DOCUMENT_NOT_FOUND": "DOCUMENT_NOT_FOUND",
+    "DOCUMENT_INCOMPLETE": "DOCUMENT_INCOMPLETE",
+    "ASSET_VALIDATION_FAILED": "ASSET_VALIDATION_FAILED",
+    "TIMELINE_CREATION_FAILED": "TIMELINE_CREATION_FAILED",
+    "INVALID_DOCUMENT_FORMAT": "INVALID_DOCUMENT_FORMAT",
 }
 
 # Type alias for progress callback
@@ -2070,6 +2077,18 @@ def process_chunked_rough_cut(params: Dict[str, Any] | None) -> Dict[str, Any]:
         # from ...backend.ai.chunker import ChunkConfig
         # from ...backend.ai.chunked_orchestrator import ChunkedOrchestrator
         
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
         # Get chunk configuration
         chunk_config_data = params.get("chunk_config", {})
         chunk_config = ChunkConfig(
@@ -2102,6 +2121,10 @@ def process_chunked_rough_cut(params: Dict[str, Any] | None) -> Dict[str, Any]:
         
         # Assemble results
         assembled = orchestrator.assemble_chunk_results(chunk_results)
+        
+        # Store document in session
+        session.rough_cut_document = assembled
+        session_manager.update_session(session)
         
         logger.info(
             f"Chunked processing complete: {len(chunk_results)} chunks, "
@@ -2263,6 +2286,13 @@ def process_chunked_rough_cut_with_progress(
         # Assemble results
         assembled = orchestrator.assemble_chunk_results(chunk_results)
         
+        # Get session and store document
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        if session is not None:
+            session.rough_cut_document = assembled
+            session_manager.update_session(session)
+        
         logger.info(
             f"Chunked processing with progress complete: {len(chunk_results)} chunks "
             f"(session: {session_id})"
@@ -2294,6 +2324,227 @@ def process_chunked_rough_cut_with_progress(
         )
 
 
+def get_rough_cut_document(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for get_rough_cut_document method.
+    
+    Retrieves the AI-generated rough cut document for user review.
+    This is the entry point for Story 5.8 - Review AI-Generated Rough Cut Document.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - format: Output format - "summary" or "detailed" (default: "detailed")
+    
+    Returns:
+        Dictionary with rough_cut_document data
+    """
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    format_type = params.get("format", "detailed")
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
+        # Check if document exists in session
+        if not hasattr(session, 'rough_cut_document') or session.rough_cut_document is None:
+            return _error_response(
+                ERROR_CODES["DOCUMENT_NOT_FOUND"],
+                "validation",
+                "No rough cut document found for this session",
+                "Complete rough cut generation before requesting the document"
+            )
+        
+        document = session.rough_cut_document
+        
+        # Return document data
+        return {
+            "result": {
+                "rough_cut_document": document.to_dict(),
+                "format": format_type
+            },
+            "error": None,
+            "id": session_id
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to get rough cut document: {e}")
+        return _error_response(
+            ERROR_CODES["DOCUMENT_NOT_FOUND"],
+            "internal",
+            f"Failed to retrieve rough cut document: {str(e)}",
+            "Try regenerating the rough cut"
+        )
+
+
+def create_timeline_from_document(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for create_timeline_from_document method.
+    
+    Creates a Resolve timeline from the AI-generated rough cut document.
+    This passes control to Epic 6 timeline creation handlers.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - timeline_name: Optional custom timeline name
+            - validate_assets: Optional boolean to enable/disable asset validation
+                              (default: True, set to False for testing)
+    
+    Returns:
+        Dictionary with timeline creation result
+    """
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    timeline_name = params.get("timeline_name")
+    validate_assets = params.get("validate_assets", True)
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
+        # Check if document exists
+        if not hasattr(session, 'rough_cut_document') or session.rough_cut_document is None:
+            return _error_response(
+                ERROR_CODES["DOCUMENT_NOT_FOUND"],
+                "validation",
+                "No rough cut document found for timeline creation",
+                "Complete rough cut generation before creating timeline"
+            )
+        
+        document = session.rough_cut_document
+        
+        # Validate document has required data
+        if not document.sections:
+            return _error_response(
+                ERROR_CODES["DOCUMENT_INCOMPLETE"],
+                "validation",
+                "Rough cut document has no sections",
+                "Regenerate the rough cut with proper format template"
+            )
+        
+        # Validate asset paths exist (optional, controlled by validate_assets parameter)
+        if validate_assets:
+            asset_paths = document.get_all_asset_paths()
+            missing_assets = []
+            for path in asset_paths:
+                if not os.path.exists(path):
+                    missing_assets.append(path)
+                    logger.warning(f"Asset not found: {path}")
+                else:
+                    logger.info(f"Asset validated: {path}")
+            
+            if missing_assets:
+                return _error_response(
+                    ERROR_CODES["ASSET_VALIDATION_FAILED"],
+                    "validation",
+                    f"Assets not found: {', '.join(missing_assets)}",
+                    "Check media library paths and re-index if needed"
+                )
+        else:
+            # Log that validation is skipped
+            asset_paths = document.get_all_asset_paths()
+            logger.info(f"Asset validation skipped (validate_assets=False). {len(asset_paths)} assets referenced.")
+        
+        # Generate timeline name if not provided
+        if not timeline_name:
+            import re
+            source_name = document.source_clip.replace(".", "_")
+            format_name = document.format_template.replace(" ", "_")
+            # Sanitize: remove non-alphanumeric characters except underscore
+            source_name = re.sub(r'[^\w]', '_', source_name)
+            format_name = re.sub(r'[^\w]', '_', format_name)
+            # Collapse consecutive underscores to single underscore
+            source_name = re.sub(r'_+', '_', source_name)
+            format_name = re.sub(r'_+', '_', format_name)
+            # Strip leading/trailing underscores
+            source_name = source_name.strip('_')
+            format_name = format_name.strip('_')
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+            timeline_name = f"RoughCut_{source_name}_{format_name}_{timestamp}"
+        
+        # TODO: Pass to Epic 6 timeline creation handlers
+        # For now, return success with timeline info
+        # This will be replaced with actual timeline creation in Epic 6
+        
+        logger.info(f"Timeline creation requested: {timeline_name} (session: {session_id})")
+        
+        return {
+            "result": {
+                "timeline_name": timeline_name,
+                "document_title": document.title,
+                "sections_count": len(document.sections),
+                "status": "ready_for_epic_6",
+                "message": "Document validated and ready for timeline creation (Epic 6)"
+            },
+            "error": None,
+            "id": session_id
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to create timeline from document: {e}")
+        return _error_response(
+            ERROR_CODES["TIMELINE_CREATION_FAILED"],
+            "internal",
+            f"Failed to create timeline: {str(e)}",
+            "Check Resolve connection and try again"
+        )
+
+
 # Handler registry
 AI_HANDLERS = {
     "initiate_rough_cut": initiate_rough_cut,
@@ -2309,4 +2560,7 @@ AI_HANDLERS = {
     "match_vfx_with_progress": match_vfx_with_progress,
     "process_chunked_rough_cut": process_chunked_rough_cut,
     "process_chunked_rough_cut_with_progress": process_chunked_rough_cut_with_progress,
+    # Story 5.8 - Document Review handlers
+    "get_rough_cut_document": get_rough_cut_document,
+    "create_timeline_from_document": create_timeline_from_document,
 }

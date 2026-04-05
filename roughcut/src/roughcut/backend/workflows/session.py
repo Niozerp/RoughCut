@@ -66,6 +66,7 @@ class RoughCutSession:
     transcription_data: Optional[Dict[str, Any]] = None
     format_template_id: Optional[str] = None
     format_template: Optional[FormatTemplate] = None
+    rough_cut_document: Optional[Any] = None
     
     # Session management
     last_accessed: Optional[datetime] = None
