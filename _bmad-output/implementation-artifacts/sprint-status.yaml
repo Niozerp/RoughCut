@@ -1,5 +1,5 @@
 # generated: 2026-04-03T21:00:00
-# last_updated: 2026-04-03T21:00:00
+# last_updated: 2026-04-04
 # project: RoughCut
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-03T21:00:00"
-last_updated: "2026-04-05T00:00:00"
+last_updated: "2026-04-04"
 project: "RoughCut"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -94,9 +94,9 @@ development_status:
   5-8-review-ai-generated-rough-cut-document: done
   epic-5-retrospective: done
   
-  # Epic 6: Timeline Creation & Media Placement
-  epic-6: backlog
-  6-1-create-new-timeline: backlog
+  # Epic 6: Timeline Creation & Media Placement - IN PROGRESS
+  epic-6: in-progress
+  6-1-create-new-timeline: review
   6-2-import-suggested-media: backlog
   6-3-cut-footage-to-segments: backlog
   6-4-place-music-on-timeline: backlog

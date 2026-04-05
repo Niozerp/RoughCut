@@ -1,0 +1,271 @@
+"""Protocol handlers for timeline operations.
+
+Handles JSON-RPC requests for creating and managing Resolve timelines.
+"""
+
+import logging
+from typing import Any, Callable, Dict
+
+from ...backend.timeline.builder import TimelineBuilder
+from ...backend.workflows.session import get_session_manager
+
+logger = logging.getLogger(__name__)
+
+# Error codes for timeline operations
+ERROR_CODES = {
+    "INVALID_PARAMS": "INVALID_PARAMS",
+    "SESSION_NOT_FOUND": "SESSION_NOT_FOUND",
+    "MISSING_SOURCE_CLIP": "MISSING_SOURCE_CLIP",
+    "MISSING_FORMAT_TEMPLATE": "MISSING_FORMAT_TEMPLATE",
+    "TIMELINE_CREATION_FAILED": "TIMELINE_CREATION_FAILED",
+    "RESOLVE_API_UNAVAILABLE": "RESOLVE_API_UNAVAILABLE",
+    "INTERNAL_ERROR": "INTERNAL_ERROR"
+}
+
+
+def _error_response(
+    code: str,
+    category: str,
+    message: str,
+    suggestion: str,
+    recoverable: bool = True
+) -> Dict[str, Any]:
+    """Create a standardized error response.
+    
+    Args:
+        code: Error code
+        category: Error category (resolve_api, internal, validation)
+        message: Human-readable error message
+        suggestion: Actionable suggestion for user
+        recoverable: Whether the error is recoverable
+        
+    Returns:
+        Error response dictionary
+    """
+    return {
+        "error": {
+            "code": code,
+            "category": category,
+            "message": message,
+            "recoverable": recoverable,
+            "suggestion": suggestion
+        }
+    }
+
+
+def create_timeline_from_document(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Create a new Resolve timeline from a rough cut document.
+    
+    This handler is called from the Lua GUI when the user clicks
+    "Create Timeline" after reviewing the AI-generated rough cut.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - timeline_name: Optional custom timeline name
+            
+    Returns:
+        Dictionary with timeline creation result or error
+    """
+    if params is None:
+        params = {}
+    
+    # Validate required parameters
+    session_id = params.get("session_id")
+    if not session_id:
+        logger.error("Missing session_id parameter")
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Session ID is required to create timeline",
+            "Ensure the rough cut review session is active",
+            recoverable=True
+        )
+    
+    logger.info(f"Creating timeline for session: {session_id}")
+    
+    # Get session data
+    session_manager = get_session_manager()
+    session = session_manager.get_session(session_id)
+    
+    if not session:
+        logger.error(f"Session not found: {session_id}")
+        return _error_response(
+            ERROR_CODES["SESSION_NOT_FOUND"],
+            "validation",
+            f"Session {session_id} not found or expired",
+            "Generate a rough cut first before creating timeline",
+            recoverable=True
+        )
+    
+    # Extract required data from session
+    source_clip = session.get("source_clip")
+    format_template = session.get("format_template")
+    
+    if not source_clip:
+        logger.error("Source clip not found in session")
+        return _error_response(
+            ERROR_CODES["MISSING_SOURCE_CLIP"],
+            "validation",
+            "Source clip information not found in session",
+            "Select a source clip before generating rough cut",
+            recoverable=True
+        )
+    
+    if not format_template:
+        logger.error("Format template not found in session")
+        return _error_response(
+            ERROR_CODES["MISSING_FORMAT_TEMPLATE"],
+            "validation",
+            "Format template information not found in session",
+            "Select a format template before generating rough cut",
+            recoverable=True
+        )
+    
+    # Get rough cut document for additional metadata
+    rough_cut_doc = session.get("rough_cut_document", {})
+    
+    # Determine source clip name
+    source_clip_name = source_clip.get("name", "Untitled")
+    if not source_clip_name or source_clip_name == "Untitled":
+        # Try to get from rough cut document
+        source_clip_name = rough_cut_doc.get("source_clip", "Untitled")
+    
+    # Determine format template name
+    format_template_name = format_template.get("name", "Default")
+    if not format_template_name or format_template_name == "Default":
+        format_template_name = rough_cut_doc.get("format_template", "Default")
+    
+    # Use custom name if provided, otherwise generate
+    custom_name = params.get("timeline_name")
+    
+    try:
+        # Create the timeline
+        builder = TimelineBuilder()
+        
+        result = builder.create_timeline(
+            source_clip_name=source_clip_name,
+            format_template=format_template_name,
+            timestamp=None  # Let builder generate current timestamp
+        )
+        
+        if result.success:
+            logger.info(f"Timeline created successfully: {result.timeline_name}")
+            
+            # Update session with timeline info
+            session["timeline_created"] = {
+                "name": result.timeline_name,
+                "id": result.timeline_id,
+                "tracks": result.tracks_created
+            }
+            session_manager.update_session(session_id, session)
+            
+            return {
+                "timeline_name": result.timeline_name,
+                "timeline_id": result.timeline_id,
+                "tracks_created": result.tracks_created,
+                "success": True
+            }
+        else:
+            logger.error(f"Timeline creation failed: {result.error}")
+            return _error_response(
+                result.error.get("code", ERROR_CODES["TIMELINE_CREATION_FAILED"]),
+                result.error.get("category", "internal"),
+                result.error.get("message", "Timeline creation failed"),
+                result.error.get("suggestion", "Check Resolve is running and retry"),
+                result.error.get("recoverable", True)
+            )
+            
+    except Exception as e:
+        logger.exception(f"Unexpected error in create_timeline_from_document: {e}")
+        return _error_response(
+            ERROR_CODES["INTERNAL_ERROR"],
+            "internal",
+            f"Unexpected error: {str(e)}",
+            "Check application logs and report the issue",
+            recoverable=False
+        )
+
+
+def create_timeline(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Create a timeline with explicit parameters.
+    
+    Alternative handler for direct timeline creation without
+    requiring a session.
+    
+    Args:
+        params: Request parameters containing:
+            - source_clip_name: Name of source clip
+            - format_template: Name of format template
+            - timestamp: Optional timestamp
+            
+    Returns:
+        Dictionary with timeline creation result or error
+    """
+    if params is None:
+        params = {}
+    
+    # Validate required parameters
+    source_clip_name = params.get("source_clip_name")
+    format_template = params.get("format_template")
+    
+    if not source_clip_name:
+        return _error_response(
+            ERROR_CODES["MISSING_SOURCE_CLIP"],
+            "validation",
+            "source_clip_name is required",
+            "Provide the source clip name for timeline naming",
+            recoverable=True
+        )
+    
+    if not format_template:
+        return _error_response(
+            ERROR_CODES["MISSING_FORMAT_TEMPLATE"],
+            "validation",
+            "format_template is required",
+            "Provide the format template name for timeline naming",
+            recoverable=True
+        )
+    
+    timestamp = params.get("timestamp")
+    
+    try:
+        builder = TimelineBuilder()
+        result = builder.create_timeline(
+            source_clip_name=source_clip_name,
+            format_template=format_template,
+            timestamp=timestamp
+        )
+        
+        if result.success:
+            return {
+                "timeline_name": result.timeline_name,
+                "timeline_id": result.timeline_id,
+                "tracks_created": result.tracks_created,
+                "success": True
+            }
+        else:
+            return _error_response(
+                result.error.get("code", ERROR_CODES["TIMELINE_CREATION_FAILED"]),
+                result.error.get("category", "internal"),
+                result.error.get("message", "Timeline creation failed"),
+                result.error.get("suggestion", "Check Resolve is running and retry"),
+                result.error.get("recoverable", True)
+            )
+            
+    except Exception as e:
+        logger.exception(f"Error in create_timeline: {e}")
+        return _error_response(
+            ERROR_CODES["INTERNAL_ERROR"],
+            "internal",
+            f"Unexpected error: {str(e)}",
+            "Check application logs and report the issue",
+            recoverable=False
+        )
+
+
+# Handler registry for the dispatcher
+TIMELINE_HANDLERS: Dict[str, Callable] = {
+    "create_timeline_from_document": create_timeline_from_document,
+    "create_timeline": create_timeline
+}

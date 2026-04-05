@@ -13,6 +13,7 @@ from .handlers.media import MEDIA_HANDLERS
 from .handlers.formats import FORMAT_HANDLERS
 from .handlers.workflows import WORKFLOW_HANDLERS
 from .handlers.ai import AI_HANDLERS
+from .handlers.timeline import TIMELINE_HANDLERS
 
 
 class ProtocolDispatcher:
@@ -38,6 +39,7 @@ class ProtocolDispatcher:
         self.register_handlers(FORMAT_HANDLERS)
         self.register_handlers(WORKFLOW_HANDLERS)
         self.register_handlers(AI_HANDLERS)
+        self.register_handlers(TIMELINE_HANDLERS)
     
     def register_handler(self, method: str, handler: Callable) -> None:
         """Register a single handler for a method.
