@@ -9,6 +9,18 @@
 Provides AI-powered tag generation and rough cut generation utilities.
 """
 
+from .chunk import (
+    AssembledRoughCut,
+    ChunkBoundary,
+    ChunkConfig,
+    ChunkContext,
+    ChunkProgress,
+    ChunkResult,
+    TranscriptChunk,
+)
+from .chunker import ContextChunker, PROVIDER_TOKEN_LIMITS, estimate_token_count
+from .asset_filter import AssetFilter
+from .chunked_orchestrator import ChunkedOrchestrator, ChunkProgressTracker
 from .data_bundle import (
     DataBundle,
     DataBundleBuilder,
@@ -24,6 +36,23 @@ from .tagger import MediaTagger
 from .tag_storage import TagStorage, TaggedAsset
 
 __all__ = [
+    # Chunk data structures
+    'AssembledRoughCut',
+    'ChunkBoundary',
+    'ChunkConfig',
+    'ChunkContext',
+    'ChunkProgress',
+    'ChunkResult',
+    'TranscriptChunk',
+    # Chunk processing
+    'ContextChunker',
+    'PROVIDER_TOKEN_LIMITS',
+    'estimate_token_count',
+    # Asset filtering
+    'AssetFilter',
+    # Chunked orchestration
+    'ChunkedOrchestrator',
+    'ChunkProgressTracker',
     # Data bundle
     'DataBundle',
     'DataBundleBuilder',

@@ -859,3 +859,182 @@ REMEMBER:
 - Match template type to requirement (fusion_composition for lower thirds, etc.)
 - Consider placement timing to avoid overlaps
 - Match reasoning should explain WHY this template fits this requirement"""
+
+    def build_chunked_processing_prompt(
+        self,
+        chunk: Any,
+        chunk_context: Any,
+        continuity_context: dict[str, Any],
+        asset_index: dict[str, list[dict]],
+        format_template: dict[str, Any],
+        total_chunks: int = 1
+    ) -> dict[str, Any]:
+        """Build AI prompt for chunked processing.
+        
+        Creates a comprehensive prompt for processing a single chunk with
+        continuity context from previous chunks.
+        
+        Args:
+            chunk: TranscriptChunk to process
+            chunk_context: ChunkContext with filtering info
+            continuity_context: Dict with continuity from previous chunk
+            asset_index: Filtered asset index for this chunk
+            format_template: Format template dictionary
+            total_chunks: Total number of chunks (default: 1)
+            
+        Returns:
+            Dictionary ready for OpenAI API call
+        """
+        # Load system prompt template
+        system_prompt = self._get_default_chunked_processing_prompt()
+        
+        # Build continuity context string
+        if continuity_context.get("has_previous", False):
+            prev_context = continuity_context.get("previous_ending_context", "")
+            continuity_str = f"Previous chunk ended with: {prev_context}"
+        else:
+            continuity_str = "This is the first chunk. Establish a strong opening."
+        
+        # Format the system prompt
+        duration = chunk.end_time - chunk.start_time
+        formatted_system = system_prompt.format(
+            chunk_index=chunk.index + 1,  # 1-indexed for display
+            total_chunks=total_chunks,
+            start_time=f"{chunk.start_time:.1f}",
+            end_time=f"{chunk.end_time:.1f}",
+            section_type=chunk_context.section_type,
+            tone=chunk_context.tone,
+            duration=f"{duration:.1f}",
+            continuity_context=continuity_str,
+            overlap_from_previous=chunk.overlap_with_previous[:200] if chunk.overlap_with_previous else "",
+            transcript_segments=self._format_chunk_segments(chunk.segments),
+            format_rules=self._format_format_template(format_template),
+            music_assets=self._format_assets(asset_index.get("music", [])),
+            sfx_assets=self._format_assets(asset_index.get("sfx", [])),
+            vfx_assets=self._format_assets(asset_index.get("vfx", []))
+        )
+        
+        # Build user content
+        user_content = f"""## CHUNK PROCESSING REQUEST
+
+Process this transcript chunk ({chunk.index + 1}) according to the format rules above.
+
+Chunk Time Range: {chunk.start_time:.1f}s to {chunk.end_time:.1f}s
+Section Type: {chunk_context.section_type}
+Tone: {chunk_context.tone}
+
+Provide output in the specified JSON format with all matches and continuity markers.
+"""
+        
+        prompt = {
+            "model": self.model,
+            "temperature": 0.3,
+            "max_tokens": 4000,
+            "messages": [
+                {"role": "system", "content": formatted_system},
+                {"role": "user", "content": user_content}
+            ]
+        }
+        
+        return prompt
+    
+    def _get_default_chunked_processing_prompt(self) -> str:
+        """Get default chunked processing system prompt.
+        
+        Returns:
+            Default system prompt template
+        """
+        # Load from file if available
+        template_path = Path(__file__).parent / "prompt_templates" / "chunked_processing_system.txt"
+        if template_path.exists():
+            return template_path.read_text(encoding="utf-8")
+        
+        # Fallback default
+        return """You are processing chunk {chunk_index} of {total_chunks} for rough cut generation.
+
+## CHUNK CONTEXT
+- **Time Range**: {start_time}s to {end_time}s
+- **Section Type**: {section_type}
+- **Tone**: {tone}
+
+## CRITICAL RULES FOR CHUNKED PROCESSING
+1. Process only within your assigned time range
+2. Maintain narrative continuity with adjacent chunks
+3. Use context from previous chunk: {overlap_from_previous}
+4. Cut transcript WITHOUT changing words
+5. Match assets from the provided filtered list
+
+## OUTPUT FORMAT
+Return a JSON object with:
+- transcript_cuts: List of segment cuts
+- music_matches: Matched music assets
+- sfx_matches: Matched SFX assets
+- vfx_matches: Matched VFX assets
+- continuity_markers: Context for next chunk"""
+    
+    def _format_chunk_segments(self, segments: list[dict]) -> str:
+        """Format chunk segments for prompt.
+        
+        Args:
+            segments: List of segment dictionaries
+            
+        Returns:
+            Formatted segments string
+        """
+        lines = []
+        for seg in segments:
+            start = seg.get("start", 0.0)
+            end = seg.get("end", 0.0)
+            text = seg.get("text", "")
+            speaker = seg.get("speaker", "Unknown")
+            lines.append(f"[{start:.1f}s - {end:.1f}s] {speaker}: {text}")
+        return "\n".join(lines)
+    
+    def _format_format_template(self, format_template: dict[str, Any]) -> str:
+        """Format format template for prompt.
+        
+        Args:
+            format_template: Format template dictionary
+            
+        Returns:
+            Formatted template string
+        """
+        lines = []
+        lines.append(f"Template: {format_template.get('name', 'Unknown')}")
+        
+        sections = format_template.get("sections", [])
+        if sections:
+            lines.append("\nSections:")
+            for section in sections:
+                name = section.get("name", "Unknown")
+                duration = section.get("duration", 0)
+                lines.append(f"- {name}: {duration}s")
+                categories = section.get("asset_categories", [])
+                if categories:
+                    lines.append(f"  Assets: {', '.join(categories)}")
+        
+        return "\n".join(lines)
+    
+    def _format_assets(self, assets: list[dict]) -> str:
+        """Format assets for prompt.
+        
+        Args:
+            assets: List of asset dictionaries
+            
+        Returns:
+            Formatted assets string
+        """
+        if not assets:
+            return "None available"
+        
+        lines = []
+        for asset in assets[:20]:  # Limit to 20 assets for token efficiency
+            asset_id = asset.get("id", "unknown")
+            tags = asset.get("tags", [])
+            tags_str = ", ".join(tags[:5]) if tags else "no tags"
+            lines.append(f"- {asset_id} [{tags_str}]")
+        
+        if len(assets) > 20:
+            lines.append(f"... and {len(assets) - 20} more")
+        
+        return "\n".join(lines)

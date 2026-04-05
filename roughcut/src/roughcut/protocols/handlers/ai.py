@@ -22,6 +22,9 @@ from ...backend.ai.rough_cut_orchestrator import RoughCutOrchestrator
 from ...backend.ai.segment_tone import SegmentTone
 from ...backend.ai.transcript_cutter import TranscriptCutter
 from ...backend.ai.transcript_segment import TranscriptSegment
+# Chunked processing imports
+from ...backend.ai.chunker import ChunkConfig
+from ...backend.ai.chunked_orchestrator import ChunkedOrchestrator
 from ...backend.workflows.session import get_session_manager
 from ...config.settings import get_settings
 
@@ -52,6 +55,15 @@ ERROR_CODES = {
     "NO_VFX_MATCHES": "NO_VFX_MATCHES",
     "NO_REQUIREMENTS_IDENTIFIED": "NO_REQUIREMENTS_IDENTIFIED",
     "PLACEMENT_CONFLICTS": "PLACEMENT_CONFLICTS",
+    # Chunked processing error codes
+    "TRANSCRIPT_TOO_SHORT": "TRANSCRIPT_TOO_SHORT",
+    "CHUNK_SIZE_UNDETERMINED": "CHUNK_SIZE_UNDETERMINED",
+    "CHUNK_BOUNDARY_DETECTION_FAILED": "CHUNK_BOUNDARY_DETECTION_FAILED",
+    "CHUNK_PROCESSING_FAILED": "CHUNK_PROCESSING_FAILED",
+    "ASSEMBLY_VALIDATION_FAILED": "ASSEMBLY_VALIDATION_FAILED",
+    "CONTINUITY_GAP_DETECTED": "CONTINUITY_GAP_DETECTED",
+    "ASSET_FILTER_TOO_RESTRICTIVE": "ASSET_FILTER_TOO_RESTRICTIVE",
+    "CUMULATIVE_TIMEOUT": "CUMULATIVE_TIMEOUT",
 }
 
 # Type alias for progress callback
@@ -1986,6 +1998,302 @@ def match_vfx_with_progress(
         )
 
 
+def process_chunked_rough_cut(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for process_chunked_rough_cut method.
+    
+    Processes long transcripts and large asset libraries in context-aware chunks.
+    This is the entry point for Story 5.7 - Chunked Context Processing.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - transcript: Transcript data with segments (required)
+            - format_template: Format template (required)
+            - asset_index: Asset index by category (required)
+            - ai_provider: AI provider name (optional, default: "openai")
+            - chunk_config: Chunk configuration (optional)
+    
+    Returns:
+        Dictionary with assembled rough cut document
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    transcript = params.get("transcript")
+    format_template = params.get("format_template")
+    asset_index = params.get("asset_index")
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    if not transcript or not isinstance(transcript, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: transcript",
+            "Provide transcript data with segments"
+        )
+    
+    if not format_template or not isinstance(format_template, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: format_template",
+            "Provide format template"
+        )
+    
+    if not asset_index or not isinstance(asset_index, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: asset_index",
+            "Provide asset index with categories"
+        )
+    
+    try:
+        # Chunked processing classes already imported at module level
+        # from ...backend.ai.chunker import ChunkConfig
+        # from ...backend.ai.chunked_orchestrator import ChunkedOrchestrator
+        
+        # Get chunk configuration
+        chunk_config_data = params.get("chunk_config", {})
+        chunk_config = ChunkConfig(
+            max_tokens_per_chunk=chunk_config_data.get("max_tokens_per_chunk", 4000),
+            overlap_percentage=chunk_config_data.get("overlap_percentage", 0.1),
+            respect_sentence_boundaries=chunk_config_data.get("respect_sentence_boundaries", True),
+            provider_name=params.get("ai_provider", "openai")
+        )
+        
+        # Extract segments
+        segments = transcript.get("segments", [])
+        if not segments:
+            return _error_response(
+                ERROR_CODES["EMPTY_TRANSCRIPT"],
+                "validation",
+                "Transcript has no segments",
+                "Provide transcript with at least one segment"
+            )
+        
+        # Initialize orchestrator
+        orchestrator = ChunkedOrchestrator(chunk_config)
+        
+        # Process chunks
+        logger.info(f"Starting chunked processing for session {session_id}")
+        chunk_results = orchestrator.process_chunks_sequentially(
+            segments,
+            format_template,
+            asset_index
+        )
+        
+        # Assemble results
+        assembled = orchestrator.assemble_chunk_results(chunk_results)
+        
+        logger.info(
+            f"Chunked processing complete: {len(chunk_results)} chunks, "
+            f"continuity valid: {assembled.continuity_validation.get('valid', False)} "
+            f"(session: {session_id})"
+        )
+        
+        return {
+            "result": {
+                "rough_cut_document": assembled.to_dict(),
+                "chunks_summary": [
+                    {
+                        "index": r.chunk_index,
+                        "status": r.status,
+                        "tokens_used": r.tokens_used
+                    }
+                    for r in chunk_results
+                ]
+            },
+            "error": None,
+            "id": session_id
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to process chunked rough cut: {e}")
+        return _error_response(
+            ERROR_CODES["CHUNK_PROCESSING_FAILED"],
+            "internal",
+            f"Failed to process chunked rough cut: {str(e)}",
+            "Check input data and retry"
+        )
+
+
+def process_chunked_rough_cut_with_progress(
+    params: Dict[str, Any] | None
+) -> Generator[Dict[str, Any], None, None]:
+    """Handler for process_chunked_rough_cut_with_progress method.
+    
+    Processes chunks with progress reporting. Yields progress updates
+    during processing and the final result at completion.
+    
+    Args:
+        params: Same as process_chunked_rough_cut
+    
+    Yields:
+        Progress updates and final result
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+        return
+    
+    session_id = params.get("session_id")
+    transcript = params.get("transcript")
+    format_template = params.get("format_template")
+    asset_index = params.get("asset_index")
+    
+    if not session_id or not isinstance(session_id, str):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+        return
+    
+    if not transcript or not isinstance(transcript, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: transcript",
+            "Provide transcript data with segments"
+        )
+        return
+    
+    if not format_template or not isinstance(format_template, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: format_template",
+            "Provide format template"
+        )
+        return
+    
+    if not asset_index or not isinstance(asset_index, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: asset_index",
+            "Provide asset index with categories"
+        )
+        return
+    
+    try:
+        # Chunked processing classes already imported at module level
+        
+        # Get chunk configuration
+        chunk_config_data = params.get("chunk_config", {})
+        chunk_config = ChunkConfig(
+            max_tokens_per_chunk=chunk_config_data.get("max_tokens_per_chunk", 4000),
+            overlap_percentage=chunk_config_data.get("overlap_percentage", 0.1),
+            respect_sentence_boundaries=chunk_config_data.get("respect_sentence_boundaries", True),
+            provider_name=params.get("ai_provider", "openai")
+        )
+        
+        # Extract segments
+        segments = transcript.get("segments", [])
+        if not segments:
+            yield _error_response(
+                ERROR_CODES["EMPTY_TRANSCRIPT"],
+                "validation",
+                "Transcript has no segments",
+                "Provide transcript with at least one segment"
+            )
+            return
+        
+        # Initialize orchestrator
+        orchestrator = ChunkedOrchestrator(chunk_config)
+        
+        logger.info(f"Starting chunked processing with progress for session {session_id}")
+        
+        # Process with progress
+        progress_generator = orchestrator.process_chunks_with_progress(
+            segments,
+            format_template,
+            asset_index
+        )
+        
+        chunk_results = None
+        
+        for item in progress_generator:
+            # Check if item is a progress object or the final result list
+            if hasattr(item, 'to_dict') and hasattr(item, 'chunk_phase'):
+                # This is a ChunkProgress object
+                progress_dict = item.to_dict()
+                yield {
+                    "type": "progress",
+                    "operation": "process_chunked_rough_cut",
+                    **progress_dict
+                }
+            elif isinstance(item, list):
+                # This is the final chunk results list
+                chunk_results = item
+            else:
+                # Unknown item type, skip
+                continue
+        
+        if chunk_results is None:
+            chunk_results = []
+        
+        # Assemble results
+        assembled = orchestrator.assemble_chunk_results(chunk_results)
+        
+        logger.info(
+            f"Chunked processing with progress complete: {len(chunk_results)} chunks "
+            f"(session: {session_id})"
+        )
+        
+        yield {
+            "result": {
+                "rough_cut_document": assembled.to_dict(),
+                "chunks_summary": [
+                    {
+                        "index": r.chunk_index,
+                        "status": r.status,
+                        "tokens_used": r.tokens_used
+                    }
+                    for r in chunk_results
+                ]
+            },
+            "error": None,
+            "id": session_id
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to process chunked rough cut: {e}")
+        yield _error_response(
+            ERROR_CODES["CHUNK_PROCESSING_FAILED"],
+            "internal",
+            f"Failed to process chunked rough cut: {str(e)}",
+            "Check input data and retry"
+        )
+
+
 # Handler registry
 AI_HANDLERS = {
     "initiate_rough_cut": initiate_rough_cut,
@@ -1999,4 +2307,6 @@ AI_HANDLERS = {
     "match_sfx_with_progress": match_sfx_with_progress,
     "match_vfx": match_vfx,
     "match_vfx_with_progress": match_vfx_with_progress,
+    "process_chunked_rough_cut": process_chunked_rough_cut,
+    "process_chunked_rough_cut_with_progress": process_chunked_rough_cut_with_progress,
 }

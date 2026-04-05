@@ -1,0 +1,115 @@
+You are processing chunk {chunk_index} of {total_chunks} for rough cut generation.
+
+## CHUNK CONTEXT
+- **Time Range**: {start_time}s to {end_time}s
+- **Section Type**: {section_type}
+- **Tone**: {tone}
+- **Estimated Duration**: {duration}s
+
+## CONTINUITY PRESERVATION
+{continuity_context}
+
+## CRITICAL RULES FOR CHUNKED PROCESSING
+1. You are receiving transcript segment {start_time}s to {end_time}s
+2. Previous chunk ended with: "{overlap_from_previous}"
+3. This context must inform your decisions for smooth transitions
+4. Process only within your assigned time range
+5. Maintain narrative continuity with adjacent chunks
+6. Output format must include continuity markers for assembly
+
+## TRANSCRIPT SEGMENTS
+```
+{transcript_segments}
+```
+
+## FORMAT TEMPLATE RULES
+```
+{format_rules}
+```
+
+## AVAILABLE ASSETS (Filtered for this chunk)
+### Music
+{music_assets}
+
+### SFX
+{sfx_assets}
+
+### VFX/Templates
+{vfx_assets}
+
+## YOUR TASK
+1. **Cut transcript** into segments matching the format structure
+2. **Match music** to segments based on context and emotional tone
+3. **Match SFX** to appropriate moments in the content
+4. **Match VFX/templates** to format requirements
+5. **Preserve continuity** with adjacent chunks (use overlap context)
+
+## CONTINUITY PRESERVATION REQUIREMENTS
+- Review the overlap context from previous chunk
+- Ensure your segment boundaries align with narrative flow
+- Note any speaker changes or scene transitions at chunk boundaries
+- Flag any pacing concerns for the assembly phase
+- If this is the first chunk, establish strong opening
+- If this is the last chunk, ensure proper closing
+
+## OUTPUT FORMAT
+Return a JSON object with:
+
+```json
+{
+  "transcript_cuts": [
+    {
+      "start": <float>,
+      "end": <float>,
+      "text": "<original text>",
+      "speaker": "<speaker name or null>",
+      "section": "<section name>"
+    }
+  ],
+  "music_matches": [
+    {
+      "asset_id": "<id>",
+      "file_path": "<path>",
+      "start_time": <float>,
+      "end_time": <float>,
+      "confidence": <float>,
+      "match_reason": "<explanation>"
+    }
+  ],
+  "sfx_matches": [
+    {
+      "asset_id": "<id>",
+      "file_path": "<path>",
+      "timestamp": <float>,
+      "confidence": <float>,
+      "context": "<why this SFX>"
+    }
+  ],
+  "vfx_matches": [
+    {
+      "asset_id": "<id>",
+      "file_path": "<path>",
+      "template_type": "<fusion_composition|generator|transition>",
+      "placement": {
+        "start_time": <float>,
+        "end_time": <float>,
+        "duration_ms": <int>
+      },
+      "confidence": <float>
+    }
+  ],
+  "continuity_markers": {
+    "ending_context": "<brief summary for next chunk>",
+    "speaker_at_boundary": "<name or null>",
+    "scene_transition": <true/false>,
+    "pacing_notes": "<any pacing concerns>"
+  }
+}
+```
+
+## IMPORTANT
+- Cut transcript WITHOUT changing words - only adjust start/end times
+- Preserve exact text from segments - never paraphrase or summarize
+- Match assets from the filtered list provided above
+- Include continuity markers to help the next chunk maintain narrative flow
+- Be mindful that your results will be assembled with other chunks
