@@ -85,7 +85,7 @@ development_status:
   # Epic 5: AI-Powered Rough Cut Generation - IN PROGRESS
   epic-5: in-progress
   5-1-initiate-rough-cut-generation: done
-  5-2-send-data-to-ai-service: backlog
+  5-2-send-data-to-ai-service: done
   5-3-ai-transcript-cutting: backlog
   5-4-ai-music-matching: backlog
   5-5-ai-sfx-matching: backlog

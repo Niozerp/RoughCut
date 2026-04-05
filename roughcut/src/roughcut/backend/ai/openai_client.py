@@ -11,13 +11,16 @@ with timeout handling, rate limiting, and error recovery.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 import openai
 
 from ...utils.exceptions import AIError, AIRateLimitError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -248,6 +251,210 @@ class OpenAIClient:
             suggestion="Retry after a short delay"
         )
     
+    async def send_rough_cut_request(
+        self,
+        prompt_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Send rough cut generation request to AI service.
+        
+        Sends transcript, format rules, and media index to AI for
+        processing. Implements 30-second timeout per NFR3 with
+        exponential backoff retry logic.
+        
+        Args:
+            prompt_data: Complete prompt data from PromptBuilder
+            
+        Returns:
+            Parsed JSON response from AI
+            
+        Raises:
+            AIError: If API call fails, times out, or returns invalid JSON
+        """
+        import json
+        
+        logger.info("Sending rough cut generation request to AI")
+        
+        try:
+            response = await asyncio.wait_for(
+                self._call_rough_cut_api_with_retry(prompt_data),
+                timeout=self.timeout
+            )
+            
+            # Parse JSON response
+            try:
+                parsed_response = json.loads(response)
+                return parsed_response
+            except json.JSONDecodeError as e:
+                raise AIError(
+                    code="AI_INVALID_RESPONSE",
+                    category="external_api",
+                    message=f"AI returned invalid JSON: {str(e)}",
+                    recoverable=True,
+                    suggestion="Retry the request"
+                )
+            
+        except asyncio.TimeoutError:
+            raise AIError(
+                code="AI_TIMEOUT",
+                category="external_api",
+                message=f"AI service timeout after {self.timeout}s",
+                recoverable=True,
+                suggestion="Check API credits or retry with shorter transcript"
+            )
+        except AIError:
+            raise
+        except Exception as e:
+            raise AIError(
+                code="AI_ERROR",
+                category="external_api",
+                message=f"AI service error: {str(e)}",
+                recoverable=True,
+                suggestion="Check API key and network connection"
+            )
+    
+    async def _call_rough_cut_api_with_retry(self, prompt_data: Dict[str, Any]) -> str:
+        """Call OpenAI API for rough cut with exponential backoff retry.
+        
+        Args:
+            prompt_data: Complete prompt from PromptBuilder
+            
+        Returns:
+            API response text (should be JSON)
+            
+        Raises:
+            AIRateLimitError: If rate limit persists after retries
+            AIError: For other API errors
+        """
+        # Guard against invalid retry configuration
+        if self.max_retries < 1:
+            raise AIError(
+                code="AI_CONFIG_ERROR",
+                category="config",
+                message="max_retries must be >= 1",
+                recoverable=True,
+                suggestion="Configure valid retry count"
+            )
+        
+        # Extract and validate prompt data with fallbacks
+        model = prompt_data.get("model", self.DEFAULT_MODEL)
+        messages = prompt_data.get("messages", [])
+        temperature = prompt_data.get("temperature") if prompt_data.get("temperature") is not None else 0.3
+        max_tokens = prompt_data.get("max_tokens") if prompt_data.get("max_tokens") is not None else 4000
+        
+        # Validate messages is not empty
+        if not messages or not isinstance(messages, list):
+            raise AIError(
+                code="AI_INVALID_PROMPT",
+                category="validation",
+                message="Messages must be a non-empty list",
+                recoverable=True,
+                suggestion="Check prompt builder output"
+            )
+        
+        last_exception = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                
+                # Validate response has content
+                if not response.choices or len(response.choices) == 0:
+                    raise AIError(
+                        code="AI_EMPTY_RESPONSE",
+                        category="external_api",
+                        message="API returned empty choices list",
+                        recoverable=True,
+                        suggestion="Retry the request"
+                    )
+                
+                content = response.choices[0].message.content
+                if content is None:
+                    raise AIError(
+                        code="AI_NO_CONTENT",
+                        category="external_api",
+                        message="API returned no content",
+                        recoverable=True,
+                        suggestion="Retry the request"
+                    )
+                
+                return content
+                
+            except openai.RateLimitError as e:
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s for attempts 0, 1, 2
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise AIRateLimitError(
+                        message=f"Rate limit exceeded after {self.max_retries} retries",
+                        retry_after=getattr(e, 'retry_after', None)
+                    )
+            except openai.AuthenticationError as e:
+                raise AIError(
+                    code="AI_AUTH_ERROR",
+                    category="config",
+                    message="Invalid API key",
+                    recoverable=True,
+                    suggestion="Verify your OpenAI API key in settings"
+                )
+            except openai.APIConnectionError as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise AIError(
+                        code="AI_CONNECTION_ERROR",
+                        category="external_api",
+                        message=f"Connection error: {str(e)}",
+                        recoverable=True,
+                        suggestion="Check network connection and retry"
+                    )
+            except openai.BadRequestError as e:
+                raise AIError(
+                    code="AI_BAD_REQUEST",
+                    category="external_api",
+                    message=f"Invalid request: {str(e)}",
+                    recoverable=False,
+                    suggestion="Check prompt format and length"
+                )
+            except openai.InternalServerError as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise AIError(
+                        code="AI_SERVER_ERROR",
+                        category="external_api",
+                        message=f"OpenAI server error: {str(e)}",
+                        recoverable=True,
+                        suggestion="Retry after a short delay"
+                    )
+            except openai.APIError as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise AIError(
+                        code="AI_API_ERROR",
+                        category="external_api",
+                        message=f"API error: {str(e)}",
+                        recoverable=True,
+                        suggestion="Retry or check OpenAI status page"
+                    )
+        
+        # Should never reach here if max_retries >= 1
+        raise AIError(
+            code="AI_RETRY_EXHAUSTED",
+            category="external_api",
+            message="All retry attempts exhausted",
+            recoverable=True,
+            suggestion="Retry after a short delay"
+        )
+
     def _build_prompt(self, file_name: str, folder_path: str, category: str) -> str:
         """Build prompt for tag generation.
         
@@ -314,28 +521,15 @@ Example: corporate, upbeat, bright, theme, electronic, background"""
     def _parse_tags(self, response: str) -> List[str]:
         """Parse comma-separated tags from AI response.
         
-        Performs basic parsing only. Full cleaning/normalization 
-        should be done by MediaTagger._clean_tags().
-        
-        Args:
-            response: Raw API response text
-            
-        Returns:
-            List of tag strings (may contain duplicates, need cleaning)
-        """
-        if not response:
-            return []
-        
-        # Basic split by comma - let tagger do the thorough cleaning
-        return [tag.strip() for tag in response.split(',') if tag.strip()]
-        """Parse comma-separated tags from AI response.
-        
         Args:
             response: Raw API response text
             
         Returns:
             List of tag strings
         """
+        if not response:
+            return []
+        
         # Split by comma and clean
         tags = []
         for tag in response.split(','):
