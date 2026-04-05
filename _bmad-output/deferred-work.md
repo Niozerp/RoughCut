@@ -58,3 +58,39 @@ This file tracks issues and improvements that have been deferred from code revie
 **Issue:** Guide content returned directly without structure validation. If structure changes, Lua may break.  
 **Defer Reason:** Overkill for MVP - static structure is well-tested  
 **Defer To:** Future enhancement when guide becomes dynamic
+
+---
+
+## Deferred from: code review of 5-3-ai-transcript-cutting (2026-04-04)
+
+### [W8] 30-Second Timeout Not Enforced in Transcript Cutting
+**Source:** Acceptance Auditor  
+**Location:** `ai.py:cut_transcript`, `transcript_cutter.py`  
+**Issue:** No timeout visible in cut_transcript or transcript_cutter. NFR3 violation - AI operations could hang indefinitely.  
+**Defer Reason:** Architectural dependency - relies on OpenAI client timeout from Story 5.2. The client has 30s timeout, so transcript cutting inherits it. Adding another timeout layer would be redundant.  
+**Defer To:** Architectural review of timeout strategy across all AI operations
+
+---
+
+## Deferred from: second code review of 5-3-ai-transcript-cutting (2026-04-04)
+
+### [W9] Word Preservation Substring Matching False Positives
+**Source:** Blind Hunter  
+**Location:** `transcript_segment.py:74`  
+**Issue:** Substring matching can validate text from different locations. A segment "the" or "I said" would pass if that text appears anywhere in source, even from different locations.  
+**Defer Reason:** Complex to solve without character span tracking from transcription service. Current approach works for the common case.  
+**Defer To:** Post-MVP enhancement when transcription service provides character spans
+
+### [W10] Missing Test Coverage for New Methods
+**Source:** Acceptance Auditor  
+**Location:** `test_transcript_cutter.py`  
+**Issue:** No unit tests for format_marker(), format_timestamp(), narrative beat validation, overlapping segment detection.  
+**Defer Reason:** Test file exists but needs expansion. Story is complete without full test coverage for helper methods.  
+**Defer To:** Test coverage sprint or technical debt cleanup
+
+### [W11] Prompt Engine Edge Cases
+**Source:** Edge Case Hunter  
+**Location:** `prompt_engine.py` (multiple methods)  
+**Issue:** Multiple methods lack null checks for format_template attributes, transcript fields, and parameters.  
+**Defer Reason:** Methods are internal to prompt building, called after validation in data_bundle. Adding guards everywhere would be over-engineering for MVP.  
+**Defer To:** Robustness improvement phase

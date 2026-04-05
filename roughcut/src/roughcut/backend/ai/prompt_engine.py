@@ -417,6 +417,105 @@ Note: Process this segment independently while maintaining narrative continuity.
 
 Remember: Only suggest assets from the provided index. Do not invent filenames."""
     
+    def build_transcript_cutting_prompt(
+        self,
+        transcript_text: str,
+        format_structure: str,
+        system_prompt_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Build prompt for transcript cutting operation.
+        
+        Constructs a prompt specifically for cutting transcripts into segments
+        matching format structure, with strict word preservation requirements.
+        
+        Args:
+            transcript_text: Full source transcript text
+            format_structure: Format structure description (JSON or formatted text)
+            system_prompt_path: Optional path to custom system prompt template
+            
+        Returns:
+            Dictionary ready for OpenAI API call
+        """
+        from pathlib import Path
+        
+        logger.info("Building transcript cutting prompt")
+        
+        # Load system prompt template
+        if system_prompt_path and Path(system_prompt_path).exists():
+            system_prompt = Path(system_prompt_path).read_text()
+        else:
+            # Use default template from prompt_templates directory
+            default_path = Path(__file__).parent / "prompt_templates" / "cut_transcript_system.txt"
+            if default_path.exists():
+                system_prompt = default_path.read_text()
+            else:
+                # Fallback inline prompt
+                system_prompt = self._get_default_cutting_prompt()
+        
+        # Fill in template placeholders
+        system_prompt = system_prompt.replace("{format_structure}", format_structure)
+        system_prompt = system_prompt.replace("{transcript_text}", transcript_text)
+        
+        # Construct API request
+        # Note: transcript included in system prompt only, not duplicated in user message
+        prompt = {
+            "model": self.model,
+            "temperature": 0.1,  # Very low temperature for strict adherence
+            "max_tokens": 4000,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": "Cut the transcript according to the format structure provided above."
+                }
+            ]
+        }
+        
+        logger.info("Transcript cutting prompt built successfully")
+        return prompt
+    
+    def _get_default_cutting_prompt(self) -> str:
+        """Get default transcript cutting system prompt.
+        
+        Returns:
+            Default system prompt for transcript cutting
+        """
+        return """You are an expert video editor AI tasked with cutting transcripts for rough cut generation.
+
+CRITICAL RULES:
+1. NEVER change, paraphrase, summarize, or modify ANY words
+2. ONLY adjust start and end timestamps to select segments
+3. Extract EXACTLY the number of sections specified in the format
+4. Each segment text must exist VERBATIM in the source transcript
+5. Map each segment to the correct format section name
+
+Your task:
+- Identify narrative beats that align with the format structure
+- Select segments that tell a coherent story within each section
+- Preserve the exact words from the source transcript - no modifications
+- Return JSON with segment boundaries and verbatim text
+
+Output format (JSON only):
+{
+  "segments": [
+    {
+      "section_name": "<section name from format>",
+      "start_time": <float in seconds>,
+      "end_time": <float in seconds>,
+      "text": "<exact verbatim text from transcript>"
+    }
+  ]
+}
+
+REMEMBER:
+- The "text" field must be copied EXACTLY from the source transcript
+- Do not paraphrase, summarize, or modify any words
+- Ensure the number of segments matches the format requirements
+- Each segment should fit the section's purpose (intro hook, main narrative, outro call-to-action)"""
+    
     def estimate_tokens(self, data_bundle: DataBundle) -> int:
         """Estimate token count for the prompt.
         

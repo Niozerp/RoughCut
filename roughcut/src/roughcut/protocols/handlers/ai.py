@@ -13,6 +13,8 @@ from ...backend.ai.data_bundle import DataBundleBuilder
 from ...backend.ai.openai_client import OpenAIClient
 from ...backend.ai.prompt_engine import PromptBuilder
 from ...backend.ai.rough_cut_orchestrator import RoughCutOrchestrator
+from ...backend.ai.transcript_cutter import TranscriptCutter
+from ...backend.ai.transcript_segment import TranscriptSegment
 from ...backend.workflows.session import get_session_manager
 from ...config.settings import get_settings
 
@@ -26,6 +28,12 @@ ERROR_CODES = {
     "AI_INITIATE_ERROR": "AI_INITIATE_ERROR",
     "AI_CONFIG_ERROR": "AI_CONFIG_ERROR",
     "AI_TIMEOUT": "AI_TIMEOUT",
+    "EMPTY_TRANSCRIPT": "EMPTY_TRANSCRIPT",
+    "FORMAT_SECTION_MISMATCH": "FORMAT_SECTION_MISMATCH",
+    "WORD_MODIFICATION_DETECTED": "WORD_MODIFICATION_DETECTED",
+    "INVALID_SEGMENT_BOUNDARIES": "INVALID_SEGMENT_BOUNDARIES",
+    "NARRATIVE_BEAT_MISMATCH": "NARRATIVE_BEAT_MISMATCH",
+    "OVERLAPPING_SEGMENTS": "OVERLAPPING_SEGMENTS",
 }
 
 # Type alias for progress callback
@@ -679,9 +687,365 @@ def send_data_to_ai_with_progress(
         )
 
 
+def cut_transcript(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for cut_transcript method.
+    
+    Cuts transcript into segments matching format structure.
+    This implements Story 5.3 - AI Transcript Cutting.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - transcript: Transcription data with text and segments (required)
+            - format_template: Format template with section requirements (required)
+            - ai_response: AI response with segment recommendations (required)
+    
+    Returns:
+        Dictionary with segment markers and compliance info
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    transcript = params.get("transcript")
+    format_template = params.get("format_template")
+    ai_response = params.get("ai_response")
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    if not transcript or not isinstance(transcript, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: transcript",
+            "Provide transcript data with text and segments"
+        )
+    
+    if not format_template or not isinstance(format_template, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: format_template",
+            "Provide format template with section requirements"
+        )
+    
+    # Validate transcript has text
+    if not transcript.get("text") or not transcript["text"].strip():
+        return _error_response(
+            ERROR_CODES["EMPTY_TRANSCRIPT"],
+            "validation",
+            "Transcript text is empty",
+            "Provide a non-empty transcript"
+        )
+    
+    # Validate ai_response is a dict
+    if not ai_response or not isinstance(ai_response, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing or invalid ai_response",
+            "Provide ai_response as a dictionary from AI service"
+        )
+    
+    # Validate ai_response has segments list
+    ai_segments = ai_response.get("segments")
+    if ai_segments is not None and not isinstance(ai_segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"ai_response['segments'] must be a list, got {type(ai_segments).__name__}",
+            "Ensure AI returns segments as a list"
+        )
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
+        # Initialize cutter and process
+        cutter = TranscriptCutter()
+        
+        result = cutter.cut_transcript_to_format(
+            transcript=transcript,
+            format_template=format_template,
+            ai_response=ai_response
+        )
+        
+        logger.info(
+            f"Transcript cutting complete: {len(result.segments)} segments, "
+            f"{'compliant' if result.format_compliance.compliant else 'non-compliant'}"
+        )
+        
+        # Check for critical errors and return error response
+        critical_errors = [w for w in result.warnings if any(
+            code in w for code in [
+                "WORD_MODIFICATION_DETECTED", 
+                "INVALID_SEGMENT_BOUNDARIES", 
+                "FORMAT_SECTION_MISMATCH",
+                "NARRATIVE_BEAT_MISMATCH",
+                "OVERLAPPING_SEGMENTS"
+            ]
+        )]
+        
+        if critical_errors:
+            # Return first critical error
+            first_error = critical_errors[0]
+            if "WORD_MODIFICATION_DETECTED" in first_error:
+                return _error_response(
+                    ERROR_CODES["WORD_MODIFICATION_DETECTED"],
+                    "ai_validation",
+                    first_error,
+                    "Re-prompt AI with stricter word preservation instructions"
+                )
+            elif "INVALID_SEGMENT_BOUNDARIES" in first_error:
+                return _error_response(
+                    ERROR_CODES["INVALID_SEGMENT_BOUNDARIES"],
+                    "validation",
+                    first_error,
+                    "AI returned invalid segment timestamps"
+                )
+            elif "FORMAT_SECTION_MISMATCH" in first_error:
+                return _error_response(
+                    ERROR_CODES["FORMAT_SECTION_MISMATCH"],
+                    "validation",
+                    first_error,
+                    "AI returned wrong number of sections"
+                )
+            elif "NARRATIVE_BEAT_MISMATCH" in first_error:
+                return _error_response(
+                    ERROR_CODES["NARRATIVE_BEAT_MISMATCH"],
+                    "ai_validation",
+                    first_error,
+                    "Re-prompt AI with correct narrative beat purposes for each section"
+                )
+            elif "OVERLAPPING_SEGMENTS" in first_error:
+                return _error_response(
+                    ERROR_CODES["OVERLAPPING_SEGMENTS"],
+                    "validation",
+                    first_error,
+                    "Re-prompt AI to ensure non-overlapping segment timestamps"
+                )
+        
+        # Build formatted markers
+        markers = []
+        for i, segment in enumerate(result.segments, 1):
+            markers.append(segment.format_marker(i))
+        
+        return {
+            "result": {
+                "segments": [s.to_dict() for s in result.segments],
+                "markers": markers,
+                "total_duration": result.total_duration,
+                "format_compliance": result.format_compliance.to_dict(),
+                "warnings": result.warnings,
+                "session_id": session_id
+            }
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error cutting transcript: {e}")
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check transcript, format template, and AI response format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to cut transcript: {e}")
+        return _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to cut transcript: {str(e)}",
+            "Check transcript, format template, and AI response data"
+        )
+
+
+def cut_transcript_with_progress(
+    params: Dict[str, Any] | None,
+    progress_callback: Optional[ProgressCallback] = None
+) -> Generator[Dict[str, Any], None, None]:
+    """Generator-based handler for cut_transcript with progress updates.
+    
+    Yields progress updates during transcript cutting and validation.
+    
+    Args:
+        params: Request parameters (same as cut_transcript)
+        progress_callback: Optional callback for progress updates
+    
+    Yields:
+        Progress update dictionaries or final result
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+        return
+    
+    session_id = params.get("session_id")
+    transcript = params.get("transcript")
+    format_template = params.get("format_template")
+    ai_response = params.get("ai_response")
+    
+    if not session_id or not isinstance(session_id, str):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+        return
+    
+    if not transcript or not isinstance(transcript, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: transcript",
+            "Provide transcript data"
+        )
+        return
+    
+    if not format_template or not isinstance(format_template, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: format_template",
+            "Provide format template"
+        )
+        return
+    
+    if not transcript.get("text") or not transcript["text"].strip():
+        yield _error_response(
+            ERROR_CODES["EMPTY_TRANSCRIPT"],
+            "validation",
+            "Transcript text is empty",
+            "Provide a non-empty transcript"
+        )
+        return
+    
+    # Validate ai_response is a dict
+    if not ai_response or not isinstance(ai_response, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing or invalid ai_response",
+            "Provide ai_response as a dictionary from AI service"
+        )
+        return
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            yield _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+            return
+        
+        yield _progress_response("cut_transcript", 1, 4, "Initializing transcript cutting...")
+        
+        yield _progress_response("cut_transcript", 2, 4, "Processing AI segment recommendations...")
+        
+        # Initialize cutter and process
+        cutter = TranscriptCutter()
+        
+        result = cutter.cut_transcript_to_format(
+            transcript=transcript,
+            format_template=format_template,
+            ai_response=ai_response
+        )
+        
+        yield _progress_response("cut_transcript", 3, 4, "Validating word preservation...")
+        
+        # Check for critical issues
+        critical_issues = [s for s in result.segments if not s.source_words_preserved]
+        
+        if critical_issues:
+            logger.warning(
+                f"Word preservation issues detected in {len(critical_issues)} segments"
+            )
+        
+        yield _progress_response("cut_transcript", 4, 4, "Transcript cutting complete")
+        
+        logger.info(
+            f"Transcript cutting complete: {len(result.segments)} segments "
+            f"for session {session_id}"
+        )
+        
+        # Build formatted markers
+        markers = []
+        for i, segment in enumerate(result.segments, 1):
+            markers.append(segment.format_marker(i))
+        
+        # Return final result
+        yield {
+            "result": {
+                "segments": [s.to_dict() for s in result.segments],
+                "markers": markers,
+                "total_duration": result.total_duration,
+                "format_compliance": result.format_compliance.to_dict(),
+                "warnings": result.warnings,
+                "session_id": session_id
+            }
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error cutting transcript: {e}")
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check transcript, format template, and AI response format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to cut transcript: {e}")
+        yield _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to cut transcript: {str(e)}",
+            "Check input data and retry"
+        )
+
+
 # Handler registry
 AI_HANDLERS = {
     "initiate_rough_cut": initiate_rough_cut,
     "send_data_to_ai": send_data_to_ai,
     "send_data_to_ai_with_progress": send_data_to_ai_with_progress,
+    "cut_transcript": cut_transcript,
+    "cut_transcript_with_progress": cut_transcript_with_progress,
 }
