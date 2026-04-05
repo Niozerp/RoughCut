@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict
 from ...backend.timeline.builder import TimelineBuilder
 from ...backend.timeline.cutter import FootageCutter, CutResult
 from ...backend.timeline.importer import MediaImporter, ImportResult
+from ...backend.timeline.music_placer import MusicPlacer, MusicPlacerResult
 from ...backend.workflows.session import get_session_manager
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,9 @@ ERROR_CODES = {
     "MISSING_SEGMENTS": "MISSING_SEGMENTS",
     "TIMELINE_NOT_FOUND": "TIMELINE_NOT_FOUND",
     "SOURCE_CLIP_NOT_FOUND": "SOURCE_CLIP_NOT_FOUND",
-    "SEGMENT_VALIDATION_FAILED": "SEGMENT_VALIDATION_FAILED"
+    "SEGMENT_VALIDATION_FAILED": "SEGMENT_VALIDATION_FAILED",
+    "MUSIC_PLACEMENT_FAILED": "MUSIC_PLACEMENT_FAILED",
+    "MISSING_MUSIC_SEGMENTS": "MISSING_MUSIC_SEGMENTS"
 }
 
 
@@ -500,10 +503,140 @@ def cut_footage_to_segments(params: Dict[str, Any] | None) -> Dict[str, Any]:
         )
 
 
+def place_music_on_timeline(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Place AI-suggested music clips on the timeline.
+    
+    This handler is called from the Lua GUI after footage cutting to place
+    music clips on the timeline's dedicated music track(s).
+    
+    Args:
+        params: Request parameters containing:
+            - timeline_id: Target timeline ID (required)
+            - music_segments: List of music segment dictionaries (required)
+            
+    Returns:
+        Dictionary with music placement result or error
+    """
+    if params is None:
+        params = {}
+    
+    # Validate required parameters
+    timeline_id = params.get("timeline_id")
+    if not timeline_id:
+        logger.error("Missing timeline_id parameter")
+        return _error_response(
+            ERROR_CODES["TIMELINE_NOT_FOUND"],
+            "validation",
+            "Timeline ID is required",
+            "Ensure timeline was created successfully before placing music",
+            recoverable=True
+        )
+    
+    music_segments = params.get("music_segments")
+    if music_segments is None:
+        logger.error("Missing music_segments parameter")
+        return _error_response(
+            ERROR_CODES["MISSING_MUSIC_SEGMENTS"],
+            "validation",
+            "No music_segments parameter provided",
+            "Generate a rough cut with AI music suggestions first",
+            recoverable=True
+        )
+    
+    if not isinstance(music_segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "music_segments must be a list",
+            "Provide a list of music segment dictionaries with file paths and timing",
+            recoverable=True
+        )
+    
+    if len(music_segments) == 0:
+        logger.info("Empty music_segments list - nothing to place")
+        return {
+            "clips_placed": 0,
+            "tracks_used": [],
+            "total_duration_frames": 0,
+            "total_duration_timecode": "0:00:00",
+            "timeline_positions": [],
+            "success": True,
+            "warning": "No music segments to place"
+        }
+    
+    logger.info(f"Placing {len(music_segments)} music clips on timeline {timeline_id}")
+    
+    try:
+        # Create placer and perform placement
+        placer = MusicPlacer()
+        
+        # Progress callback that emits JSON-RPC progress messages
+        def progress_callback(current: int, total: int, message: str):
+            logger.info(f"Progress: {message} ({current}/{total})")
+        
+        result = placer.place_music_clips(
+            timeline_id=timeline_id,
+            music_segments=music_segments,
+            progress_callback=progress_callback
+        )
+        
+        if result.success:
+            # Convert placements to serializable format
+            timeline_positions = []
+            for placement in result.timeline_positions:
+                timeline_positions.append({
+                    "segment_index": placement.segment_index,
+                    "track_number": placement.track_number,
+                    "timeline_start_frame": placement.timeline_start_frame,
+                    "timeline_end_frame": placement.timeline_end_frame,
+                    "music_file_path": placement.music_file_path,
+                    "clip_id": placement.clip_id,
+                    "fade_in_frames": placement.fade_in_frames,
+                    "fade_out_frames": placement.fade_out_frames,
+                    "section_type": placement.section_type
+                })
+            
+            logger.info(
+                f"Music placement complete: {result.clips_placed} clips, "
+                f"tracks used: {result.tracks_used}, "
+                f"duration: {result.total_duration_timecode}"
+            )
+            
+            return {
+                "clips_placed": result.clips_placed,
+                "tracks_used": result.tracks_used,
+                "total_duration_frames": result.total_duration_frames,
+                "total_duration_timecode": result.total_duration_timecode,
+                "timeline_positions": timeline_positions,
+                "success": True
+            }
+        else:
+            # Return error from placer
+            error = result.error or {}
+            return _error_response(
+                error.get("code", ERROR_CODES["MUSIC_PLACEMENT_FAILED"]),
+                error.get("category", "internal"),
+                error.get("message", "Music placement failed"),
+                error.get("suggestion", "Check Resolve is running and music files are accessible"),
+                error.get("recoverable", True)
+            )
+            
+    except Exception as e:
+        logger.exception(f"Error placing music on timeline: {e}")
+        return _error_response(
+            ERROR_CODES["INTERNAL_ERROR"],
+            "internal",
+            f"Unexpected error during music placement: {str(e)}",
+            "Check application logs and retry the operation",
+            recoverable=True
+        )
+
+
 # Handler registry for the dispatcher
 TIMELINE_HANDLERS: Dict[str, Callable] = {
     "create_timeline_from_document": create_timeline_from_document,
     "create_timeline": create_timeline,
     "import_suggested_media": import_suggested_media,
-    "cut_footage_to_segments": cut_footage_to_segments
+    "cut_footage_to_segments": cut_footage_to_segments,
+    "place_music_on_timeline": place_music_on_timeline
 }

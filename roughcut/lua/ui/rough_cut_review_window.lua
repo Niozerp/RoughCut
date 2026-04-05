@@ -730,7 +730,7 @@ function _createTimelineInternal()
         local timelineId = result.result.timeline_id
         if timelineId then
             _importSuggestedMediaAsync(timelineId)
-        else
+        end
         _showTimelineCreatedSuccess(result.result)
     else
         _showError("Timeline creation returned no result")
@@ -848,7 +848,6 @@ function _importSuggestedMediaInternal(timelineId)
     
     -- Now cut footage to segments (Story 6.3)
     _cutFootageToSegmentsAsync(finalResult)
-end
 end
 
 -- Cut footage to segments asynchronously
@@ -981,6 +980,161 @@ function _cutFootageToSegmentsInternal(importResult)
         finalResult.cutting_warning = result.error.message
     end
     
+    -- Now place music on timeline (Story 6.4)
+    _placeMusicOnTimelineAsync(finalResult)
+end
+
+-- Place music on timeline asynchronously (Story 6.4)
+function _placeMusicOnTimelineAsync(cutResult)
+    isLoading = true
+    _showLoadingState("Placing music on timeline...")
+    
+    local ok_timer = pcall(function()
+        if type(SetTimer) == "function" then
+            SetTimer(100, function()
+                _placeMusicOnTimelineInternal(cutResult)
+                return false
+            end)
+        else
+            _placeMusicOnTimelineInternal(cutResult)
+        end
+    end)
+    
+    if not ok_timer then
+        _placeMusicOnTimelineInternal(cutResult)
+    end
+end
+
+-- Internal function to place music on timeline (Story 6.4)
+function _placeMusicOnTimelineInternal(cutResult)
+    -- Build music segments list from rough cut document
+    local musicSegments = {}
+    
+    if roughCutDocument then
+        -- Add music suggestions from sections
+        if roughCutDocument.sections and type(roughCutDocument.sections) == "table" then
+            for i, section in ipairs(roughCutDocument.sections) do
+                if section.music and type(section.music) == "table" then
+                    local music = section.music
+                    if music.file_path then
+                        -- Calculate start/end frames from section timing
+                        local startTime = section.start_time or 0
+                        local endTime = section.end_time or 0
+                        
+                        -- Convert to frames (30fps)
+                        local startFrames = math.floor(startTime * 30)
+                        local endFrames = math.floor(endTime * 30)
+                        
+                        table.insert(musicSegments, {
+                            segment_index = i,
+                            music_file_path = music.file_path,
+                            start_time = string.format("%d:%02d", math.floor(startTime / 60), math.floor(startTime % 60)),
+                            end_time = string.format("%d:%02d", math.floor(endTime / 60), math.floor(endTime % 60)),
+                            start_frames = startFrames,
+                            end_frames = endFrames,
+                            track_number = 2,  -- Music track
+                            fade_in_seconds = music.fade_in or 2.0,
+                            fade_out_seconds = music.fade_out or 2.0,
+                            section_type = section.section_type or "bed"
+                        })
+                    end
+                end
+            end
+        end
+        
+        -- Also check music_suggestions array
+        if roughCutDocument.music_suggestions and type(roughCutDocument.music_suggestions) == "table" then
+            for i, music in ipairs(roughCutDocument.music_suggestions) do
+                if music.file_path then
+                    -- Check if already added from sections
+                    local alreadyAdded = false
+                    for _, existing in ipairs(musicSegments) do
+                        if existing.music_file_path == music.file_path then
+                            alreadyAdded = true
+                            break
+                        end
+                    end
+                    
+                    if not alreadyAdded then
+                        local position = music.position or 0
+                        local duration = music.duration or 15  -- Default 15 seconds
+                        
+                        table.insert(musicSegments, {
+                            segment_index = #musicSegments + 1,
+                            music_file_path = music.file_path,
+                            start_time = string.format("%d:%02d", math.floor(position / 60), math.floor(position % 60)),
+                            end_time = string.format("%d:%02d", math.floor((position + duration) / 60), math.floor((position + duration) % 60)),
+                            start_frames = math.floor(position * 30),
+                            end_frames = math.floor((position + duration) * 30),
+                            track_number = 2,  -- Music track
+                            fade_in_seconds = music.fade_in or 2.0,
+                            fade_out_seconds = music.fade_out or 2.0,
+                            section_type = music.usage or "bed"
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Build final result structure
+    local finalResult = {
+        timeline_id = cutResult.timeline_id,
+        timeline_name = cutResult.timeline_name,
+        imported_count = cutResult.imported_count,
+        skipped_count = cutResult.skipped_count,
+        import_warning = cutResult.import_warning,
+        segments_placed = cutResult.segments_placed,
+        total_duration_frames = cutResult.total_duration_frames,
+        total_duration_timecode = cutResult.total_duration_timecode,
+        timeline_positions = cutResult.timeline_positions,
+        cutting_warning = cutResult.cutting_warning
+    }
+    
+    -- If no music segments, skip to completion
+    if #musicSegments == 0 then
+        logger.info("No music segments to place - skipping music placement")
+        finalResult.clips_placed = 0
+        finalResult.tracks_used = {}
+        finalResult.music_warning = "No music suggestions available"
+        _showTimelineCreatedSuccess(finalResult)
+        return
+    end
+    
+    -- Call music placement method
+    local result = protocol.request({
+        method = "place_music_on_timeline",
+        params = {
+            timeline_id = cutResult.timeline_id,
+            music_segments = musicSegments
+        }
+    })
+    
+    isLoading = false
+    
+    if result.result then
+        finalResult.clips_placed = result.result.clips_placed or 0
+        finalResult.tracks_used = result.result.tracks_used or {}
+        finalResult.music_duration_frames = result.result.total_duration_frames or 0
+        finalResult.music_duration_timecode = result.result.total_duration_timecode or "0:00"
+        finalResult.music_positions = result.result.timeline_positions or {}
+        
+        logger.info(string.format(
+            "Music placement complete: %d clips placed, tracks used: %s",
+            finalResult.clips_placed,
+            table.concat(finalResult.tracks_used or {}, ", ")
+        ))
+    else
+        logger.warning("Music placement returned no result")
+        finalResult.clips_placed = 0
+        finalResult.tracks_used = {}
+    end
+    
+    if result.error then
+        logger.error("Failed to place music: " .. tostring(result.error.message))
+        finalResult.music_warning = result.error.message
+    end
+    
     _showTimelineCreatedSuccess(finalResult)
 end
 
@@ -1062,6 +1216,41 @@ function _showTimelineCreatedSuccess(result)
             currentWindowRef:Add({
                 type = "Label",
                 text = "Cutting warning: " .. tostring(result.cutting_warning),
+                styleSheet = "color: orange; margin-top: 5px;"
+            })
+        end
+        
+        -- Show music placement info if available (Story 6.4)
+        if result.clips_placed and result.clips_placed > 0 then
+            currentWindowRef:Add({
+                type = "Label",
+                text = string.format("Music clips placed: %d", result.clips_placed),
+                styleSheet = "margin-top: 10px; color: #28a745;"
+            })
+            
+            if result.tracks_used and #result.tracks_used > 0 then
+                local tracksText = "Tracks used: " .. table.concat(result.tracks_used, ", ")
+                currentWindowRef:Add({
+                    type = "Label",
+                    text = tracksText,
+                    styleSheet = "color: #28a745;"
+                })
+            end
+            
+            if result.music_duration_timecode then
+                currentWindowRef:Add({
+                    type = "Label",
+                    text = "Music duration: " .. result.music_duration_timecode,
+                    styleSheet = "color: #28a745;"
+                })
+            end
+        end
+        
+        -- Show music placement warning if present
+        if result.music_warning then
+            currentWindowRef:Add({
+                type = "Label",
+                text = "Music warning: " .. tostring(result.music_warning),
                 styleSheet = "color: orange; margin-top: 5px;"
             })
         end
