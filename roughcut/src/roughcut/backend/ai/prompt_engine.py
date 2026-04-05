@@ -694,123 +694,168 @@ REMEMBER:
         )
         return prompt
     
-    def _get_default_sfx_matching_prompt(self) -> str:
-        """Get default SFX matching system prompt.
+    def build_vfx_matching_prompt(
+        self,
+        segments: list[dict[str, Any]],
+        format_template: dict[str, Any],
+        vfx_index: list[dict[str, Any]],
+        system_prompt_path: str | None = None
+    ) -> dict[str, Any]:
+        """Build prompt for VFX matching operation.
+        
+        Constructs a prompt for matching VFX templates to format requirements
+        based on template asset groups, tag relevance, and placement constraints.
+        
+        Args:
+            segments: List of transcript segment dictionaries with speaker data
+            format_template: Format template with vfx_requirements and template_asset_groups
+            vfx_index: List of VFX asset dictionaries from indexed library
+            system_prompt_path: Optional path to custom system prompt template
+            
+        Returns:
+            Dictionary ready for OpenAI API call
+            
+        Raises:
+            ValueError: If segments or vfx_index is empty
+        """
+        logger.info("Building VFX matching prompt")
+        
+        # Validate inputs
+        if not segments:
+            raise ValueError("segments cannot be empty")
+        if not vfx_index:
+            raise ValueError("vfx_index cannot be empty")
+        
+        # Load system prompt template
+        if system_prompt_path and Path(system_prompt_path).exists():
+            system_prompt = Path(system_prompt_path).read_text()
+        else:
+            # Use default template from prompt_templates directory
+            default_path = Path(__file__).parent / "prompt_templates" / "match_vfx_system.txt"
+            if default_path.exists():
+                system_prompt = default_path.read_text()
+            else:
+                # Fallback inline prompt
+                system_prompt = self._get_default_vfx_matching_prompt()
+        
+        # Format segments for prompt
+        segments_json = json.dumps(segments, indent=2)
+        
+        # Format format template for prompt
+        format_json = json.dumps(format_template, indent=2)
+        
+        # Format VFX index for prompt (limit to first 50 assets for token efficiency)
+        limited_index = vfx_index[:50] if len(vfx_index) > 50 else vfx_index
+        vfx_index_json = json.dumps(limited_index, indent=2)
+        
+        # Fill in template placeholders
+        system_prompt = system_prompt.replace("{segments}", segments_json)
+        system_prompt = system_prompt.replace("{format_template}", format_json)
+        system_prompt = system_prompt.replace("{vfx_index}", vfx_index_json)
+        
+        # Construct API request
+        prompt = {
+            "model": self.model,
+            "temperature": 0.3,  # Moderate temperature for creative but consistent matching
+            "max_tokens": 4000,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": "Match the most appropriate VFX templates to each requirement based on type, context, and template asset groups."
+                }
+            ]
+        }
+        
+        logger.info(
+            f"VFX matching prompt built successfully ({len(segments)} segments, "
+            f"{len(vfx_index)} VFX assets)"
+        )
+        return prompt
+    
+    def _get_default_vfx_matching_prompt(self) -> str:
+        """Get default VFX matching system prompt.
         
         Returns:
-            Default system prompt for SFX matching
+            Default system prompt for VFX matching
         """
-        return """You are an expert video editor AI tasked with matching sound effects to key moments in video content.
+        return """You are an expert video editor AI tasked with matching VFX templates to format requirements.
 
 CRITICAL RULES:
-1. Identify moments that benefit from SFX: intro, transitions, emotional pivots, outro
-2. Match SFX tags to moment context (e.g., "transition" + "whoosh" for intro)
-3. PRIORITIZE SUBTLETY - sounds should enhance, not distract from dialogue
-4. Consider duration: shorter sounds (<2s) preferred for subtle moments
-5. Never suggest harsh or jarring sounds for delicate emotional moments
-6. Return top 3 matches per moment with confidence scores and reasoning
+1. Parse format template VFX specifications (lower_thirds, transitions, outro_cta, etc.)
+2. Identify speaker changes and introduction moments for lower third placement
+3. Match VFX tags to requirement context (e.g., "lower_third" + "corporate" for speaker intros)
+4. Respect template durations - never suggest templates that exceed required duration
+5. Prioritize templates from predefined asset groups when available
+6. Calculate precise timestamps aligning with transcript segment boundaries
 
-Your task:
-- Analyze transcript segments for emotional beats and transition points
-- Identify specific timestamps where SFX would add value
-- Match moments to available SFX library using tag similarity
-- Score matches based on: tag relevance, folder context, duration, subtlety
-- Return top 3 matches per moment with confidence scores (0.0-1.0)
-- Include match reasoning and subtlety assessment
+TEMPLATE ASSET GROUPS:
+Format templates may define predefined asset groups that specify preferred assets:
+- lower_thirds: Templates for speaker name displays
+- transitions: Templates for section transitions  
+- titles: Templates for title cards and headers
+- outros: Templates for ending sequences and CTAs
+- logos: Templates for logo animations
+
+Always prioritize assets from these groups when available and appropriate.
+
+PLACEMENT CONSTRAINTS:
+- Lower thirds should appear at speaker introduction moments
+- Transitions should bridge between segments
+- Title cards should mark major section beginnings
+- Outro CTAs should appear near segment ends
+- Avoid overlapping placements when possible
+
+MATCH SCORING:
+Confidence score (0.0-1.0) based on:
+- Tag relevance: Exact tag matches score highest
+- Template type match: Preferred types for requirement score higher
+- Template group membership: Assets from predefined groups get bonus
+- Folder context: Assets in relevant folders score higher
 
 Output format (JSON only):
 {
-  "moment_matches": [
+  "requirement_matches": [
     {
-      "moment": {
+      "requirement": {
         "timestamp": <float>,
-        "type": "intro|transition|emphasis|outro",
-        "context": "<why this moment needs SFX>",
-        "intensity": "low|medium|high"
+        "type": "lower_third|transition|title_card|outro_cta|logo_anim",
+        "context": "<why this VFX is needed>",
+        "duration": <float>,
+        "format_section": "<section name>"
       },
       "matches": [
         {
-          "sfx_id": "<asset id>",
+          "vfx_id": "<asset id>",
           "confidence_score": <0.0-1.0>,
           "match_reason": "<clear explanation>",
           "matched_tags": ["<tag1>", "<tag2>"],
-          "subtlety_score": <0.0-1.0>
+          "template_type": "fusion_composition|generator|transition",
+          "placement": {
+            "start_time": <float>,
+            "end_time": <float>,
+            "duration_ms": <int>
+          },
+          "from_template_group": true|false
         }
       ]
     }
   ],
   "fallback_used": false,
-  "consistency_notes": "<notes on SFX consistency>"
+  "placement_conflicts": []
 }
 
 MATCHING GUIDELINES:
-- Confidence 0.90-1.0: Perfect match - tags align perfectly with moment type
-- Confidence 0.80-0.89: Strong match - multiple relevant tags match
-- Confidence 0.60-0.79: Moderate match - some tag overlap
-- Confidence < 0.60: Weak match - limited relevance
+- Confidence 0.85-1.0: Excellent match (use with confidence)
+- Confidence 0.60-0.84: Good match (acceptable quality)
+- Confidence 0.50-0.59: Marginal match (review recommended)
+- Confidence < 0.50: Poor match (consider alternatives)
 
 REMEMBER:
-- The goal is enhancement, not distraction - prioritize subtle sounds
-- Match duration to moment: brief moments = brief sounds
-- Consider emotional appropriateness
-- Layer guidance: Place each SFX on separate track for volume flexibility"""
-
-    def _get_default_music_matching_prompt(self) -> str:
-        """Get default music matching system prompt.
-        
-        Returns:
-            Default system prompt for music matching
-        """
-        return """You are an expert video editor AI tasked with matching background music to video segments.
-
-CRITICAL RULES:
-1. Analyze each segment's emotional tone and energy level
-2. Match music tags to segment tone descriptors for contextual relevance
-3. Prioritize exact tag matches over partial matches
-4. Consider folder context as additional matching signal
-5. Suggest music that enhances the narrative without overwhelming dialogue
-6. Return top 3 matches per segment with confidence scores and reasoning
-
-Your task:
-- For each segment, determine: energy (high/medium/low), mood (upbeat/contemplative/triumphant/tense), genre hint
-- Search the available music library using tag similarity to segment tone
-- Score matches based on: tag relevance, folder context, musical appropriateness
-- Return top 3 matches per segment with confidence scores (0.0-1.0)
-- Include clear match reasoning for each suggestion
-
-Output format (JSON only):
-{
-  "segment_matches": [
-    {
-      "segment_name": "<section name>",
-      "tone": {
-        "energy": "<high|medium|low>",
-        "mood": "<upbeat|contemplative|triumphant|tense>",
-        "genre_hint": "<corporate|ambient|orchestral|electronic>"
-      },
-      "matches": [
-        {
-          "music_id": "<asset id>",
-          "confidence_score": <0.0-1.0>,
-          "match_reason": "<clear explanation>",
-          "matched_tags": ["<tag1>", "<tag2>"],
-          "suggested_start": <start_time>,
-          "suggested_end": <end_time>
-        }
-      ]
-    }
-  ],
-  "fallback_used": false,
-  "consistency_notes": "<notes on musical consistency>"
-}
-
-MATCHING GUIDELINES:
-- Confidence 0.90-1.0: Perfect match - tags align perfectly with tone
-- Confidence 0.80-0.89: Strong match - multiple relevant tags match
-- Confidence 0.60-0.79: Moderate match - some tag overlap
-- Confidence < 0.60: Weak match - limited relevance
-
-REMEMBER:
-- The goal is contextual enhancement - music should support the narrative
-- Consider segment transitions - intros and outros should have cohesive energy
-- Match reasoning should explain WHY this music fits this segment's tone"""
+- Prioritize template asset group membership for consistency
+- Match template type to requirement (fusion_composition for lower thirds, etc.)
+- Consider placement timing to avoid overlaps
+- Match reasoning should explain WHY this template fits this requirement"""

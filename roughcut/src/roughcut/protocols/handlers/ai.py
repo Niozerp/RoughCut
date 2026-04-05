@@ -14,6 +14,8 @@ from ...backend.ai.music_matcher import MusicMatcher
 from ...backend.ai.music_match import MusicMatch, MusicMatchingResult, SegmentMusicMatches
 from ...backend.ai.sfx_matcher import SFXMatcher
 from ...backend.ai.sfx_match import SFXMatch, SFXMatchingResult, MomentSFXMatches
+from ...backend.ai.vfx_matcher import VFXMatcher
+from ...backend.ai.vfx_match import VFXMatch, VFXMatchingResult, RequirementVFXMatches
 from ...backend.ai.openai_client import OpenAIClient
 from ...backend.ai.prompt_engine import PromptBuilder
 from ...backend.ai.rough_cut_orchestrator import RoughCutOrchestrator
@@ -46,6 +48,10 @@ ERROR_CODES = {
     "EMPTY_SFX_LIBRARY": "EMPTY_SFX_LIBRARY",
     "NO_SFX_MATCHES": "NO_SFX_MATCHES",
     "NO_MOMENTS_IDENTIFIED": "NO_MOMENTS_IDENTIFIED",
+    "EMPTY_VFX_LIBRARY": "EMPTY_VFX_LIBRARY",
+    "NO_VFX_MATCHES": "NO_VFX_MATCHES",
+    "NO_REQUIREMENTS_IDENTIFIED": "NO_REQUIREMENTS_IDENTIFIED",
+    "PLACEMENT_CONFLICTS": "PLACEMENT_CONFLICTS",
 }
 
 # Type alias for progress callback
@@ -1633,6 +1639,353 @@ def match_sfx_with_progress(
         )
 
 
+def match_vfx(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for match_vfx method.
+    
+    Matches VFX templates to format requirements based on template asset groups,
+    tag relevance, and placement constraints. Returns structured match suggestions.
+    
+    This is the entry point for Story 5.6 - AI VFX/Template Matching.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - segments: List of transcript segment dictionaries (required)
+            - format_template: Format template with vfx_requirements (required)
+            - vfx_index: List of VFX asset dictionaries (required)
+            - max_suggestions: Maximum matches per requirement (optional, default: 3)
+    
+    Returns:
+        Dictionary with requirement_matches and match statistics
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    segments = params.get("segments")
+    format_template = params.get("format_template")
+    vfx_index = params.get("vfx_index")
+    max_suggestions = params.get("max_suggestions", 3)
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    if not segments or not isinstance(segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: segments",
+            "Provide a list of transcript segments"
+        )
+    
+    if not format_template or not isinstance(format_template, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: format_template",
+            "Provide a format template with vfx_requirements"
+        )
+    
+    if not vfx_index or not isinstance(vfx_index, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: vfx_index",
+            "Provide a list of VFX assets"
+        )
+    
+    # Check for empty VFX library
+    if len(vfx_index) == 0:
+        return _error_response(
+            ERROR_CODES["EMPTY_VFX_LIBRARY"],
+            "validation",
+            "VFX library is empty",
+            "Index VFX assets before matching"
+        )
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
+        # Initialize VFX matcher
+        matcher = VFXMatcher(max_suggestions=max_suggestions)
+        
+        # Get template asset groups if defined
+        template_asset_groups = format_template.get("template_asset_groups", {})
+        
+        logger.info(
+            f"Matching VFX for {len(segments)} segments "
+            f"with {len(vfx_index)} assets (session: {session_id})"
+        )
+        
+        # Step 1: Identify VFX requirements
+        requirements = matcher.identify_vfx_requirements(segments, format_template)
+        
+        if not requirements:
+            logger.warning(f"No VFX requirements identified for session {session_id}")
+            return {
+                "result": {
+                    "requirement_matches": [],
+                    "total_matches": 0,
+                    "average_confidence": 0.0,
+                    "fallback_used": False,
+                    "placement_conflicts": [],
+                    "template_group_coverage": 0.0,
+                    "warnings": ["No VFX requirements identified in format template"]
+                },
+                "session_id": session_id
+            }
+        
+        # Step 2: Match VFX to requirements
+        result = matcher.match_vfx_to_requirements(
+            requirements=requirements,
+            vfx_index=vfx_index,
+            template_asset_groups=template_asset_groups
+        )
+        
+        # Check for placement conflicts and resolve them
+        if result.placement_conflicts:
+            logger.warning(
+                f"Detected {len(result.placement_conflicts)} placement conflicts "
+                f"for session {session_id}, resolving..."
+            )
+            result = matcher.resolve_placement_conflicts(result)
+        
+        # Check for low confidence warnings
+        if result.warnings:
+            logger.warning(f"VFX matching warnings: {result.warnings}")
+        
+        logger.info(
+            f"VFX matching complete: {result.total_matches} matches "
+            f"({len(requirements)} requirements, avg confidence: {result.average_confidence:.2f}, "
+            f"group coverage: {result.template_group_coverage:.2%}) "
+            f"(session: {session_id})"
+        )
+        
+        # Return result
+        return {
+            "result": result.to_dict(),
+            "session_id": session_id
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error matching VFX: {e}")
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check segment, format template, and VFX index format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to match VFX: {e}")
+        return _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to match VFX: {str(e)}",
+            "Check input data and retry"
+        )
+
+
+def match_vfx_with_progress(
+    params: Dict[str, Any] | None
+) -> Generator[Dict[str, Any], None, None]:
+    """Streaming handler for match_vfx method with progress updates.
+    
+    Yields progress updates during VFX requirement identification and matching.
+    
+    Args:
+        params: Request parameters (same as match_vfx)
+    
+    Yields:
+        Progress updates and final result
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+        return
+    
+    session_id = params.get("session_id")
+    segments = params.get("segments")
+    format_template = params.get("format_template")
+    vfx_index = params.get("vfx_index")
+    max_suggestions = params.get("max_suggestions", 3)
+    
+    if not session_id or not isinstance(session_id, str):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+        return
+    
+    if not segments or not isinstance(segments, list):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: segments",
+            "Provide a list of transcript segments"
+        )
+        return
+    
+    if not format_template or not isinstance(format_template, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: format_template",
+            "Provide a format template with vfx_requirements"
+        )
+        return
+    
+    if not vfx_index or not isinstance(vfx_index, list):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: vfx_index",
+            "Provide a list of VFX assets"
+        )
+        return
+    
+    if len(vfx_index) == 0:
+        yield _error_response(
+            ERROR_CODES["EMPTY_VFX_LIBRARY"],
+            "validation",
+            "VFX library is empty",
+            "Index VFX assets before matching"
+        )
+        return
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            yield _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+            return
+        
+        yield _progress_response("match_vfx", 1, 5, "Initializing VFX matcher...")
+        
+        # Initialize VFX matcher
+        matcher = VFXMatcher(max_suggestions=max_suggestions)
+        
+        # Get template asset groups if defined
+        template_asset_groups = format_template.get("template_asset_groups", {})
+        
+        yield _progress_response(
+            "match_vfx",
+            2,
+            5,
+            f"Analyzing {len(segments)} segments for VFX requirements..."
+        )
+        
+        # Step 1: Identify VFX requirements
+        requirements = matcher.identify_vfx_requirements(segments, format_template)
+        
+        if not requirements:
+            yield _progress_response("match_vfx", 5, 5, "No VFX requirements identified")
+            logger.warning(f"No VFX requirements identified for session {session_id}")
+            yield {
+                "result": {
+                    "requirement_matches": [],
+                    "total_matches": 0,
+                    "average_confidence": 0.0,
+                    "fallback_used": False,
+                    "placement_conflicts": [],
+                    "template_group_coverage": 0.0,
+                    "warnings": ["No VFX requirements identified in format template"]
+                },
+                "session_id": session_id
+            }
+            return
+        
+        yield _progress_response(
+            "match_vfx",
+            3,
+            5,
+            f"Found {len(requirements)} requirements, matching against {len(vfx_index)} VFX assets..."
+        )
+        
+        # Step 2: Match VFX to requirements
+        result = matcher.match_vfx_to_requirements(
+            requirements=requirements,
+            vfx_index=vfx_index,
+            template_asset_groups=template_asset_groups
+        )
+        
+        yield _progress_response("match_vfx", 4, 5, "Detecting and resolving placement conflicts...")
+        
+        # Resolve placement conflicts
+        if result.placement_conflicts:
+            result = matcher.resolve_placement_conflicts(result)
+        
+        yield _progress_response("match_vfx", 5, 5, "VFX matching complete")
+        
+        logger.info(
+            f"VFX matching with progress complete: {result.total_matches} matches "
+            f"({len(requirements)} requirements) (session: {session_id})"
+        )
+        
+        # Return final result
+        yield {
+            "result": result.to_dict(),
+            "session_id": session_id
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error matching VFX: {e}")
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check segment, format template, and VFX index format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to match VFX: {e}")
+        yield _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to match VFX: {str(e)}",
+            "Check input data and retry"
+        )
+
+
 # Handler registry
 AI_HANDLERS = {
     "initiate_rough_cut": initiate_rough_cut,
@@ -1644,4 +1997,6 @@ AI_HANDLERS = {
     "match_music_with_progress": match_music_with_progress,
     "match_sfx": match_sfx,
     "match_sfx_with_progress": match_sfx_with_progress,
+    "match_vfx": match_vfx,
+    "match_vfx_with_progress": match_vfx_with_progress,
 }
