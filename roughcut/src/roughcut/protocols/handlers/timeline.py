@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 from ...backend.timeline.builder import TimelineBuilder
+from ...backend.timeline.cutter import FootageCutter, CutResult
 from ...backend.timeline.importer import MediaImporter, ImportResult
 from ...backend.workflows.session import get_session_manager
 
@@ -23,7 +24,12 @@ ERROR_CODES = {
     "RESOLVE_API_UNAVAILABLE": "RESOLVE_API_UNAVAILABLE",
     "INTERNAL_ERROR": "INTERNAL_ERROR",
     "IMPORT_FAILED": "IMPORT_FAILED",
-    "MISSING_SUGGESTED_MEDIA": "MISSING_SUGGESTED_MEDIA"
+    "MISSING_SUGGESTED_MEDIA": "MISSING_SUGGESTED_MEDIA",
+    "CUTTING_FAILED": "CUTTING_FAILED",
+    "MISSING_SEGMENTS": "MISSING_SEGMENTS",
+    "TIMELINE_NOT_FOUND": "TIMELINE_NOT_FOUND",
+    "SOURCE_CLIP_NOT_FOUND": "SOURCE_CLIP_NOT_FOUND",
+    "SEGMENT_VALIDATION_FAILED": "SEGMENT_VALIDATION_FAILED"
 }
 
 
@@ -356,9 +362,148 @@ def import_suggested_media(params: Dict[str, Any] | None) -> Dict[str, Any]:
         )
 
 
+def cut_footage_to_segments(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Cut source footage into timeline segments according to AI recommendations.
+    
+    This handler is called from the Lua GUI after media import to cut the
+    source video into segments based on the AI-generated transcript cuts.
+    
+    Args:
+        params: Request parameters containing:
+            - timeline_id: Target timeline ID (required)
+            - source_clip_id: Source clip in Media Pool (required)
+            - segments: List of segment dictionaries with timing info (required)
+            
+    Returns:
+        Dictionary with cutting result or error
+    """
+    if params is None:
+        params = {}
+    
+    # Validate required parameters
+    timeline_id = params.get("timeline_id")
+    if not timeline_id:
+        logger.error("Missing timeline_id parameter")
+        return _error_response(
+            ERROR_CODES["TIMELINE_NOT_FOUND"],
+            "validation",
+            "Timeline ID is required",
+            "Ensure timeline was created successfully before cutting",
+            recoverable=True
+        )
+    
+    source_clip_id = params.get("source_clip_id")
+    if not source_clip_id:
+        logger.error("Missing source_clip_id parameter")
+        return _error_response(
+            ERROR_CODES["SOURCE_CLIP_NOT_FOUND"],
+            "validation",
+            "Source clip ID is required",
+            "Ensure source media was imported successfully before cutting",
+            recoverable=True
+        )
+    
+    segments = params.get("segments")
+    if segments is None:
+        logger.error("Missing segments parameter")
+        return _error_response(
+            ERROR_CODES["MISSING_SEGMENTS"],
+            "validation",
+            "No segments parameter provided",
+            "Generate a rough cut with AI segment recommendations first",
+            recoverable=True
+        )
+    
+    if not isinstance(segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "segments must be a list",
+            "Provide a list of segment dictionaries with timing info",
+            recoverable=True
+        )
+    
+    if len(segments) == 0:
+        logger.error("Empty segments list provided")
+        return _error_response(
+            ERROR_CODES["MISSING_SEGMENTS"],
+            "validation",
+            "Segments list is empty",
+            "Generate a rough cut with AI segment recommendations first",
+            recoverable=True
+        )
+    
+    logger.info(f"Cutting {len(segments)} segments for timeline {timeline_id}")
+    
+    try:
+        # Create cutter and perform cutting
+        cutter = FootageCutter()
+        
+        # Progress callback that emits JSON-RPC progress messages
+        def progress_callback(current: int, total: int, message: str):
+            # In a real implementation, this would emit to stdout
+            # For now, we just log it
+            logger.info(f"Progress: {message} ({current}/{total})")
+        
+        result = cutter.cut_segments(
+            timeline_id=timeline_id,
+            source_clip_id=source_clip_id,
+            segments=segments,
+            progress_callback=progress_callback
+        )
+        
+        if result.success:
+            # Convert placements to serializable format
+            timeline_positions = []
+            for placement in result.timeline_positions:
+                timeline_positions.append({
+                    "segment_index": placement.segment_index,
+                    "timeline_track": placement.timeline_track,
+                    "timeline_start_frame": placement.timeline_start_frame,
+                    "timeline_end_frame": placement.timeline_end_frame,
+                    "source_in_frame": placement.source_in_frame,
+                    "source_out_frame": placement.source_out_frame,
+                    "clip_id": placement.clip_id
+                })
+            
+            logger.info(
+                f"Cutting complete: {result.segments_placed} segments, "
+                f"duration: {result.total_duration_timecode}"
+            )
+            
+            return {
+                "segments_placed": result.segments_placed,
+                "total_duration_frames": result.total_duration_frames,
+                "total_duration_timecode": result.total_duration_timecode,
+                "timeline_positions": timeline_positions,
+                "success": True
+            }
+        else:
+            # Return error from cutter
+            error = result.error or {}
+            return _error_response(
+                error.get("code", ERROR_CODES["CUTTING_FAILED"]),
+                error.get("category", "internal"),
+                error.get("message", "Segment cutting failed"),
+                error.get("suggestion", "Check Resolve is running and retry"),
+                error.get("recoverable", True)
+            )
+            
+    except Exception as e:
+        logger.exception(f"Error cutting footage to segments: {e}")
+        return _error_response(
+            ERROR_CODES["INTERNAL_ERROR"],
+            "internal",
+            f"Unexpected error during cutting: {str(e)}",
+            "Check application logs and retry the operation",
+            recoverable=True
+        )
+
+
 # Handler registry for the dispatcher
 TIMELINE_HANDLERS: Dict[str, Callable] = {
     "create_timeline_from_document": create_timeline_from_document,
     "create_timeline": create_timeline,
-    "import_suggested_media": import_suggested_media
+    "import_suggested_media": import_suggested_media,
+    "cut_footage_to_segments": cut_footage_to_segments
 }

@@ -846,8 +846,142 @@ function _importSuggestedMediaInternal(timelineId)
         finalResult.import_warning = result.error.message
     end
     
-    _showTimelineCreatedSuccess(finalResult)
+    -- Now cut footage to segments (Story 6.3)
+    _cutFootageToSegmentsAsync(finalResult)
 end
+end
+
+-- Cut footage to segments asynchronously
+function _cutFootageToSegmentsAsync(importResult)
+    isLoading = true
+    _showLoadingState("Cutting footage to segments...")
+    
+    local ok_timer = pcall(function()
+        if type(SetTimer) == "function" then
+            SetTimer(100, function()
+                _cutFootageToSegmentsInternal(importResult)
+                return false
+            end)
+        else
+            _cutFootageToSegmentsInternal(importResult)
+        end
+    end)
+    
+    if not ok_timer then
+        _cutFootageToSegmentsInternal(importResult)
+    end
+end
+
+-- Internal function to cut footage to segments
+function _cutFootageToSegmentsInternal(importResult)
+    -- Build segments list from rough cut document
+    local segments = {}
+    local sourceClipId = nil
+    
+    if roughCutDocument then
+        -- Get source clip info
+        if roughCutDocument.source_clip then
+            sourceClipId = roughCutDocument.source_clip
+        end
+        
+        -- Get transcript segments
+        if roughCutDocument.transcript_segments and type(roughCutDocument.transcript_segments) == "table" then
+            for _, seg in ipairs(roughCutDocument.transcript_segments) do
+                local segment = {
+                    segment_index = seg.segment_index or 1,
+                    start_frames = seg.start_frames or 0,
+                    end_frames = seg.end_frames or 0,
+                    dialogue_preview = seg.text and seg.text:sub(1, 50) or ""
+                }
+                
+                -- Convert timecode to frames if needed
+                if seg.start_time and not segment.start_frames then
+                    -- Simple timecode parsing (MM:SS or H:MM:SS)
+                    local startParts = {}
+                    for part in seg.start_time:gmatch("%d+") do
+                        table.insert(startParts, tonumber(part))
+                    end
+                    if #startParts == 2 then
+                        segment.start_frames = (startParts[1] * 60 + startParts[2]) * 30
+                    elseif #startParts == 3 then
+                        segment.start_frames = (startParts[1] * 3600 + startParts[2] * 60 + startParts[3]) * 30
+                    end
+                end
+                
+                if seg.end_time and not segment.end_frames then
+                    local endParts = {}
+                    for part in seg.end_time:gmatch("%d+") do
+                        table.insert(endParts, tonumber(part))
+                    end
+                    if #endParts == 2 then
+                        segment.end_frames = (endParts[1] * 60 + endParts[2]) * 30
+                    elseif #endParts == 3 then
+                        segment.end_frames = (endParts[1] * 3600 + endParts[2] * 60 + endParts[3]) * 30
+                    end
+                end
+                
+                table.insert(segments, segment)
+            end
+        end
+    end
+    
+    -- If no segments found, try to use AI cut info
+    if #segments == 0 and roughCutDocument and roughCutDocument.ai_cuts then
+        for i, cut in ipairs(roughCutDocument.ai_cuts) do
+            table.insert(segments, {
+                segment_index = i,
+                start_frames = cut.start_frame or 0,
+                end_frames = cut.end_frame or 0,
+                dialogue_preview = cut.description or ""
+            })
+        end
+    end
+    
+    -- Call cut method
+    local result = protocol.request({
+        method = "cut_footage_to_segments",
+        params = {
+            timeline_id = importResult.timeline_id,
+            source_clip_id = sourceClipId,
+            segments = segments
+        }
+    })
+    
+    isLoading = false
+    
+    -- Build result with cutting info
+    local finalResult = {
+        timeline_id = importResult.timeline_id,
+        timeline_name = importResult.timeline_name,
+        imported_count = importResult.imported_count,
+        skipped_count = importResult.skipped_count,
+        import_warning = importResult.import_warning
+    }
+    
+    if result.result then
+        finalResult.segments_placed = result.result.segments_placed or 0
+        finalResult.total_duration_frames = result.result.total_duration_frames or 0
+        finalResult.total_duration_timecode = result.result.total_duration_timecode or "0:00"
+        finalResult.timeline_positions = result.result.timeline_positions or {}
+        
+        logger.info(string.format(
+            "Cutting complete: %d segments placed, duration: %s",
+            finalResult.segments_placed,
+            finalResult.total_duration_timecode
+        ))
+    else
+        logger.warning("Cutting returned no result")
+        finalResult.segments_placed = 0
+        finalResult.total_duration_frames = 0
+        finalResult.total_duration_timecode = "0:00"
+    end
+    
+    if result.error then
+        logger.error("Failed to cut footage: " .. tostring(result.error.message))
+        finalResult.cutting_warning = result.error.message
+    end
+    
+    _showTimelineCreatedSuccess(finalResult)
 end
 
 -- Generate timeline name
@@ -906,11 +1040,28 @@ function _showTimelineCreatedSuccess(result)
             end
         end
         
-        -- Show import warning if present
-        if result.import_warning then
+        -- Show segment cutting info if available
+        if result.segments_placed and result.segments_placed > 0 then
             currentWindowRef:Add({
                 type = "Label",
-                text = "Import warning: " .. tostring(result.import_warning),
+                text = string.format("Segments placed: %d", result.segments_placed),
+                styleSheet = "margin-top: 10px; color: #28a745;"
+            })
+            
+            if result.total_duration_timecode then
+                currentWindowRef:Add({
+                    type = "Label",
+                    text = "Total duration: " .. result.total_duration_timecode,
+                    styleSheet = "color: #28a745;"
+                })
+            end
+        end
+        
+        -- Show cutting warning if present
+        if result.cutting_warning then
+            currentWindowRef:Add({
+                type = "Label",
+                text = "Cutting warning: " .. tostring(result.cutting_warning),
                 styleSheet = "color: orange; margin-top: 5px;"
             })
         end

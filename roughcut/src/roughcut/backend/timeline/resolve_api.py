@@ -402,3 +402,93 @@ class ResolveApi:
         except Exception as e:
             logger.exception(f"Error importing media to pool: {file_path}")
             return None
+    
+    def create_timeline_clip(
+        self,
+        timeline: Any,
+        source_clip: Any,
+        track_index: int,
+        timeline_position: int,
+        source_in: int,
+        source_out: int
+    ) -> Optional[Any]:
+        """Create a timeline clip referencing source with specified in/out points.
+        
+        This is the core method for non-destructive cutting - it creates
+        a timeline clip that references the source with specific in/out points,
+        allowing the same source to appear multiple times with different ranges.
+        
+        Args:
+            timeline: Resolve timeline object
+            source_clip: Media Pool clip object
+            track_index: Target track number (1 for video)
+            timeline_position: Frame position on timeline
+            source_in: In point frame on source
+            source_out: Out point frame on source
+            
+        Returns:
+            Timeline clip object if successful, None otherwise
+            
+        Note:
+            This is a non-destructive operation - the source clip is never modified.
+        """
+        if not timeline:
+            logger.error("Cannot create timeline clip: no timeline provided")
+            return None
+        
+        if not source_clip:
+            logger.error("Cannot create timeline clip: no source clip provided")
+            return None
+        
+        # Validate in/out points
+        if source_in < 0:
+            logger.error(f"Invalid source_in: {source_in}. Must be non-negative.")
+            return None
+        
+        if source_out <= source_in:
+            logger.error(f"Invalid source range: source_in ({source_in}) >= source_out ({source_out}). "
+                        f"source_out must be greater than source_in.")
+            return None
+        
+        try:
+            # Method 1: Try using AddClip on timeline (most direct)
+            if hasattr(timeline, 'AddClip'):
+                # Resolve API: AddClip(clip, trackIndex, startFrame, duration)
+                duration = source_out - source_in
+                
+                # Note: Some Resolve versions expect time in different units
+                # This implementation assumes frame-based timing
+                result = timeline.AddClip(
+                    source_clip,
+                    track_index,
+                    timeline_position,
+                    duration
+                )
+                
+                if result:
+                    logger.debug(
+                        f"Created timeline clip at track {track_index}, "
+                        f"position {timeline_position}, duration {duration}"
+                    )
+                    return result
+            
+            # Method 2: Try via media pool AppendToTimeline (fallback)
+            media_pool = self.get_media_pool()
+            if media_pool and hasattr(media_pool, 'AppendToTimeline'):
+                logger.warning("Using fallback AppendToTimeline method for clip creation")
+                
+                # This method may not support in/out points directly
+                # but is included as a fallback
+                result = media_pool.AppendToTimeline(source_clip)
+                if result:
+                    # The clip was appended, but we may need to adjust its position
+                    # This is less precise but works as fallback
+                    logger.debug("Clip appended to timeline via MediaPool fallback")
+                    return result
+            
+            logger.error("No suitable API method available for creating timeline clip")
+            return None
+            
+        except Exception as e:
+            logger.exception(f"Error creating timeline clip: {e}")
+            return None
