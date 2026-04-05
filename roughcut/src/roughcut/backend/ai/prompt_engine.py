@@ -618,6 +618,143 @@ REMEMBER:
         )
         return prompt
     
+    def build_sfx_matching_prompt(
+        self,
+        segments: list[dict[str, Any]],
+        sfx_index: list[dict[str, Any]],
+        system_prompt_path: str | None = None
+    ) -> dict[str, Any]:
+        """Build prompt for SFX matching operation.
+        
+        Constructs a prompt for matching sound effects to key moments
+        in transcript segments based on context and subtlety requirements.
+        
+        Args:
+            segments: List of transcript segment dictionaries with tone data
+            sfx_index: List of SFX asset dictionaries from indexed library
+            system_prompt_path: Optional path to custom system prompt template
+            
+        Returns:
+            Dictionary ready for OpenAI API call
+            
+        Raises:
+            ValueError: If segments or sfx_index is empty
+        """
+        logger.info("Building SFX matching prompt")
+        
+        # Validate inputs
+        if not segments:
+            raise ValueError("segments cannot be empty")
+        if not sfx_index:
+            raise ValueError("sfx_index cannot be empty")
+        
+        # Load system prompt template
+        if system_prompt_path and Path(system_prompt_path).exists():
+            system_prompt = Path(system_prompt_path).read_text()
+        else:
+            # Use default template from prompt_templates directory
+            default_path = Path(__file__).parent / "prompt_templates" / "match_sfx_system.txt"
+            if default_path.exists():
+                system_prompt = default_path.read_text()
+            else:
+                # Fallback inline prompt
+                system_prompt = self._get_default_sfx_matching_prompt()
+        
+        # Format segments for prompt
+        segments_json = json.dumps(segments, indent=2)
+        
+        # Format SFX index for prompt (limit to first 50 assets for token efficiency)
+        limited_index = sfx_index[:50] if len(sfx_index) > 50 else sfx_index
+        sfx_index_json = json.dumps(limited_index, indent=2)
+        
+        # Fill in template placeholders
+        system_prompt = system_prompt.replace("{segments}", segments_json)
+        system_prompt = system_prompt.replace("{sfx_index}", sfx_index_json)
+        
+        # Construct API request
+        prompt = {
+            "model": self.model,
+            "temperature": 0.3,  # Moderate temperature for creative but consistent matching
+            "max_tokens": 4000,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": "Match the most appropriate sound effects to each moment based on context and subtlety."
+                }
+            ]
+        }
+        
+        logger.info(
+            f"SFX matching prompt built successfully ({len(segments)} segments, "
+            f"{len(sfx_index)} SFX assets)"
+        )
+        return prompt
+    
+    def _get_default_sfx_matching_prompt(self) -> str:
+        """Get default SFX matching system prompt.
+        
+        Returns:
+            Default system prompt for SFX matching
+        """
+        return """You are an expert video editor AI tasked with matching sound effects to key moments in video content.
+
+CRITICAL RULES:
+1. Identify moments that benefit from SFX: intro, transitions, emotional pivots, outro
+2. Match SFX tags to moment context (e.g., "transition" + "whoosh" for intro)
+3. PRIORITIZE SUBTLETY - sounds should enhance, not distract from dialogue
+4. Consider duration: shorter sounds (<2s) preferred for subtle moments
+5. Never suggest harsh or jarring sounds for delicate emotional moments
+6. Return top 3 matches per moment with confidence scores and reasoning
+
+Your task:
+- Analyze transcript segments for emotional beats and transition points
+- Identify specific timestamps where SFX would add value
+- Match moments to available SFX library using tag similarity
+- Score matches based on: tag relevance, folder context, duration, subtlety
+- Return top 3 matches per moment with confidence scores (0.0-1.0)
+- Include match reasoning and subtlety assessment
+
+Output format (JSON only):
+{
+  "moment_matches": [
+    {
+      "moment": {
+        "timestamp": <float>,
+        "type": "intro|transition|emphasis|outro",
+        "context": "<why this moment needs SFX>",
+        "intensity": "low|medium|high"
+      },
+      "matches": [
+        {
+          "sfx_id": "<asset id>",
+          "confidence_score": <0.0-1.0>,
+          "match_reason": "<clear explanation>",
+          "matched_tags": ["<tag1>", "<tag2>"],
+          "subtlety_score": <0.0-1.0>
+        }
+      ]
+    }
+  ],
+  "fallback_used": false,
+  "consistency_notes": "<notes on SFX consistency>"
+}
+
+MATCHING GUIDELINES:
+- Confidence 0.90-1.0: Perfect match - tags align perfectly with moment type
+- Confidence 0.80-0.89: Strong match - multiple relevant tags match
+- Confidence 0.60-0.79: Moderate match - some tag overlap
+- Confidence < 0.60: Weak match - limited relevance
+
+REMEMBER:
+- The goal is enhancement, not distraction - prioritize subtle sounds
+- Match duration to moment: brief moments = brief sounds
+- Consider emotional appropriateness
+- Layer guidance: Place each SFX on separate track for volume flexibility"""
+
     def _get_default_music_matching_prompt(self) -> str:
         """Get default music matching system prompt.
         

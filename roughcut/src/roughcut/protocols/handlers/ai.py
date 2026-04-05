@@ -12,6 +12,8 @@ from typing import Any, Callable, Dict, Generator, Optional
 from ...backend.ai.data_bundle import DataBundleBuilder
 from ...backend.ai.music_matcher import MusicMatcher
 from ...backend.ai.music_match import MusicMatch, MusicMatchingResult, SegmentMusicMatches
+from ...backend.ai.sfx_matcher import SFXMatcher
+from ...backend.ai.sfx_match import SFXMatch, SFXMatchingResult, MomentSFXMatches
 from ...backend.ai.openai_client import OpenAIClient
 from ...backend.ai.prompt_engine import PromptBuilder
 from ...backend.ai.rough_cut_orchestrator import RoughCutOrchestrator
@@ -41,6 +43,9 @@ ERROR_CODES = {
     "NO_MUSIC_MATCHES": "NO_MUSIC_MATCHES",
     "LOW_CONFIDENCE_MATCHES": "LOW_CONFIDENCE_MATCHES",
     "INVALID_SEGMENT_DATA": "INVALID_SEGMENT_DATA",
+    "EMPTY_SFX_LIBRARY": "EMPTY_SFX_LIBRARY",
+    "NO_SFX_MATCHES": "NO_SFX_MATCHES",
+    "NO_MOMENTS_IDENTIFIED": "NO_MOMENTS_IDENTIFIED",
 }
 
 # Type alias for progress callback
@@ -1315,6 +1320,319 @@ def match_music_with_progress(
         )
 
 
+def match_sfx(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for match_sfx method.
+    
+    Matches SFX assets to key moments in transcript segments based on
+    context and subtlety requirements. Returns structured match suggestions.
+    
+    This is the entry point for Story 5.5 - AI SFX Matching.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - segments: List of transcript segment dictionaries (required)
+            - sfx_index: List of SFX asset dictionaries (required)
+            - max_suggestions: Maximum matches per moment (optional, default: 3)
+    
+    Returns:
+        Dictionary with moment_matches and match statistics
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    segments = params.get("segments")
+    sfx_index = params.get("sfx_index")
+    max_suggestions = params.get("max_suggestions", 3)
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    if not segments or not isinstance(segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: segments",
+            "Provide a list of transcript segments"
+        )
+    
+    if not sfx_index or not isinstance(sfx_index, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: sfx_index",
+            "Provide a list of SFX assets"
+        )
+    
+    # Check for empty SFX library
+    if len(sfx_index) == 0:
+        return _error_response(
+            ERROR_CODES["EMPTY_SFX_LIBRARY"],
+            "validation",
+            "SFX library is empty",
+            "Index SFX assets before matching"
+        )
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
+        # Initialize SFX matcher
+        matcher = SFXMatcher(max_suggestions=max_suggestions)
+        
+        logger.info(
+            f"Matching SFX for {len(segments)} segments "
+            f"with {len(sfx_index)} assets (session: {session_id})"
+        )
+        
+        # Step 1: Identify SFX moments
+        moments = matcher.identify_sfx_moments(segments)
+        
+        if not moments:
+            logger.warning(f"No SFX moments identified for session {session_id}")
+            return {
+                "result": {
+                    "moment_matches": [],
+                    "total_matches": 0,
+                    "average_confidence": 0.0,
+                    "average_subtlety": 0.0,
+                    "fallback_used": False,
+                    "layer_guidance": "Place each SFX on separate track for volume flexibility",
+                    "warnings": ["No SFX moments identified in transcript segments"]
+                },
+                "session_id": session_id
+            }
+        
+        # Step 2: Match SFX to moments
+        result = matcher.match_sfx_to_moments(
+            moments=moments,
+            sfx_index=sfx_index
+        )
+        
+        # Check for low confidence warnings
+        if result.warnings:
+            logger.warning(f"SFX matching warnings: {result.warnings}")
+        
+        # Prevent duplicate matches across moments
+        result = matcher.prevent_duplicate_matches(result)
+        
+        logger.info(
+            f"SFX matching complete: {result.total_matches} matches "
+            f"({len(moments)} moments, avg confidence: {result.average_confidence:.2f}, "
+            f"avg subtlety: {result.average_subtlety:.2f}) "
+            f"(session: {session_id})"
+        )
+        
+        # Return result
+        return {
+            "result": result.to_dict(),
+            "session_id": session_id
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error matching SFX: {e}")
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check segment and SFX index format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to match SFX: {e}")
+        return _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to match SFX: {str(e)}",
+            "Check input data and retry"
+        )
+
+
+def match_sfx_with_progress(
+    params: Dict[str, Any] | None
+) -> Generator[Dict[str, Any], None, None]:
+    """Streaming handler for match_sfx method with progress updates.
+    
+    Yields progress updates during SFX moment identification and matching.
+    
+    Args:
+        params: Request parameters (same as match_sfx)
+    
+    Yields:
+        Progress updates and final result
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+        return
+    
+    session_id = params.get("session_id")
+    segments = params.get("segments")
+    sfx_index = params.get("sfx_index")
+    max_suggestions = params.get("max_suggestions", 3)
+    
+    if not session_id or not isinstance(session_id, str):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+        return
+    
+    if not segments or not isinstance(segments, list):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: segments",
+            "Provide a list of transcript segments"
+        )
+        return
+    
+    if not sfx_index or not isinstance(sfx_index, list):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: sfx_index",
+            "Provide a list of SFX assets"
+        )
+        return
+    
+    if len(sfx_index) == 0:
+        yield _error_response(
+            ERROR_CODES["EMPTY_SFX_LIBRARY"],
+            "validation",
+            "SFX library is empty",
+            "Index SFX assets before matching"
+        )
+        return
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            yield _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+            return
+        
+        yield _progress_response("match_sfx", 1, 5, "Initializing SFX matcher...")
+        
+        # Initialize SFX matcher
+        matcher = SFXMatcher(max_suggestions=max_suggestions)
+        
+        yield _progress_response(
+            "match_sfx",
+            2,
+            5,
+            f"Analyzing {len(segments)} segments for SFX moments..."
+        )
+        
+        # Step 1: Identify SFX moments
+        moments = matcher.identify_sfx_moments(segments)
+        
+        if not moments:
+            yield _progress_response("match_sfx", 5, 5, "No SFX moments identified")
+            logger.warning(f"No SFX moments identified for session {session_id}")
+            yield {
+                "result": {
+                    "moment_matches": [],
+                    "total_matches": 0,
+                    "average_confidence": 0.0,
+                    "average_subtlety": 0.0,
+                    "fallback_used": False,
+                    "layer_guidance": "Place each SFX on separate track for volume flexibility",
+                    "warnings": ["No SFX moments identified in transcript segments"]
+                },
+                "session_id": session_id
+            }
+            return
+        
+        yield _progress_response(
+            "match_sfx",
+            3,
+            5,
+            f"Found {len(moments)} moments, matching against {len(sfx_index)} SFX assets..."
+        )
+        
+        # Step 2: Match SFX to moments
+        result = matcher.match_sfx_to_moments(
+            moments=moments,
+            sfx_index=sfx_index
+        )
+        
+        yield _progress_response("match_sfx", 4, 5, "Optimizing matches and removing duplicates...")
+        
+        # Prevent duplicate matches
+        result = matcher.prevent_duplicate_matches(result)
+        
+        yield _progress_response("match_sfx", 5, 5, "SFX matching complete")
+        
+        logger.info(
+            f"SFX matching with progress complete: {result.total_matches} matches "
+            f"({len(moments)} moments) (session: {session_id})"
+        )
+        
+        # Return final result
+        yield {
+            "result": result.to_dict(),
+            "session_id": session_id
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error matching SFX: {e}")
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check segment and SFX index format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to match SFX: {e}")
+        yield _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to match SFX: {str(e)}",
+            "Check input data and retry"
+        )
+
+
 # Handler registry
 AI_HANDLERS = {
     "initiate_rough_cut": initiate_rough_cut,
@@ -1324,4 +1642,6 @@ AI_HANDLERS = {
     "cut_transcript_with_progress": cut_transcript_with_progress,
     "match_music": match_music,
     "match_music_with_progress": match_music_with_progress,
+    "match_sfx": match_sfx,
+    "match_sfx_with_progress": match_sfx_with_progress,
 }
