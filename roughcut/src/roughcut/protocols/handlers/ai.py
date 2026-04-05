@@ -10,9 +10,12 @@ import uuid
 from typing import Any, Callable, Dict, Generator, Optional
 
 from ...backend.ai.data_bundle import DataBundleBuilder
+from ...backend.ai.music_matcher import MusicMatcher
+from ...backend.ai.music_match import MusicMatch, MusicMatchingResult, SegmentMusicMatches
 from ...backend.ai.openai_client import OpenAIClient
 from ...backend.ai.prompt_engine import PromptBuilder
 from ...backend.ai.rough_cut_orchestrator import RoughCutOrchestrator
+from ...backend.ai.segment_tone import SegmentTone
 from ...backend.ai.transcript_cutter import TranscriptCutter
 from ...backend.ai.transcript_segment import TranscriptSegment
 from ...backend.workflows.session import get_session_manager
@@ -34,6 +37,10 @@ ERROR_CODES = {
     "INVALID_SEGMENT_BOUNDARIES": "INVALID_SEGMENT_BOUNDARIES",
     "NARRATIVE_BEAT_MISMATCH": "NARRATIVE_BEAT_MISMATCH",
     "OVERLAPPING_SEGMENTS": "OVERLAPPING_SEGMENTS",
+    "EMPTY_MUSIC_LIBRARY": "EMPTY_MUSIC_LIBRARY",
+    "NO_MUSIC_MATCHES": "NO_MUSIC_MATCHES",
+    "LOW_CONFIDENCE_MATCHES": "LOW_CONFIDENCE_MATCHES",
+    "INVALID_SEGMENT_DATA": "INVALID_SEGMENT_DATA",
 }
 
 # Type alias for progress callback
@@ -1041,6 +1048,273 @@ def cut_transcript_with_progress(
         )
 
 
+def match_music(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Handler for match_music method.
+    
+    Matches music assets to transcript segments based on emotional tone
+    and contextual relevance. Returns structured match suggestions.
+    
+    This is the entry point for Story 5.4 - AI Music Matching.
+    
+    Args:
+        params: Request parameters containing:
+            - session_id: Session UUID (required)
+            - segments: List of transcript segment dictionaries (required)
+            - music_index: List of music asset dictionaries (required)
+            - max_suggestions: Maximum matches per segment (optional, default: 3)
+    
+    Returns:
+        Dictionary with segment_matches and match statistics
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+    
+    session_id = params.get("session_id")
+    segments = params.get("segments")
+    music_index = params.get("music_index")
+    max_suggestions = params.get("max_suggestions", 3)
+    
+    if not session_id or not isinstance(session_id, str):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+    
+    if not segments or not isinstance(segments, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: segments",
+            "Provide a list of transcript segments"
+        )
+    
+    if not music_index or not isinstance(music_index, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: music_index",
+            "Provide a list of music assets"
+        )
+    
+    # Check for empty music library
+    if len(music_index) == 0:
+        return _error_response(
+            ERROR_CODES["EMPTY_MUSIC_LIBRARY"],
+            "validation",
+            "Music library is empty",
+            "Index music assets before matching"
+        )
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            return _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+        
+        # Initialize music matcher
+        matcher = MusicMatcher(max_suggestions=max_suggestions)
+        
+        logger.info(
+            f"Matching music for {len(segments)} segments "
+            f"with {len(music_index)} assets (session: {session_id})"
+        )
+        
+        # Perform matching
+        result = matcher.match_music_to_segments(
+            segments=segments,
+            music_index=music_index
+        )
+        
+        # Check for low confidence warnings
+        if result.warnings:
+            logger.warning(f"Music matching warnings: {result.warnings}")
+        
+        # Prevent duplicate matches across segments
+        result = matcher.prevent_duplicate_matches(result)
+        
+        logger.info(
+            f"Music matching complete: {result.total_matches} matches "
+            f"with avg confidence {result.average_confidence:.2f} "
+            f"(session: {session_id})"
+        )
+        
+        # Return result
+        return {
+            "result": result.to_dict(),
+            "session_id": session_id
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error matching music: {e}")
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check segment and music index format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to match music: {e}")
+        return _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to match music: {str(e)}",
+            "Check input data and retry"
+        )
+
+
+def match_music_with_progress(
+    params: Dict[str, Any] | None
+) -> Generator[Dict[str, Any], None, None]:
+    """Streaming handler for match_music method with progress updates.
+    
+    Yields progress updates during music matching, then final result.
+    
+    Args:
+        params: Request parameters (same as match_music)
+    
+    Yields:
+        Progress updates and final result
+    """
+    # Validate params
+    if params is None:
+        params = {}
+    
+    if not isinstance(params, dict):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Invalid parameters: expected object",
+            "Check request format"
+        )
+        return
+    
+    session_id = params.get("session_id")
+    segments = params.get("segments")
+    music_index = params.get("music_index")
+    max_suggestions = params.get("max_suggestions", 3)
+    
+    if not session_id or not isinstance(session_id, str):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: session_id",
+            "Provide a session_id string"
+        )
+        return
+    
+    if not segments or not isinstance(segments, list):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: segments",
+            "Provide a list of transcript segments"
+        )
+        return
+    
+    if not music_index or not isinstance(music_index, list):
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "Missing required parameter: music_index",
+            "Provide a list of music assets"
+        )
+        return
+    
+    if len(music_index) == 0:
+        yield _error_response(
+            ERROR_CODES["EMPTY_MUSIC_LIBRARY"],
+            "validation",
+            "Music library is empty",
+            "Index music assets before matching"
+        )
+        return
+    
+    try:
+        # Get session
+        session_manager = get_session_manager()
+        session = session_manager.get_session(session_id)
+        
+        if session is None:
+            yield _error_response(
+                ERROR_CODES["SESSION_NOT_FOUND"],
+                "not_found",
+                f"Session '{session_id}' not found",
+                "Create a new session or check the session ID"
+            )
+            return
+        
+        yield _progress_response("match_music", 1, 4, "Initializing music matcher...")
+        
+        # Initialize music matcher
+        matcher = MusicMatcher(max_suggestions=max_suggestions)
+        
+        yield _progress_response(
+            "match_music", 
+            2, 
+            4, 
+            f"Analyzing {len(segments)} segments and {len(music_index)} music assets..."
+        )
+        
+        # Perform matching
+        result = matcher.match_music_to_segments(
+            segments=segments,
+            music_index=music_index
+        )
+        
+        yield _progress_response("match_music", 3, 4, "Optimizing matches and removing duplicates...")
+        
+        # Prevent duplicate matches
+        result = matcher.prevent_duplicate_matches(result)
+        
+        yield _progress_response("match_music", 4, 4, "Music matching complete")
+        
+        logger.info(
+            f"Music matching with progress complete: {result.total_matches} matches "
+            f"(session: {session_id})"
+        )
+        
+        # Return final result
+        yield {
+            "result": result.to_dict(),
+            "session_id": session_id
+        }
+        
+    except ValueError as e:
+        logger.exception(f"Validation error matching music: {e}")
+        yield _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            f"Invalid data: {str(e)}",
+            "Check segment and music index format"
+        )
+    except Exception as e:
+        logger.exception(f"Failed to match music: {e}")
+        yield _error_response(
+            ERROR_CODES["AI_INITIATE_ERROR"],
+            "internal",
+            f"Failed to match music: {str(e)}",
+            "Check input data and retry"
+        )
+
+
 # Handler registry
 AI_HANDLERS = {
     "initiate_rough_cut": initiate_rough_cut,
@@ -1048,4 +1322,6 @@ AI_HANDLERS = {
     "send_data_to_ai_with_progress": send_data_to_ai_with_progress,
     "cut_transcript": cut_transcript,
     "cut_transcript_with_progress": cut_transcript_with_progress,
+    "match_music": match_music,
+    "match_music_with_progress": match_music_with_progress,
 }

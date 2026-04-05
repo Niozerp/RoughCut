@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-03T21:00:00"
-last_updated: "2026-04-04T20:30:00"
+last_updated: "2026-04-04T22:00:00"
 project: "RoughCut"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -87,7 +87,7 @@ development_status:
   5-1-initiate-rough-cut-generation: done
   5-2-send-data-to-ai-service: done
   5-3-ai-transcript-cutting: done
-  5-4-ai-music-matching: backlog
+  5-4-ai-music-matching: done
   5-5-ai-sfx-matching: backlog
   5-6-ai-vfx-template-matching: backlog
   5-7-chunked-context-processing: backlog

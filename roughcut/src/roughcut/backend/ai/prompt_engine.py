@@ -4,10 +4,13 @@ Provides PromptBuilder class for constructing structured AI prompts
 with system messages, transcript context, and media index.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any
 
 from .data_bundle import DataBundle, MediaAssetMetadata
 
@@ -22,7 +25,7 @@ class PromptConfig:
     max_tokens: int = 4000
     model: str = "gpt-4"
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API calls."""
         return {
             "model": self.model,
@@ -84,7 +87,7 @@ IMPORTANT:
 - Music suggestions should reference files from the provided index only
 - Preserve narrative flow and emotional arc"""
     
-    def __init__(self, system_prompt: Optional[str] = None, model: str = "gpt-4"):
+    def __init__(self, system_prompt: str | None = None, model: str = "gpt-4"):
         """Initialize the prompt builder.
         
         Args:
@@ -94,7 +97,7 @@ IMPORTANT:
         self.system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
         self.model = model
     
-    def build(self, data_bundle: DataBundle) -> Dict[str, Any]:
+    def build(self, data_bundle: DataBundle) -> dict[str, Any]:
         """Build complete AI prompt from data bundle.
         
         Args:
@@ -134,7 +137,7 @@ IMPORTANT:
         chunk_index: int,
         total_chunks: int,
         chunk_text: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build AI prompt for a specific chunk.
         
         Used when transcript exceeds context window and needs chunking.
@@ -421,8 +424,8 @@ Remember: Only suggest assets from the provided index. Do not invent filenames."
         self,
         transcript_text: str,
         format_structure: str,
-        system_prompt_path: Optional[str] = None
-    ) -> Dict[str, Any]:
+        system_prompt_path: str | None = None
+    ) -> dict[str, Any]:
         """Build prompt for transcript cutting operation.
         
         Constructs a prompt specifically for cutting transcripts into segments
@@ -538,3 +541,139 @@ REMEMBER:
         output_tokens = 1000  # Conservative estimate for JSON response
         
         return system_tokens + user_tokens + output_tokens
+    
+    def build_music_matching_prompt(
+        self,
+        segments: list[dict[str, Any]],
+        music_index: list[dict[str, Any]],
+        system_prompt_path: str | None = None
+    ) -> dict[str, Any]:
+        """Build prompt for music matching operation.
+        
+        Constructs a prompt for matching music assets to transcript segments
+        based on emotional tone and contextual relevance.
+        
+        Args:
+            segments: List of transcript segment dictionaries with tone data
+            music_index: List of music asset dictionaries from indexed library
+            system_prompt_path: Optional path to custom system prompt template
+            
+        Returns:
+            Dictionary ready for OpenAI API call
+            
+        Raises:
+            ValueError: If segments or music_index is empty
+        """
+        logger.info("Building music matching prompt")
+        
+        # Validate inputs
+        if not segments:
+            raise ValueError("segments cannot be empty")
+        if not music_index:
+            raise ValueError("music_index cannot be empty")
+        
+        # Load system prompt template
+        if system_prompt_path and Path(system_prompt_path).exists():
+            system_prompt = Path(system_prompt_path).read_text()
+        else:
+            # Use default template from prompt_templates directory
+            default_path = Path(__file__).parent / "prompt_templates" / "match_music_system.txt"
+            if default_path.exists():
+                system_prompt = default_path.read_text()
+            else:
+                # Fallback inline prompt
+                system_prompt = self._get_default_music_matching_prompt()
+        
+        # Format segments for prompt
+        segments_json = json.dumps(segments, indent=2)
+        
+        # Format music index for prompt (limit to first 50 assets for token efficiency)
+        limited_index = music_index[:50] if len(music_index) > 50 else music_index
+        music_index_json = json.dumps(limited_index, indent=2)
+        
+        # Fill in template placeholders
+        system_prompt = system_prompt.replace("{segments}", segments_json)
+        system_prompt = system_prompt.replace("{music_index}", music_index_json)
+        
+        # Construct API request
+        prompt = {
+            "model": self.model,
+            "temperature": 0.3,  # Moderate temperature for creative but consistent matching
+            "max_tokens": 4000,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": "Match the most appropriate music to each segment based on tone and context."
+                }
+            ]
+        }
+        
+        logger.info(
+            f"Music matching prompt built successfully ({len(segments)} segments, "
+            f"{len(music_index)} music assets)"
+        )
+        return prompt
+    
+    def _get_default_music_matching_prompt(self) -> str:
+        """Get default music matching system prompt.
+        
+        Returns:
+            Default system prompt for music matching
+        """
+        return """You are an expert video editor AI tasked with matching background music to video segments.
+
+CRITICAL RULES:
+1. Analyze each segment's emotional tone and energy level
+2. Match music tags to segment tone descriptors for contextual relevance
+3. Prioritize exact tag matches over partial matches
+4. Consider folder context as additional matching signal
+5. Suggest music that enhances the narrative without overwhelming dialogue
+6. Return top 3 matches per segment with confidence scores and reasoning
+
+Your task:
+- For each segment, determine: energy (high/medium/low), mood (upbeat/contemplative/triumphant/tense), genre hint
+- Search the available music library using tag similarity to segment tone
+- Score matches based on: tag relevance, folder context, musical appropriateness
+- Return top 3 matches per segment with confidence scores (0.0-1.0)
+- Include clear match reasoning for each suggestion
+
+Output format (JSON only):
+{
+  "segment_matches": [
+    {
+      "segment_name": "<section name>",
+      "tone": {
+        "energy": "<high|medium|low>",
+        "mood": "<upbeat|contemplative|triumphant|tense>",
+        "genre_hint": "<corporate|ambient|orchestral|electronic>"
+      },
+      "matches": [
+        {
+          "music_id": "<asset id>",
+          "confidence_score": <0.0-1.0>,
+          "match_reason": "<clear explanation>",
+          "matched_tags": ["<tag1>", "<tag2>"],
+          "suggested_start": <start_time>,
+          "suggested_end": <end_time>
+        }
+      ]
+    }
+  ],
+  "fallback_used": false,
+  "consistency_notes": "<notes on musical consistency>"
+}
+
+MATCHING GUIDELINES:
+- Confidence 0.90-1.0: Perfect match - tags align perfectly with tone
+- Confidence 0.80-0.89: Strong match - multiple relevant tags match
+- Confidence 0.60-0.79: Moderate match - some tag overlap
+- Confidence < 0.60: Weak match - limited relevance
+
+REMEMBER:
+- The goal is contextual enhancement - music should support the narrative
+- Consider segment transitions - intros and outros should have cohesive energy
+- Match reasoning should explain WHY this music fits this segment's tone"""
