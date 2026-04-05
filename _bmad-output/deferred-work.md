@@ -36,6 +36,25 @@ This file tracks issues and improvements that have been deferred from code revie
 
 ---
 
-## Deferred from: previous reviews
+## Deferred from: code review of 4-4-error-recovery-workflow (2026-04-04)
 
-(No previous deferred items)
+### [W5] AUDIO_CLEANUP_GUIDE Inline Dictionary
+**Source:** Blind Hunter  
+**Location:** `media.py:39-96`  
+**Issue:** 58-line inline dictionary in module root. Consider externalizing to JSON/YAML for easier editing without code changes.  
+**Defer Reason:** Works correctly, can be improved post-MVP without breaking changes  
+**Defer To:** Maintenance phase or configuration system story
+
+### [W6] Hardcoded Search Patterns for Cleaned Clips
+**Source:** Blind Hunter  
+**Location:** `media.py:1236-1240`  
+**Issue:** Search patterns `*cleaned*`, `*NR*` are hardcoded. Should be configurable per user preference.  
+**Defer Reason:** Works for MVP, low priority enhancement  
+**Defer To:** Configuration system story or user preferences epic
+
+### [W7] Guide Structure Validation
+**Source:** Edge Case Hunter  
+**Location:** `media.py` (get_cleanup_guide handler)  
+**Issue:** Guide content returned directly without structure validation. If structure changes, Lua may break.  
+**Defer Reason:** Overkill for MVP - static structure is well-tested  
+**Defer To:** Future enhancement when guide becomes dynamic

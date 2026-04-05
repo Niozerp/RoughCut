@@ -29,8 +29,101 @@ _event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 # Global workflow state for selected clip
 _workflow_state_lock = threading.Lock()
-_workflow_state = {
-    'selected_clip': None,  # Stores the currently selected clip for Story 4.2
+
+# Initialize workflow state with thread safety
+with _workflow_state_lock:
+    _workflow_state = {
+        'selected_clip': None,  # Stores the currently selected clip for Story 4.2
+        'recovery_mode': False,  # Tracks if we're in recovery workflow (Story 4.4)
+        'original_clip': None,  # Stores reference to original poor-quality clip
+        'cleanup_guide_shown': False,  # Tracks if guide has been displayed
+    }
+
+# Audio cleanup guide content (Story 4.4)
+AUDIO_CLEANUP_GUIDE = {
+    'title': 'Audio Cleanup Workflow for Better Transcription',
+    'description': 'Follow these steps to clean up your audio in DaVinci Resolve using Fairlight noise reduction.',
+    'steps': [
+        {
+            'number': 1,
+            'title': 'Open Your Clip in the Edit Page',
+            'description': 'Switch to the Edit page and locate the clip with poor audio quality in your timeline or Media Pool.',
+            'action': 'Double-click the clip to open it in the timeline viewer.',
+            'resolve_location': 'Edit page > Timeline or Media Pool'
+        },
+        {
+            'number': 2,
+            'title': 'Apply Fairlight Noise Reduction',
+            'description': 'Access the Effects Library and apply Resolve\'s built-in noise reduction.',
+            'action': 'Effects Library > Fairlight FX > Noise Reduction',
+            'resolve_location': 'Effects Library sidebar',
+            'tips': [
+                'Drag the Noise Reduction effect onto your audio clip',
+                'Alternatively, right-click the clip and select Fairlight FX'
+            ]
+        },
+        {
+            'number': 3,
+            'title': 'Adjust Noise Reduction Settings',
+            'description': 'Configure the noise reduction settings for optimal speech clarity.',
+            'settings': {
+                'mode': 'Auto Speech Mode',
+                'reduction_db': '6-12dB',
+                'smoothing': 'Medium',
+                'attack_release': 'Auto'
+            },
+            'tips': [
+                'Start with 6dB reduction and increase if needed',
+                'Higher reduction values may affect speech naturalness',
+                'Use Auto Speech Mode for interview/dialogue content'
+            ]
+        },
+        {
+            'number': 4,
+            'title': 'Render Clean Version',
+            'description': 'Render your cleaned audio to a new clip file.',
+            'action': 'Right-click clip > Render in Place or Deliver page',
+            'options': [
+                'Render in Place (Edit page): Creates new clip in Media Pool',
+                'Deliver page: Export to custom location, then import'
+            ],
+            'naming_convention': 'Add "_cleaned" or "_NR" suffix to filename'
+        },
+        {
+            'number': 5,
+            'title': 'Return to RoughCut',
+            'description': 'Come back to RoughCut and select your cleaned clip.',
+            'action': 'Click "Retry with Cleaned Clip" button below',
+            'tips': [
+                'The cleaned clip should appear in your Media Pool',
+                'Look for the "_cleaned" or "_NR" suffix in the filename'
+            ]
+        }
+    ],
+    'troubleshooting': [
+        {
+            'problem': 'Noise reduction makes audio sound "underwater" or unnatural',
+            'solution': 'Reduce the reduction amount from 12dB to 6dB. Apply more conservative settings.'
+        },
+        {
+            'problem': 'Still getting poor transcription after cleanup',
+            'solution': 'Try a different clip or re-record if possible. Some audio issues are unrecoverable.'
+        },
+        {
+            'problem': 'Cannot find Fairlight FX in Effects Library',
+            'solution': 'Ensure you\'re in the Edit page (not Cut or Media). Look under "Fairlight FX" category.'
+        },
+        {
+            'problem': 'Clip rendered but not appearing in Media Pool',
+            'solution': 'Use "Render in Place" from the Edit page timeline for automatic Media Pool import.'
+        }
+    ],
+    'best_practices': [
+        'Always work on a copy of your original clip (non-destructive workflow)',
+        'Start with conservative noise reduction settings (6dB)',
+        'Preview the cleaned audio before proceeding to RoughCut',
+        'If you have multiple takes, try a different take instead of heavy processing'
+    ]
 }
 
 
@@ -1295,6 +1388,659 @@ def analyze_transcription_quality(params: dict) -> dict:
         }
 
 
+# ============================================================================
+# Story 4.4: Error Recovery Workflow Handlers
+# ============================================================================
+
+def abort_session(params: dict) -> dict:
+    """Handle abort_session request (Story 4.4 - AC2).
+    
+    Gracefully aborts the current RoughCut session without side effects.
+    Clears transient state without creating timelines or modifying Resolve.
+    
+    Request format: {
+        "method": "abort_session",
+        "params": {
+            "preserve_clip_selection": false  # optional
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "aborted": true,
+            "cleanup_completed": true,
+            "message": "Session aborted gracefully"
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - preserve_clip_selection: Whether to keep clip selection (default: false)
+            
+    Returns:
+        Response dictionary confirming abort completed
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        preserve_selection = params.get('preserve_clip_selection', False)
+        
+        with _workflow_state_lock:
+            # Store current clip before clearing if preservation requested
+            current_clip = _workflow_state.get('selected_clip') if preserve_selection else None
+            
+            # Clear all transient workflow state
+            _workflow_state['recovery_mode'] = False
+            _workflow_state['original_clip'] = None
+            _workflow_state['cleanup_guide_shown'] = False
+            
+            # Clear selected clip unless preservation requested
+            if not preserve_selection:
+                _workflow_state['selected_clip'] = None
+        
+        # Ensure no timeline creation is pending
+        # (This is a non-destructive operation - we just clear state)
+        logger.info("Session aborted gracefully. No timelines created.")
+        
+        return {
+            'result': {
+                'aborted': True,
+                'cleanup_completed': True,
+                'message': 'Session aborted gracefully',
+                'clip_selection_preserved': preserve_selection and current_clip is not None
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error during session abort")
+        return {
+            'error': {
+                'code': 'ABORT_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': False,
+                'suggestion': 'Close and reopen RoughCut to reset state'
+            }
+        }
+
+
+def get_cleanup_guide(params: dict) -> dict:
+    """Handle get_cleanup_guide request (Story 4.4 - AC3).
+    
+    Returns the audio cleanup guide content with step-by-step instructions
+    for using Resolve's Fairlight noise reduction.
+    
+    Request format: {
+        "method": "get_cleanup_guide",
+        "params": {},
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "guide": {
+                "title": "Audio Cleanup Workflow...",
+                "steps": [...],
+                "troubleshooting": [...]
+            },
+            "total_steps": 5
+        }
+    }
+    
+    Args:
+        params: Request parameters (unused)
+        
+    Returns:
+        Response dictionary with complete cleanup guide
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        # Mark that guide has been shown
+        with _workflow_state_lock:
+            _workflow_state['cleanup_guide_shown'] = True
+        
+        total_steps = len(AUDIO_CLEANUP_GUIDE.get('steps', []))
+        
+        logger.info(f"Retrieved audio cleanup guide with {total_steps} steps")
+        
+        return {
+            'result': {
+                'guide': AUDIO_CLEANUP_GUIDE,
+                'total_steps': total_steps
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error retrieving cleanup guide")
+        return {
+            'error': {
+                'code': 'GUIDE_RETRIEVAL_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Guide content may be corrupted, try restarting RoughCut'
+            }
+        }
+
+
+def find_cleaned_clips(params: dict) -> dict:
+    """Handle find_cleaned_clips request (Story 4.4 - AC4).
+    
+    Searches Media Pool for cleaned versions of the original clip.
+    Matches based on naming patterns like "*_cleaned", "*_NR", "*_processed".
+    
+    Request format: {
+        "method": "find_cleaned_clips",
+        "params": {
+            "original_clip_name": "interview_take1",
+            "original_file_path": "/path/to/interview_take1.mov"
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "cleaned_clips": [
+                {
+                    "clip_id": "resolve_clip_002",
+                    "clip_name": "interview_take1_cleaned",
+                    "file_path": "/path/to/interview_take1_cleaned.mov",
+                    "confidence": 0.85
+                }
+            ],
+            "match_count": 1,
+            "search_patterns": ["*cleaned*", "*NR*", "*processed*"]
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - original_clip_name: Name of original (poor quality) clip
+            - original_file_path: Path to original clip file
+            
+    Returns:
+        Response dictionary with matching cleaned clips
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        original_name = params.get('original_clip_name', '')
+        original_path = params.get('original_file_path', '')
+        
+        if not original_name:
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'original_clip_name is required',
+                    'suggestion': 'Provide the name of the original clip'
+                }
+            }
+        
+        # Define search patterns for cleaned clips
+        search_patterns = ['*cleaned*', '*NR*', '*processed*', '*noise*', '*fixed*']
+        
+        # Get base name (without extension)
+        base_name = original_name
+        if '.' in base_name:
+            base_name = base_name.rsplit('.', 1)[0]
+        
+        cleaned_clips = []
+        
+        # In actual implementation, this would query Resolve's Media Pool
+        # For now, return mock data for testing (will be replaced with real implementation)
+        # The Lua layer will call this and provide actual Media Pool clips via params
+        
+        # Check if we have Media Pool clips provided in params
+        media_pool_clips = params.get('media_pool_clips', [])
+        
+        if media_pool_clips:
+            # Filter clips based on naming patterns
+            for clip_data in media_pool_clips:
+                clip_name = clip_data.get('clip_name', '')
+                clip_base = clip_name
+                if '.' in clip_base:
+                    clip_base = clip_base.rsplit('.', 1)[0]
+                
+                # Check if this clip looks like a cleaned version
+                is_cleaned_version = False
+                
+                # Stricter matching: clip base must START WITH original base name
+                # This prevents "my_interview" matching "interview_cleaned"
+                # Also must have a cleaning suffix and be different from original
+                if (clip_base.startswith(base_name) and 
+                    clip_name != original_name and 
+                    len(clip_base) > len(base_name)):
+                    # Check for cleaning suffix patterns after the base name
+                    suffix_part = clip_base[len(base_name):].lower()
+                    for pattern in ['_cleaned', '_clean', '_nr', '_processed', '_noise', '_fixed', '-cleaned', '-clean', '-nr']:
+                        if suffix_part.startswith(pattern):
+                            is_cleaned_version = True
+                            break
+                    # Also check if pattern appears anywhere in name (for patterns not at start)
+                    if not is_cleaned_version:
+                        for pattern in ['cleaned', 'clean', 'nr', 'processed', 'noise', 'fixed']:
+                            if pattern in suffix_part:
+                                is_cleaned_version = True
+                                break
+                
+                if is_cleaned_version:
+                    cleaned_clips.append({
+                        'clip_id': clip_data.get('clip_id'),
+                        'clip_name': clip_name,
+                        'file_path': clip_data.get('file_path'),
+                        'confidence': 0.85  # Default confidence for UI display
+                    })
+        
+        logger.info(f"Found {len(cleaned_clips)} cleaned clip(s) for {original_name}")
+        
+        return {
+            'result': {
+                'cleaned_clips': cleaned_clips,
+                'match_count': len(cleaned_clips),
+                'search_patterns': search_patterns,
+                'original_base_name': base_name
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error finding cleaned clips")
+        return {
+            'error': {
+                'code': 'FIND_CLEANED_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Check Media Pool is accessible and try again'
+            }
+        }
+
+
+def enter_recovery_mode(params: dict) -> dict:
+    """Handle enter_recovery_mode request (Story 4.4 - Task 5).
+    
+    Enters recovery mode and stores reference to original clip.
+    This prepares the workflow for retry with cleaned audio.
+    
+    Request format: {
+        "method": "enter_recovery_mode",
+        "params": {
+            "original_clip": {
+                "clip_id": "resolve_clip_001",
+                "clip_name": "interview_take1",
+                "file_path": "/path/to/clip.mov"
+            }
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "recovery_mode": true,
+            "original_clip_stored": true,
+            "message": "Entered recovery mode. Original clip saved for comparison."
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - original_clip: Clip data to store as original reference
+            
+    Returns:
+        Response dictionary confirming recovery mode activated
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        original_clip = params.get('original_clip')
+        
+        if not original_clip or not original_clip.get('clip_id'):
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'original_clip with clip_id is required',
+                    'suggestion': 'Provide the original clip data for recovery mode'
+                }
+            }
+        
+        with _workflow_state_lock:
+            # Store original clip for comparison
+            _workflow_state['original_clip'] = {
+                'clip_id': original_clip.get('clip_id'),
+                'clip_name': original_clip.get('clip_name', 'Unknown'),
+                'file_path': original_clip.get('file_path', ''),
+                'stored_at': datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Enter recovery mode
+            _workflow_state['recovery_mode'] = True
+            
+            # Mark that we're in recovery workflow
+            logger.info(f"Entered recovery mode for clip: {original_clip.get('clip_name')}")
+        
+        return {
+            'result': {
+                'recovery_mode': True,
+                'original_clip_stored': True,
+                'original_clip_name': original_clip.get('clip_name'),
+                'message': 'Entered recovery mode. Original clip saved for comparison.'
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error entering recovery mode")
+        return {
+            'error': {
+                'code': 'RECOVERY_MODE_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Try again or restart RoughCut'
+            }
+        }
+
+
+def exit_recovery_mode(params: dict) -> dict:
+    """Handle exit_recovery_mode request (Story 4.4 - Task 5).
+    
+    Exits recovery mode and clears recovery state.
+    Called when retry succeeds or user cancels recovery.
+    
+    Request format: {
+        "method": "exit_recovery_mode",
+        "params": {
+            "success": true  # Whether retry was successful
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "recovery_mode": false,
+            "cleanup_completed": true,
+            "message": "Exited recovery mode successfully"
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - success: Whether the retry was successful (default: true)
+            
+    Returns:
+        Response dictionary confirming recovery mode exited
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        success = params.get('success', True)
+        
+        with _workflow_state_lock:
+            was_in_recovery = _workflow_state.get('recovery_mode', False)
+            original_clip = _workflow_state.get('original_clip')
+            
+            # Clear recovery state
+            _workflow_state['recovery_mode'] = False
+            _workflow_state['original_clip'] = None
+            _workflow_state['cleanup_guide_shown'] = False
+            
+            # Clear guide progress as well
+            if 'guide_progress' in _workflow_state:
+                _workflow_state['guide_progress'] = {}
+            
+            # Clear selected clip to prevent stale data (Patch 10)
+            _workflow_state['selected_clip'] = None
+            
+            logger.info(
+                f"Exited recovery mode. Success: {success}, "
+                f"Original clip cleared: {original_clip is not None}"
+            )
+        
+        return {
+            'result': {
+                'recovery_mode': False,
+                'cleanup_completed': True,
+                'was_in_recovery': was_in_recovery,
+                'success': success,
+                'message': 'Exited recovery mode successfully'
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error exiting recovery mode")
+        return {
+            'error': {
+                'code': 'EXIT_RECOVERY_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'State may be inconsistent, consider restarting RoughCut'
+            }
+        }
+
+
+def get_original_clip_reference(params: dict) -> dict:
+    """Handle get_original_clip_reference request (Story 4.4 - Task 5.4).
+    
+    Returns the stored original clip for comparison view.
+    
+    Request format: {
+        "method": "get_original_clip_reference",
+        "params": {},
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "has_original": true,
+            "original_clip": {
+                "clip_id": "resolve_clip_001",
+                "clip_name": "interview_take1",
+                "file_path": "/path/to/clip.mov",
+                "stored_at": "2026-04-04T20:30:00"
+            },
+            "in_recovery_mode": true
+        }
+    }
+    
+    Args:
+        params: Request parameters (unused)
+        
+    Returns:
+        Response dictionary with original clip reference if available
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        with _workflow_state_lock:
+            original_clip = _workflow_state.get('original_clip')
+            in_recovery = _workflow_state.get('recovery_mode', False)
+        
+        if original_clip:
+            return {
+                'result': {
+                    'has_original': True,
+                    'original_clip': original_clip,
+                    'in_recovery_mode': in_recovery
+                }
+            }
+        else:
+            return {
+                'result': {
+                    'has_original': False,
+                    'original_clip': None,
+                    'in_recovery_mode': in_recovery
+                }
+            }
+        
+    except Exception as e:
+        logger.exception("Error retrieving original clip reference")
+        return {
+            'error': {
+                'code': 'GET_ORIGINAL_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Try again or check workflow state'
+            }
+        }
+
+
+def save_cleanup_guide_progress(params: dict) -> dict:
+    """Handle save_cleanup_guide_progress request (Story 4.4 - Patch 5).
+    
+    Persists the user's progress through the cleanup guide steps.
+    Allows restoring checkbox state when guide is reopened.
+    
+    Request format: {
+        "method": "save_cleanup_guide_progress",
+        "params": {
+            "progress": {1: true, 2: true, 3: false, ...},
+            "clip_id": "resolve_clip_001"
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "saved": true
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - progress: Dictionary with step number as key and boolean as value
+            - clip_id: Optional clip ID to associate progress with
+            
+    Returns:
+        Response dictionary confirming save
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        progress = params.get('progress', {})
+        clip_id = params.get('clip_id')
+        
+        with _workflow_state_lock:
+            # Store progress in workflow state
+            if 'guide_progress' not in _workflow_state:
+                _workflow_state['guide_progress'] = {}
+            
+            # Associate with clip_id if provided
+            if clip_id:
+                _workflow_state['guide_progress'][clip_id] = progress
+            else:
+                _workflow_state['guide_progress']['_default'] = progress
+            
+            logger.info(f"Saved cleanup guide progress for clip: {clip_id or 'default'}")
+        
+        return {
+            'result': {
+                'saved': True
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error saving guide progress")
+        return {
+            'error': {
+                'code': 'SAVE_PROGRESS_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Progress not saved, user will need to re-check steps'
+            }
+        }
+
+
+def get_cleanup_guide_progress(params: dict) -> dict:
+    """Handle get_cleanup_guide_progress request (Story 4.4 - Patch 5).
+    
+    Retrieves the user's progress through the cleanup guide steps.
+    Allows restoring checkbox state when guide is reopened.
+    
+    Request format: {
+        "method": "get_cleanup_guide_progress",
+        "params": {
+            "clip_id": "resolve_clip_001"
+        },
+        "id": "..."
+    }
+    
+    Response format: {
+        "result": {
+            "progress": {1: true, 2: true, 3: false, ...}
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - clip_id: Optional clip ID to retrieve progress for
+            
+    Returns:
+        Response dictionary with progress data
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        clip_id = params.get('clip_id')
+        
+        with _workflow_state_lock:
+            progress_data = _workflow_state.get('guide_progress', {})
+            
+            # Try to get progress for specific clip, fallback to default
+            if clip_id and clip_id in progress_data:
+                progress = progress_data[clip_id]
+            else:
+                progress = progress_data.get('_default', {})
+            
+            logger.info(f"Retrieved cleanup guide progress for clip: {clip_id or 'default'}")
+        
+        return {
+            'result': {
+                'progress': progress
+            }
+        }
+        
+    except Exception as e:
+        logger.exception("Error retrieving guide progress")
+        return {
+            'error': {
+                'code': 'GET_PROGRESS_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Could not restore progress, user will start fresh'
+            }
+        }
+
+
 # Registry of media handlers
 MEDIA_HANDLERS = {
     'get_media_folders': get_media_folders,
@@ -1314,4 +2060,14 @@ MEDIA_HANDLERS = {
     'retrieve_transcription': retrieve_transcription,
     # Story 4.3 - Quality Analysis
     'analyze_transcription_quality': analyze_transcription_quality,
+    # Story 4.4 - Error Recovery Workflow
+    'abort_session': abort_session,
+    'get_cleanup_guide': get_cleanup_guide,
+    'find_cleaned_clips': find_cleaned_clips,
+    'enter_recovery_mode': enter_recovery_mode,
+    'exit_recovery_mode': exit_recovery_mode,
+    'get_original_clip_reference': get_original_clip_reference,
+    # Story 4.4 - Guide Progress Persistence
+    'save_cleanup_guide_progress': save_cleanup_guide_progress,
+    'get_cleanup_guide_progress': get_cleanup_guide_progress,
 }

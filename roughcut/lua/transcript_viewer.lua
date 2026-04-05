@@ -1104,44 +1104,20 @@ function TranscriptViewer.configureDecisionButtons(quality)
 end
 
 --[[
-    Show audio cleanup guide (launches documentation).
+    Show audio cleanup guide (launches Story 4.4 Error Recovery Workflow).
 --]]
 function TranscriptViewer.showAudioCleanupGuide()
-    -- Open audio cleanup guide
-    -- In production, this would open a help window or external documentation
     print("[RoughCut] Opening Audio Cleanup Guide...")
     
-    -- TODO: Implement help window or link to documentation
-    -- For now, show a simple message dialog
-    local message = [[
-Audio Cleanup Guide
-
-To improve transcription quality:
-
-1. Apply Resolve's Noise Reduction:
-   - Select clip in Edit page
-   - Open Fairlight page
-   - Apply Noise Reduction effect
-   - Adjust settings for your audio type
-
-2. Render Clean Version:
-   - Deliver page → Custom Export
-   - Export audio-only WAV or full video
-   - Replace clip in Media Pool
-
-3. Re-transcribe in Resolve:
-   - Right-click clip → Generate Subtitles
-   - Choose speech-to-text
-   - Wait for transcription to complete
-
-4. Re-run RoughCut:
-   - Select cleaned clip
-   - Quality should now be improved
-    ]]
+    -- Close quality review dialog
+    TranscriptViewer.close()
     
-    -- Show dialog with guide (platform-specific)
-    -- For now, just print to console
-    print(message)
+    -- Launch the Error Recovery Workflow (Story 4.4)
+    local ErrorRecovery = require("error_recovery")
+    ErrorRecovery.showErrorRecoveryDialog(
+        TranscriptViewer.qualityData,
+        TranscriptViewer.currentClip
+    )
 end
 
 --[[
