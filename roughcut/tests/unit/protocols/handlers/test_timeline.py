@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from roughcut.protocols.handlers.timeline import (
     create_timeline,
     create_timeline_from_document,
+    import_suggested_media,
     _error_response,
     ERROR_CODES
 )
@@ -304,11 +305,136 @@ class TestErrorCodes(unittest.TestCase):
             "MISSING_FORMAT_TEMPLATE",
             "TIMELINE_CREATION_FAILED",
             "RESOLVE_API_UNAVAILABLE",
-            "INTERNAL_ERROR"
+            "INTERNAL_ERROR",
+            "IMPORT_FAILED",
+            "MISSING_SUGGESTED_MEDIA"
         ]
         
         for code in expected_codes:
             self.assertIn(code, ERROR_CODES)
+
+
+class TestImportSuggestedMedia(unittest.TestCase):
+    """Test cases for import_suggested_media handler."""
+    
+    @patch('roughcut.protocols.handlers.timeline.MediaImporter')
+    def test_import_suggested_media_success(self, mock_importer_class):
+        """Test successful media import."""
+        # Setup mock
+        mock_importer = MagicMock()
+        mock_importer_class.return_value = mock_importer
+        
+        mock_result = MagicMock()
+        mock_result.imported_count = 2
+        mock_result.skipped_count = 0
+        mock_result.media_pool_refs = [
+            MagicMock(file_path="/path/to/music.mp3", media_pool_id="media_001", media_type="music"),
+            MagicMock(file_path="/path/to/sfx.wav", media_pool_id="media_002", media_type="sfx")
+        ]
+        mock_result.skipped_files = []
+        mock_result.success = True
+        mock_importer.import_suggested_media.return_value = mock_result
+        
+        # Call handler
+        params = {
+            "suggested_media": [
+                {"file_path": "/path/to/music.mp3", "media_type": "music"},
+                {"file_path": "/path/to/sfx.wav", "media_type": "sfx"}
+            ]
+        }
+        result = import_suggested_media(params)
+        
+        # Verify
+        self.assertTrue(result["success"])
+        self.assertEqual(result["imported_count"], 2)
+        self.assertEqual(result["skipped_count"], 0)
+        self.assertEqual(len(result["media_pool_refs"]), 2)
+        self.assertNotIn("warning", result)
+    
+    @patch('roughcut.protocols.handlers.timeline.MediaImporter')
+    def test_import_suggested_media_with_skipped(self, mock_importer_class):
+        """Test import with some files skipped."""
+        # Setup mock
+        mock_importer = MagicMock()
+        mock_importer_class.return_value = mock_importer
+        
+        mock_result = MagicMock()
+        mock_result.imported_count = 1
+        mock_result.skipped_count = 1
+        mock_result.media_pool_refs = [
+            MagicMock(file_path="/path/to/music.mp3", media_pool_id="media_001", media_type="music")
+        ]
+        mock_result.skipped_files = [
+            {"file_path": "/path/to/missing.wav", "reason": "file_not_found", "message": "Not found"}
+        ]
+        mock_result.success = True
+        mock_importer.import_suggested_media.return_value = mock_result
+        
+        # Call handler
+        params = {
+            "suggested_media": [
+                {"file_path": "/path/to/music.mp3", "media_type": "music"},
+                {"file_path": "/path/to/missing.wav", "media_type": "sfx"}
+            ]
+        }
+        result = import_suggested_media(params)
+        
+        # Verify
+        self.assertTrue(result["success"])
+        self.assertEqual(result["imported_count"], 1)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertIn("warning", result)
+        self.assertIn("Skipped 1 file(s)", result["warning"])
+    
+    def test_import_suggested_media_missing_params(self):
+        """Test error when suggested_media is missing."""
+        params = {"timeline_id": "timeline_123"}
+        result = import_suggested_media(params)
+        
+        self.assertIn("error", result)
+        self.assertEqual(result["error"]["code"], ERROR_CODES["MISSING_SUGGESTED_MEDIA"])
+    
+    def test_import_suggested_media_empty_list(self):
+        """Test handling empty media list."""
+        params = {"suggested_media": []}
+        result = import_suggested_media(params)
+        
+        # Should return empty success
+        self.assertTrue(result["success"])
+        self.assertEqual(result["imported_count"], 0)
+        self.assertEqual(result["skipped_count"], 0)
+    
+    def test_import_suggested_media_none_params(self):
+        """Test handling of None params."""
+        result = import_suggested_media(None)
+        
+        self.assertIn("error", result)
+        self.assertEqual(result["error"]["code"], ERROR_CODES["MISSING_SUGGESTED_MEDIA"])
+    
+    def test_import_suggested_media_invalid_type(self):
+        """Test error when suggested_media is not a list."""
+        params = {"suggested_media": "not_a_list"}
+        result = import_suggested_media(params)
+        
+        self.assertIn("error", result)
+        self.assertEqual(result["error"]["code"], ERROR_CODES["INVALID_PARAMS"])
+    
+    @patch('roughcut.protocols.handlers.timeline.MediaImporter')
+    def test_import_suggested_media_exception(self, mock_importer_class):
+        """Test handling of importer exceptions."""
+        # Setup mock to raise exception
+        mock_importer_class.side_effect = Exception("Importer failed")
+        
+        params = {
+            "suggested_media": [
+                {"file_path": "/path/to/music.mp3", "media_type": "music"}
+            ]
+        }
+        result = import_suggested_media(params)
+        
+        self.assertIn("error", result)
+        self.assertEqual(result["error"]["code"], ERROR_CODES["IMPORT_FAILED"])
+        self.assertTrue(result["error"]["recoverable"])
 
 
 if __name__ == "__main__":

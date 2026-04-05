@@ -171,8 +171,16 @@ function _loadDocumentInternal()
 end
 
 -- Show loading state in window
-function _showLoadingState()
+function _showLoadingState(message)
     if not currentWindowRef then return end
+    
+    -- Use custom message or default
+    local loadingMessage = message or "Loading AI-generated rough cut document..."
+    local subMessage = "Please wait while we retrieve the document."
+    
+    if message then
+        subMessage = "Processing..."
+    end
     
     -- Clear existing content
     _clearWindow()
@@ -181,13 +189,13 @@ function _showLoadingState()
     local ok = pcall(function()
         currentWindowRef:Add({
             type = "Label",
-            text = "Loading AI-generated rough cut document...",
+            text = loadingMessage,
             alignment = { AlignHCenter = true, AlignVCenter = true }
         })
         
         currentWindowRef:Add({
             type = "Label",
-            text = "Please wait while we retrieve the document.",
+            text = subMessage,
             alignment = { AlignHCenter = true }
         })
     end)
@@ -679,7 +687,7 @@ function _createTimelineAsync()
     end
     
     isLoading = true
-    _showLoadingState()
+    _showLoadingState("Creating timeline structure...")
     
     local ok_timer = pcall(function()
         if type(SetTimer) == "function" then
@@ -717,10 +725,129 @@ function _createTimelineInternal()
     
     if result.result then
         logger.info("Timeline created successfully")
+        
+        -- Now import suggested media
+        local timelineId = result.result.timeline_id
+        if timelineId then
+            _importSuggestedMediaAsync(timelineId)
+        else
         _showTimelineCreatedSuccess(result.result)
     else
         _showError("Timeline creation returned no result")
     end
+end
+
+-- Import suggested media asynchronously
+function _importSuggestedMediaAsync(timelineId)
+    isLoading = true
+    _showLoadingState("Importing suggested media...")
+    
+    local ok_timer = pcall(function()
+        if type(SetTimer) == "function" then
+            SetTimer(100, function()
+                _importSuggestedMediaInternal(timelineId)
+                return false
+            end)
+        else
+            _importSuggestedMediaInternal(timelineId)
+        end
+    end)
+    
+    if not ok_timer then
+        _importSuggestedMediaInternal(timelineId)
+    end
+end
+
+-- Internal function to import suggested media
+function _importSuggestedMediaInternal(timelineId)
+    -- Build suggested media list from rough cut document
+    local suggestedMedia = {}
+    
+    if roughCutDocument then
+        -- Add music suggestions
+        if roughCutDocument.music_suggestions and type(roughCutDocument.music_suggestions) == "table" then
+            for _, music in ipairs(roughCutDocument.music_suggestions) do
+                if music.file_path then
+                    table.insert(suggestedMedia, {
+                        file_path = music.file_path,
+                        media_type = "music",
+                        usage = music.usage or "background"
+                    })
+                end
+            end
+        end
+        
+        -- Add SFX suggestions
+        if roughCutDocument.sfx_suggestions and type(roughCutDocument.sfx_suggestions) == "table" then
+            for _, sfx in ipairs(roughCutDocument.sfx_suggestions) do
+                if sfx.file_path then
+                    table.insert(suggestedMedia, {
+                        file_path = sfx.file_path,
+                        media_type = "sfx",
+                        usage = sfx.usage or "effect"
+                    })
+                end
+            end
+        end
+        
+        -- Add VFX suggestions
+        if roughCutDocument.vfx_suggestions and type(roughCutDocument.vfx_suggestions) == "table" then
+            for _, vfx in ipairs(roughCutDocument.vfx_suggestions) do
+                if vfx.file_path then
+                    table.insert(suggestedMedia, {
+                        file_path = vfx.file_path,
+                        media_type = "vfx",
+                        usage = vfx.usage or "template"
+                    })
+                end
+            end
+        end
+    end
+    
+    -- Call import method
+    local result = protocol.request({
+        method = "import_suggested_media",
+        params = {
+            timeline_id = timelineId,
+            suggested_media = suggestedMedia
+        }
+    })
+    
+    isLoading = false
+    
+    -- Build result with import info
+    local finalResult = {
+        timeline_id = timelineId,
+        timeline_name = _generateTimelineName()
+    }
+    
+    if result.result then
+        finalResult.imported_count = result.result.imported_count or 0
+        finalResult.skipped_count = result.result.skipped_count or 0
+        
+        if result.result.warning then
+            logger.warning("Import warnings: " .. tostring(result.result.warning))
+        end
+        
+        logger.info(string.format(
+            "Media import complete: %d imported, %d skipped",
+            finalResult.imported_count,
+            finalResult.skipped_count
+        ))
+    else
+        logger.warning("Media import returned no result")
+        finalResult.imported_count = 0
+        finalResult.skipped_count = 0
+    end
+    
+    if result.error then
+        logger.error("Failed to import media: " .. tostring(result.error.message))
+        -- Still show success for timeline creation, but note the import issue
+        finalResult.import_warning = result.error.message
+    end
+    
+    _showTimelineCreatedSuccess(finalResult)
+end
 end
 
 -- Generate timeline name
@@ -762,9 +889,35 @@ function _showTimelineCreatedSuccess(result)
             })
         end
         
+        -- Show media import info if available
+        if result.imported_count ~= nil then
+            currentWindowRef:Add({
+                type = "Label",
+                text = string.format("Media imported: %d file(s)", result.imported_count),
+                styleSheet = "margin-top: 10px; color: #28a745;"
+            })
+            
+            if result.skipped_count and result.skipped_count > 0 then
+                currentWindowRef:Add({
+                    type = "Label",
+                    text = string.format("Note: %d file(s) skipped (not found)", result.skipped_count),
+                    styleSheet = "color: orange;"
+                })
+            end
+        end
+        
+        -- Show import warning if present
+        if result.import_warning then
+            currentWindowRef:Add({
+                type = "Label",
+                text = "Import warning: " .. tostring(result.import_warning),
+                styleSheet = "color: orange; margin-top: 5px;"
+            })
+        end
+        
         currentWindowRef:Add({
             type = "Label",
-            text = "The rough cut has been created in DaVinci Resolve. You can now refine and adjust the edit.",
+            text = "The rough cut has been created in DaVinci Resolve with suggested media imported. You can now refine and adjust the edit.",
             wordWrap = true,
             styleSheet = "margin-top: 10px;"
         })

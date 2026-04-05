@@ -96,8 +96,8 @@ development_status:
   
   # Epic 6: Timeline Creation & Media Placement - IN PROGRESS
   epic-6: in-progress
-  6-1-create-new-timeline: review
-  6-2-import-suggested-media: backlog
+  6-1-create-new-timeline: done
+  6-2-import-suggested-media: review
   6-3-cut-footage-to-segments: backlog
   6-4-place-music-on-timeline: backlog
   6-5-layer-sfx-on-separate-tracks: backlog

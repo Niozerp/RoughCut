@@ -5,6 +5,7 @@ with proper error handling and version compatibility.
 """
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -302,4 +303,102 @@ class ResolveApi:
             return version
         except Exception as e:
             logger.error(f"Error getting Resolve version: {e}")
+            return None
+    
+    def find_media_in_pool(self, file_path: str) -> Optional[str]:
+        """Find media in the Media Pool by file path.
+        
+        Checks if a media file already exists in Resolve's Media Pool.
+        This is used for duplicate detection to avoid re-importing.
+        
+        Args:
+            file_path: Absolute path to the media file
+            
+        Returns:
+            Media Pool item ID if found, None otherwise
+        """
+        media_pool = self.get_media_pool()
+        if not media_pool:
+            logger.warning("Cannot search media pool - Resolve API not available")
+            return None
+        
+        try:
+            # Get the root folder of the media pool
+            root_folder = media_pool.GetRootFolder()
+            if not root_folder:
+                logger.warning("Could not get media pool root folder")
+                return None
+            
+            # Search for the clip by file path
+            # Resolve API: GetClipList() returns clips in current folder
+            clips = root_folder.GetClipList()
+            if not clips:
+                return None
+            
+            # Look for a clip matching our file path
+            for clip in clips:
+                try:
+                    # GetClipProperty returns a dict with file path info
+                    clip_props = clip.GetClipProperty()
+                    if clip_props:
+                        clip_path = clip_props.get("File Path") or clip_props.get("FilePath")
+                        if clip_path and os.path.normpath(clip_path) == os.path.normpath(file_path):
+                            clip_name = clip.GetName()
+                            logger.debug(f"Found existing media: {file_path} -> {clip_name}")
+                            return clip_name  # Use clip name as ID
+                except Exception as e:
+                    logger.debug(f"Error checking clip properties: {e}")
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error searching media pool: {e}")
+            return None
+    
+    def import_media_to_pool(self, file_path: str) -> Optional[str]:
+        """Import a media file into Resolve's Media Pool.
+        
+        Adds a media file to the current project's Media Pool if not already present.
+        This is a non-destructive operation - it only creates a reference to the file.
+        
+        Args:
+            file_path: Absolute path to the media file to import
+            
+        Returns:
+            Media Pool item ID (clip name) if successful, None otherwise
+        """
+        media_pool = self.get_media_pool()
+        if not media_pool:
+            logger.error("Cannot import media - Resolve API not available")
+            return None
+        
+        try:
+            # First check if already in pool (duplicate detection)
+            existing_id = self.find_media_in_pool(file_path)
+            if existing_id:
+                logger.info(f"Media already in pool, using existing: {file_path}")
+                return existing_id
+            
+            # Import the media file
+            # Resolve API: ImportMedia() imports files into the media pool
+            root_folder = media_pool.GetRootFolder()
+            if not root_folder:
+                logger.error("Could not get media pool root folder for import")
+                return None
+            
+            # ImportMedia returns a list of imported MediaPoolItem objects
+            imported_items = media_pool.ImportMedia([file_path])
+            
+            if imported_items and len(imported_items) > 0:
+                # Get the first imported item's name as ID
+                media_id = imported_items[0].GetName()
+                logger.info(f"Successfully imported: {file_path} -> {media_id}")
+                return media_id
+            else:
+                logger.warning(f"ImportMedia returned empty result for: {file_path}")
+                return None
+                
+        except Exception as e:
+            logger.exception(f"Error importing media to pool: {file_path}")
             return None

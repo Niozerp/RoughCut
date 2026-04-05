@@ -4,9 +4,11 @@ Handles JSON-RPC requests for creating and managing Resolve timelines.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Callable, Dict
 
 from ...backend.timeline.builder import TimelineBuilder
+from ...backend.timeline.importer import MediaImporter, ImportResult
 from ...backend.workflows.session import get_session_manager
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,9 @@ ERROR_CODES = {
     "MISSING_FORMAT_TEMPLATE": "MISSING_FORMAT_TEMPLATE",
     "TIMELINE_CREATION_FAILED": "TIMELINE_CREATION_FAILED",
     "RESOLVE_API_UNAVAILABLE": "RESOLVE_API_UNAVAILABLE",
-    "INTERNAL_ERROR": "INTERNAL_ERROR"
+    "INTERNAL_ERROR": "INTERNAL_ERROR",
+    "IMPORT_FAILED": "IMPORT_FAILED",
+    "MISSING_SUGGESTED_MEDIA": "MISSING_SUGGESTED_MEDIA"
 }
 
 
@@ -264,8 +268,97 @@ def create_timeline(params: Dict[str, Any] | None) -> Dict[str, Any]:
         )
 
 
+def import_suggested_media(params: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Import suggested media files into Resolve's Media Pool.
+    
+    This handler is called from the Lua GUI after timeline creation to import
+    AI-suggested media assets (music, SFX, VFX) into the Media Pool.
+    
+    Args:
+        params: Request parameters containing:
+            - timeline_id: Timeline ID (optional, for context)
+            - suggested_media: List of media items with file_path and media_type
+            
+    Returns:
+        Dictionary with import results or error
+    """
+    if params is None:
+        params = {}
+    
+    # Validate required parameters
+    suggested_media = params.get("suggested_media")
+    if not suggested_media:
+        logger.error("Missing suggested_media parameter")
+        return _error_response(
+            ERROR_CODES["MISSING_SUGGESTED_MEDIA"],
+            "validation",
+            "No suggested media provided for import",
+            "Ensure AI suggestions are available before importing",
+            recoverable=True
+        )
+    
+    if not isinstance(suggested_media, list):
+        return _error_response(
+            ERROR_CODES["INVALID_PARAMS"],
+            "validation",
+            "suggested_media must be a list",
+            "Provide a list of media items with file_path and media_type",
+            recoverable=True
+        )
+    
+    logger.info(f"Importing {len(suggested_media)} suggested media files")
+    
+    try:
+        # Create importer and import media
+        importer = MediaImporter()
+        result = importer.import_suggested_media(suggested_media)
+        
+        # Convert ImportResult to response format
+        media_pool_refs = []
+        for ref in result.media_pool_refs:
+            media_pool_refs.append({
+                "file_path": ref.file_path,
+                "media_pool_id": ref.media_pool_id,
+                "media_type": ref.media_type
+            })
+        
+        response = {
+            "imported_count": result.imported_count,
+            "skipped_count": result.skipped_count,
+            "media_pool_refs": media_pool_refs,
+            "skipped_files": result.skipped_files,
+            "success": result.success
+        }
+        
+        # Add warnings if files were skipped
+        if result.skipped_count > 0:
+            skipped_names = [Path(s["file_path"]).name for s in result.skipped_files]
+            response["warning"] = (
+                f"Skipped {result.skipped_count} file(s): {', '.join(skipped_names)}. "
+                "Timeline creation will continue with available assets."
+            )
+        
+        logger.info(
+            f"Import complete: {result.imported_count} imported, "
+            f"{result.skipped_count} skipped"
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.exception(f"Error importing suggested media: {e}")
+        return _error_response(
+            ERROR_CODES["IMPORT_FAILED"],
+            "internal",
+            f"Failed to import suggested media: {str(e)}",
+            "Check Resolve is running and media files are accessible",
+            recoverable=True
+        )
+
+
 # Handler registry for the dispatcher
 TIMELINE_HANDLERS: Dict[str, Callable] = {
     "create_timeline_from_document": create_timeline_from_document,
-    "create_timeline": create_timeline
+    "create_timeline": create_timeline,
+    "import_suggested_media": import_suggested_media
 }

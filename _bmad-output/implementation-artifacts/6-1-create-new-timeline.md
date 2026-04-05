@@ -1,6 +1,6 @@
 # Story 6.1: Create New Timeline
 
-Status: review
+Status: done
 
 ## Code Review Fixes Applied
 
@@ -91,6 +91,55 @@ So that my existing timelines remain untouched and I get a fresh edit to work wi
   - [x] Subtask 6.3 - Implement graceful failure if timeline creation fails
   
   **Note:** Comprehensive error handling implemented in `builder.py` and `timeline.py` handlers with structured error responses.
+
+### Review Findings (2026-04-04)
+
+**Code review findings from parallel adversarial review layers:**
+
+#### [x] [Review][Patch] Add missing `os` import to resolve_api.py [resolve_api.py:1]
+- Import `os` module used in `find_media_in_pool()` but not imported
+- **FIXED**: Added `import os` at top of file
+
+#### [x] [Review][Patch] Fix name truncation calculation using wrong variable [builder.py:801-803]
+- Uses parameter `timestamp` instead of computed/cleaned timestamp in length calculation
+- Could cause name to exceed MAX_NAME_LENGTH if long timestamp string passed
+- **FIXED**: Use `computed_timestamp` variable in truncation calculation
+
+#### [x] [Review][Patch] Fix progress message to match AC4 requirement [rough_cut_review_window.lua:690]
+- Currently shows generic "Loading..." message
+- Should show: "Creating timeline structure..."
+- **FIXED**: Pass "Creating timeline structure..." to _showLoadingState()
+
+#### [x] [Review][Patch] Add TOCTOU protection for timeline name uniqueness [builder.py:164-172]
+- Race condition between name check and timeline creation
+- Add retry loop if creation fails due to name collision
+- **FIXED**: Added retry loop with up to 3 attempts and automatic unique name generation on each retry
+
+#### [Review][Dismiss] Track verification checking wrong keys [builder.py:676-677]
+- **dismiss** — Blind Hunter finding was incorrect. Track manager aggregates "music" and "sfx" into "audio" key, which IS checked correctly.
+
+#### [Review][Defer] Unicode character handling in name sanitization [builder.py:387]
+- Non-ASCII characters replaced with underscores
+- International clip names become unreadable
+- **deferred** — UI enhancement, not blocking functionality
+
+#### [Review][Defer] Timestamp format handling for ISO with timezone [builder.py:312-313]
+- Timezone offsets not fully handled in name conversion
+- **deferred** — Edge case, most timestamps won't include timezone
+
+#### [Review][Defer] Media pool search only checks root folder [resolve_api.py:324-352]
+- Nested folders not searched for duplicate detection
+- **deferred** — Could cause duplicate imports but non-critical
+
+#### [Review][Defer] Windows case-insensitive path comparison [resolve_api.py:344]
+- Path comparison doesn't handle Windows case-insensitivity
+- **deferred** — Could cause duplicate imports on Windows
+
+#### [Review][Dismiss] Infinite loop risk in unique name generation
+- **dismiss** — Blind Hunter and Edge Case both flagged, but 999 iteration limit + random suffix provides sufficient protection
+
+#### [Review][Dismiss] Random suffix predictability
+- **dismiss** — Not security-critical; 1.6M combinations sufficient for timeline naming
 
 ## Technical Context
 
@@ -336,8 +385,19 @@ No critical issues encountered during implementation.
 - Proper track layout: video/dialogue, music, SFX (2 tracks), VFX
 - Comprehensive error handling with actionable guidance per NFR13
 
-**Technical Decisions:**
-1. **TimelineBuilder** - Central class handling all timeline creation logic
+**Code Review Fixes Applied (2026-04-04):**
+1. **[HIGH]** Added missing `import os` to `resolve_api.py` (used in `find_media_in_pool()`)
+2. **[HIGH]** Fixed name truncation calculation using wrong variable (now uses `computed_timestamp`)
+3. **[MEDIUM]** Fixed progress message to match AC4 requirement ("Creating timeline structure...")
+4. **[HIGH]** Added TOCTOU protection with retry loop (up to 3 attempts for timeline name collisions)
+5. **[DISMISSED]** Track verification finding was incorrect - code correctly checks for "audio" key
+
+**All 5 Acceptance Criteria Met:**
+- ✅ AC1: Non-destructive timeline creation with collision detection
+- ✅ AC2: Descriptive naming with format "RoughCut_[source]_[format]_[timestamp]"
+- ✅ AC3: Source clip protection (read-only media pool access)
+- ✅ AC4: Progress indication shows "Creating timeline structure..."
+- ✅ AC5: Timeline activation and correct track setup (1 video, 1 music, 2 SFX, 1 VFX)
 2. **TrackManager** - Manages track creation with configurable layouts
 3. **ResolveApi** - Abstraction layer for Resolve API with version compatibility
 4. **JSON-RPC Handlers** - `create_timeline` and `create_timeline_from_document` methods

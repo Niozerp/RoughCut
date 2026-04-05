@@ -160,29 +160,46 @@ class TimelineBuilder:
                 # This ensures source clip protection (NFR9)
                 logger.debug("Source clip protection: Media pool accessible, no modifications will be made")
             
-            # Step 4: Verify non-destructive - ensure we're not overwriting
-            existing_timeline = self.resolve_api.find_timeline_by_name(timeline_name)
-            if existing_timeline:
-                logger.warning(f"Timeline {timeline_name} already exists, generating unique name")
-                timeline_name = self._generate_unique_timeline_name(timeline_name)
-                logger.debug(f"Unique timeline name: {timeline_name}")
+            # Step 4 & 5: Create timeline with retry protection for TOCTOU race condition
+            timeline = None
+            max_retries = 3
+            retry_count = 0
+            current_timeline_name = timeline_name
             
-            # Step 5: Create the timeline container
-            logger.info(f"Creating timeline container: {timeline_name}")
-            timeline = self.resolve_api.create_timeline(timeline_name)
+            while retry_count < max_retries and timeline is None:
+                # Verify non-destructive - ensure we're not overwriting
+                existing_timeline = self.resolve_api.find_timeline_by_name(current_timeline_name)
+                if existing_timeline:
+                    logger.warning(f"Timeline {current_timeline_name} already exists, generating unique name")
+                    current_timeline_name = self._generate_unique_timeline_name(current_timeline_name)
+                    logger.debug(f"Unique timeline name: {current_timeline_name}")
+                
+                # Create the timeline container
+                logger.info(f"Creating timeline container: {current_timeline_name} (attempt {retry_count + 1}/{max_retries})")
+                timeline = self.resolve_api.create_timeline(current_timeline_name)
+                
+                if timeline is None:
+                    # Creation failed - could be race condition, retry with new name
+                    logger.warning(f"Timeline creation failed for {current_timeline_name}, retrying with new name")
+                    current_timeline_name = self._generate_unique_timeline_name(current_timeline_name)
+                    retry_count += 1
+            
             if not timeline:
-                logger.error(f"Failed to create timeline: {timeline_name}")
+                logger.error(f"Failed to create timeline after {max_retries} attempts")
                 return TimelineCreationResult(
-                    timeline_name=timeline_name,
+                    timeline_name=current_timeline_name,
                     success=False,
                     error={
                         "code": "TIMELINE_CREATION_FAILED",
                         "category": "resolve_api",
-                        "message": "Failed to create timeline in DaVinci Resolve",
+                        "message": "Failed to create timeline in DaVinci Resolve after multiple attempts",
                         "recoverable": True,
                         "suggestion": "Check project permissions and disk space, then retry"
                     }
                 )
+            
+            # Update timeline_name to the one that was successfully created
+            timeline_name = current_timeline_name
             
             # Step 6: Create tracks
             logger.info("Creating timeline tracks")
@@ -307,25 +324,25 @@ class TimelineBuilder:
         
         # Generate timestamp if not provided
         if timestamp is None:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            computed_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         else:
             # Convert ISO format to safe filename format
-            timestamp = timestamp.replace("T", "_").replace(":", "-")
+            computed_timestamp = timestamp.replace("T", "_").replace(":", "-")
         
         # Build name
-        name = f"{self.TIMELINE_NAME_PREFIX}_{clean_source}_{clean_format}_{timestamp}"
+        name = f"{self.TIMELINE_NAME_PREFIX}_{clean_source}_{clean_format}_{computed_timestamp}"
         
         # Truncate if too long - account for all separators (3 underscores)
         if len(name) > self.MAX_NAME_LENGTH:
-            # Calculate available space for source + format (keeping prefix, timestamp, and 3 underscores)
-            fixed_parts_len = len(self.TIMELINE_NAME_PREFIX) + len(timestamp) + 3  # 3 underscores
+            # Calculate available space for source + format (keeping prefix, computed_timestamp, and 3 underscores)
+            fixed_parts_len = len(self.TIMELINE_NAME_PREFIX) + len(computed_timestamp) + 3  # 3 underscores
             available = self.MAX_NAME_LENGTH - fixed_parts_len
             # Split available space between source and format
             source_len = available // 2
             format_len = available - source_len
             truncated_source = clean_source[:source_len]
             truncated_format = clean_format[:format_len]
-            name = f"{self.TIMELINE_NAME_PREFIX}_{truncated_source}_{truncated_format}_{timestamp}"
+            name = f"{self.TIMELINE_NAME_PREFIX}_{truncated_source}_{truncated_format}_{computed_timestamp}"
         
         return name
     
