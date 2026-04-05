@@ -16,6 +16,7 @@ from ...config.models import MediaFolderConfig
 from ...backend.indexing import MediaIndexer, FileScanner
 from ...backend.database.models import MediaAsset, IndexResult, Transcript, TranscriptQuality
 from ...backend.media.models import MediaPoolItem, MediaType
+from ...backend.media.validator import MediaValidator, ValidationErrorCode
 
 # Valid media categories
 VALID_CATEGORIES = {'music', 'sfx', 'vfx', 'folder'}
@@ -2041,6 +2042,136 @@ def get_cleanup_guide_progress(params: dict) -> dict:
         }
 
 
+# ============================================================================
+# Story 4.5: Validate Transcribable Media Handlers
+# ============================================================================
+
+def validate_transcribable_media(params: dict) -> dict:
+    """Handle validate_transcribable_media request (Story 4.5 - AC1, AC2, AC3).
+    
+    Validates that selected media can be transcribed by Resolve before
+    attempting transcription. Checks for audio tracks, supported codecs,
+    and file accessibility.
+    
+    Request format: {
+        "method": "validate_transcribable_media",
+        "params": {
+            "clip_id": "resolve_clip_001",
+            "clip_name": "interview_take1.mp4",
+            "file_path": "/path/to/clip.mov",
+            "audio_tracks": 2,
+            "codec": "PCM",
+            "duration_seconds": 2280.5
+        },
+        "id": "..."
+    }
+    
+    Response format (success): {
+        "result": {
+            "valid": true,
+            "checks": {
+                "has_audio": {"name": "has_audio", "passed": true, "details": {...}},
+                "codec_supported": {"name": "codec_supported", "passed": true, "details": {...}},
+                "file_accessible": {"name": "file_accessible", "passed": true, "details": {...}}
+            },
+            "failed_check": null,
+            "error_code": null,
+            "error_message": "",
+            "suggestion": ""
+        }
+    }
+    
+    Response format (failure): {
+        "result": {
+            "valid": false,
+            "checks": {...},
+            "failed_check": "has_audio",
+            "error_code": "NO_AUDIO_TRACK",
+            "error_message": "Selected clip has no audio track",
+            "suggestion": "Select a clip with audio content"
+        }
+    }
+    
+    Args:
+        params: Request parameters containing:
+            - clip_id: Resolve's unique clip identifier
+            - clip_name: Name of the clip (for logging)
+            - file_path: Absolute path to media file
+            - audio_tracks: Number of audio tracks (int)
+            - codec: Audio codec name (str)
+            - duration_seconds: Duration in seconds (float)
+            
+    Returns:
+        Response dictionary with validation result
+    """
+    # Validate params type
+    is_valid, error_response = _validate_params_type(params)
+    if not is_valid:
+        return error_response
+    
+    try:
+        clip_id = params.get('clip_id')
+        clip_name = params.get('clip_name', 'Unknown')
+        
+        if not clip_id:
+            return {
+                'error': {
+                    'code': 'INVALID_PARAMS',
+                    'category': 'validation',
+                    'message': 'clip_id is required',
+                    'suggestion': 'Provide a valid clip_id from the Media Pool'
+                }
+            }
+        
+        # Build clip data for validation
+        clip_data = {
+            'clip_id': clip_id,
+            'clip_name': clip_name,
+            'file_path': params.get('file_path', ''),
+            'audio_tracks': params.get('audio_tracks', 0),
+            'codec': params.get('codec', ''),
+            'duration_seconds': params.get('duration_seconds', 0)
+        }
+        
+        # Run validation
+        validator = MediaValidator()
+        result = validator.validate(clip_data)
+        
+        # Store validation result in workflow state (for session caching)
+        with _workflow_state_lock:
+            if 'validated_clips' not in _workflow_state:
+                _workflow_state['validated_clips'] = {}
+            
+            _workflow_state['validated_clips'][clip_id] = {
+                'valid': result.valid,
+                'failed_check': result.failed_check,
+                'error_code': result.error_code.value if result.error_code else None,
+                'validated_at': datetime.now(timezone.utc).isoformat()
+            }
+        
+        logger.info(
+            f"Validated clip {clip_name}: valid={result.valid}, "
+            f"failed_check={result.failed_check}"
+        )
+        
+        # Return result in expected format
+        return {
+            'result': result.to_dict()
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error validating media for {params.get('clip_name', 'Unknown')}")
+        return {
+            'error': {
+                'code': 'VALIDATION_FAILED',
+                'category': 'internal',
+                'message': str(e),
+                'recoverable': True,
+                'suggestion': 'Try selecting a different clip'
+            }
+        }
+
+
 # Registry of media handlers
 MEDIA_HANDLERS = {
     'get_media_folders': get_media_folders,
@@ -2070,4 +2201,6 @@ MEDIA_HANDLERS = {
     # Story 4.4 - Guide Progress Persistence
     'save_cleanup_guide_progress': save_cleanup_guide_progress,
     'get_cleanup_guide_progress': get_cleanup_guide_progress,
+    # Story 4.5 - Validate Transcribable Media
+    'validate_transcribable_media': validate_transcribable_media,
 }
