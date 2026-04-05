@@ -632,3 +632,41 @@ def get_config_manager() -> ConfigManager:
         ConfigManager singleton instance
     """
     return ConfigManager()
+
+
+def get_settings() -> dict:
+    """Get application settings as a simple dictionary.
+    
+    Convenience function for accessing configuration in a dict-like format.
+    
+    Returns:
+        Dictionary with configuration values
+    """
+    config_manager = get_config_manager()
+    
+    settings = {}
+    
+    # Get AI config
+    ai_config = config_manager.get_ai_config()
+    if ai_config:
+        settings["openai_api_key"] = ai_config.api_key
+        settings["ai_enabled"] = ai_config.enabled
+        settings["ai_model"] = ai_config.model
+        settings["ai_timeout"] = ai_config.timeout
+        settings["ai_max_retries"] = ai_config.max_retries
+    
+    # Get Notion config
+    notion_config = config_manager.get_notion_config()
+    if notion_config:
+        settings["notion_api_token"] = notion_config.api_token
+        settings["notion_page_url"] = notion_config.page_url
+        settings["notion_enabled"] = notion_config.enabled
+    
+    # Get media folders config
+    media_config = config_manager.get_media_folders_config()
+    if media_config:
+        settings["music_folder"] = media_config.music_folder
+        settings["sfx_folder"] = media_config.sfx_folder
+        settings["vfx_folder"] = media_config.vfx_folder
+    
+    return settings

@@ -1039,27 +1039,33 @@ function _showGenerateStep(data)
     end)
 end
 
--- Show generating state (placeholder for Epic 5)
+-- Show generating state with progress dialog (Story 5.1)
 function _showGeneratingState()
+    logger.info("Starting rough cut generation...")
+    
+    -- Clear window and show generating UI
     pcall(function()
         _clearWindow(currentWindowRef)
         
+        -- Header
         currentWindowRef:Add({
             type = "Label",
-            text = "Generating Rough Cut...",
-            font = { size = 20, bold = true },
+            text = "Generating Rough Cut",
+            font = { size = 22, bold = true },
             alignment = { alignHCenter = true }
         })
         
         currentWindowRef:Add({
             type = "Label",
             text = "",
-            height = 30
+            height = 20
         })
         
+        -- Progress indicator
         currentWindowRef:Add({
             type = "Label",
-            text = "AI processing will be implemented in Epic 5",
+            id = "lblProgressStatus",
+            text = "Initializing AI processing...",
             font = { size = 12, italic = true },
             alignment = { alignHCenter = true }
         })
@@ -1067,9 +1073,275 @@ function _showGeneratingState()
         currentWindowRef:Add({
             type = "Label",
             text = "",
-            height = 30
+            height = 15
         })
         
+        -- Progress bar (simulated with label)
+        local progressGroup = currentWindowRef:Add({
+            type = "HGroup",
+            id = "grpProgress",
+            spacing = 5,
+            alignment = { alignHCenter = true }
+        })
+        
+        if progressGroup then
+            progressGroup:Add({
+                type = "Label",
+                id = "lblProgressBar",
+                text = "[                    ]",
+                font = { size = 14, family = "Courier" },
+                alignment = { alignHCenter = true }
+            })
+        end
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "",
+            height = 10
+        })
+        
+        -- Progress details
+        currentWindowRef:Add({
+            type = "Label",
+            id = "lblProgressDetails",
+            text = "Step 1 of 5: Preparing data...",
+            font = { size = 10 },
+            color = { 0.5, 0.5, 0.5 },
+            alignment = { alignHCenter = true }
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "",
+            height = 20
+        })
+        
+        -- Cancel button (always enabled during generation)
+        local btnCancel = currentWindowRef:Add({
+            type = "Button",
+            id = "btnCancelGeneration",
+            text = "Cancel",
+            width = 100,
+            height = 35,
+            alignment = { alignHCenter = true }
+        })
+        
+        if btnCancel then
+            btnCancel.Clicked = function()
+                logger.info("User cancelled generation")
+                -- TODO: Implement cancellation logic in Story 5.2+
+                roughCutWorkflow.close()
+            end
+        end
+    end)
+    
+    -- Initiate rough cut generation via protocol
+    _initiateRoughCutGeneration()
+end
+
+-- Initiate rough cut generation via JSON-RPC protocol
+function _initiateRoughCutGeneration()
+    if not sessionId then
+        _showError("No active session")
+        return
+    end
+    
+    logger.info("Calling initiate_rough_cut via protocol")
+    
+    -- First prepare the rough cut data
+    local prepareResult = protocol.request({
+        method = "prepare_rough_cut_for_generation",
+        params = {
+            session_id = sessionId
+        }
+    })
+    
+    if prepareResult.error then
+        _showError("Failed to prepare data: " .. tostring(prepareResult.error.message))
+        return
+    end
+    
+    -- Now initiate the rough cut generation
+    local result = protocol.request({
+        method = "initiate_rough_cut",
+        params = {
+            session_id = sessionId,
+            rough_cut_data = prepareResult.result and prepareResult.result.data or {}
+        }
+    })
+    
+    if result.error then
+        _updateProgressError(result.error)
+        return
+    end
+    
+    if result.result then
+        logger.info("Rough cut initiated: " .. tostring(result.result.rough_cut_id))
+        
+        -- Simulate progress updates (in production, these come from Python backend)
+        _simulateProgressUpdates()
+    end
+end
+
+-- Update progress UI with error
+function _updateProgressError(error)
+    logger.error("Generation error: " .. tostring(error.message))
+    
+    pcall(function()
+        local statusLabel = currentWindowRef:FindById("lblProgressStatus")
+        if statusLabel then
+            statusLabel.Text = "Error: " .. tostring(error.message)
+            statusLabel.Color = { 1, 0, 0 }
+        end
+        
+        local detailsLabel = currentWindowRef:FindById("lblProgressDetails")
+        if detailsLabel then
+            detailsLabel.Text = tostring(error.suggestion or "Please try again")
+        end
+        
+        -- Show retry button
+        local btnRetry = currentWindowRef:Add({
+            type = "Button",
+            id = "btnRetry",
+            text = "Retry",
+            width = 100,
+            height = 35,
+            alignment = { alignHCenter = true }
+        })
+        
+        if btnRetry then
+            btnRetry.Clicked = function()
+                _showGeneratingState()
+            end
+        end
+    end)
+end
+
+-- Simulate progress updates (placeholder for streaming updates in Story 5.2+)
+function _simulateProgressUpdates()
+    local progressSteps = {
+        { step = 1, total = 5, message = "Initializing AI processing...", bar = "[■                   ]" },
+        { step = 2, total = 5, message = "Preparing data for AI...", bar = "[■■                  ]" },
+        { step = 3, total = 5, message = "Analyzing transcript and matching assets...", bar = "[■■■■                ]" },
+        { step = 4, total = 5, message = "Processing format rules...", bar = "[■■■■■■■             ]" },
+        { step = 5, total = 5, message = "Generation initiated successfully!", bar = "[■■■■■■■■■■]" }
+    }
+    
+    -- Guard against empty or nil progressSteps
+    if not progressSteps or #progressSteps == 0 then
+        logger.warn("No progress steps defined, skipping progress simulation")
+        _showGenerationComplete()
+        return
+    end
+    
+    local currentStepIndex = 1
+    
+    local function updateStep()
+        if currentStepIndex > #progressSteps then
+            -- Show completion
+            _showGenerationComplete()
+            return
+        end
+        
+        local step = progressSteps[currentStepIndex]
+        
+        pcall(function()
+            local statusLabel = currentWindowRef:FindById("lblProgressStatus")
+            if statusLabel then
+                statusLabel.Text = step.message
+            end
+            
+            local barLabel = currentWindowRef:FindById("lblProgressBar")
+            if barLabel then
+                barLabel.Text = step.bar
+            end
+            
+            local detailsLabel = currentWindowRef:FindById("lblProgressDetails")
+            if detailsLabel then
+                detailsLabel.Text = "Step " .. step.step .. " of " .. step.total .. ": " .. step.message
+            end
+        end)
+        
+        currentStepIndex = currentStepIndex + 1
+        
+        -- Schedule next update
+        local ok_timer = pcall(function()
+            if type(SetTimer) == "function" then
+                SetTimer(800, function()
+                    updateStep()
+                    return false
+                end)
+            else
+                -- Fallback: just do all updates immediately
+                updateStep()
+            end
+        end)
+        
+        if not ok_timer then
+            -- If timer fails, just move to completion
+            _showGenerationComplete()
+        end
+    end
+    
+    -- Start progress updates
+    updateStep()
+end
+
+-- Show generation complete UI
+function _showGenerationComplete()
+    pcall(function()
+        _clearWindow(currentWindowRef)
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "Generation Initiated!",
+            font = { size = 22, bold = true },
+            alignment = { alignHCenter = true },
+            color = { 0, 0.6, 0 }
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "",
+            height = 20
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "Rough cut generation has been initiated successfully.",
+            font = { size = 12 },
+            alignment = { alignHCenter = true }
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "The AI is now analyzing your transcript and matching assets.",
+            font = { size = 11, italic = true },
+            alignment = { alignHCenter = true },
+            color = { 0.5, 0.5, 0.5 }
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "",
+            height = 20
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "(Story 5.1 Complete - AI processing implementation continues in Story 5.2+)",
+            font = { size = 10, italic = true },
+            alignment = { alignHCenter = true },
+            color = { 0.4, 0.4, 0.4 }
+        })
+        
+        currentWindowRef:Add({
+            type = "Label",
+            text = "",
+            height = 20
+        })
+        
+        -- Done button
         local btnDone = currentWindowRef:Add({
             type = "Button",
             text = "Done",

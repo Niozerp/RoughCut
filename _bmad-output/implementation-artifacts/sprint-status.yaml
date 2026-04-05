@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: "2026-04-03T21:00:00"
-last_updated: "2026-04-04T23:45:00"
+last_updated: "2026-04-04T01:00:00"
 project: "RoughCut"
 project_key: "NOKEY"
 tracking_system: "file-system"
@@ -82,9 +82,9 @@ development_status:
   4-5-validate-transcribable-media: done
   epic-4-retrospective: done
   
-  # Epic 5: AI-Powered Rough Cut Generation
-  epic-5: backlog
-  5-1-initiate-rough-cut-generation: backlog
+  # Epic 5: AI-Powered Rough Cut Generation - IN PROGRESS
+  epic-5: in-progress
+  5-1-initiate-rough-cut-generation: done
   5-2-send-data-to-ai-service: backlog
   5-3-ai-transcript-cutting: backlog
   5-4-ai-music-matching: backlog
