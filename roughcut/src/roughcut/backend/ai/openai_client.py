@@ -32,33 +32,42 @@ class TagResult:
 
 
 class OpenAIClient:
-    """Wrapper for OpenAI API with error handling and retries.
+    """Wrapper for OpenAI-compatible API with error handling and retries.
+    
+    Supports OpenAI and OpenRouter (and other OpenAI-compatible providers).
     
     Features:
     - 30-second timeout on API calls (per NFR3)
     - Exponential backoff for rate limiting
     - Structured error handling
     - Configurable model selection
+    - Custom base URL support (for OpenRouter, etc.)
     """
     
     DEFAULT_TIMEOUT = 30.0
     DEFAULT_MAX_RETRIES = 3
     DEFAULT_MODEL = "gpt-3.5-turbo"
     
+    # Provider-specific default models
+    OPENROUTER_DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"
+    OPENAI_DEFAULT_MODEL = "gpt-3.5-turbo"
+    
     def __init__(
         self,
         api_key: str,
         timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        model: str = DEFAULT_MODEL
+        model: str = DEFAULT_MODEL,
+        base_url: Optional[str] = None
     ):
-        """Initialize OpenAI client.
+        """Initialize OpenAI-compatible client.
         
         Args:
-            api_key: OpenAI API key
+            api_key: API key (OpenAI or OpenRouter)
             timeout: API call timeout in seconds
             max_retries: Maximum retry attempts for rate limits
-            model: Model to use for tag generation
+            model: Model to use for AI requests
+            base_url: Custom base URL for API (e.g., OpenRouter: https://openrouter.ai/api/v1)
         """
         if not api_key or not api_key.strip():
             raise AIError(
@@ -66,13 +75,19 @@ class OpenAIClient:
                 category="config",
                 message="API key is required",
                 recoverable=True,
-                suggestion="Configure OpenAI API key in settings"
+                suggestion="Configure API key in settings"
             )
         
-        self.client = openai.AsyncOpenAI(api_key=api_key)
+        # Initialize client with optional base_url
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        
+        self.client = openai.AsyncOpenAI(**client_kwargs)
         self.timeout = timeout
         self.max_retries = max_retries
         self.model = model
+        self.base_url = base_url
     
     async def generate_tags(
         self,

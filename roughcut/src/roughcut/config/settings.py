@@ -301,6 +301,8 @@ class ConfigManager:
         self,
         api_key: Optional[str],
         enabled: bool = True,
+        provider: str = "openai",
+        base_url: Optional[str] = None,
         model: str = "gpt-3.5-turbo",
         timeout: float = 30.0,
         max_retries: int = 3,
@@ -309,9 +311,11 @@ class ConfigManager:
         """Save AI configuration.
         
         Args:
-            api_key: OpenAI API key
+            api_key: API key (OpenAI or OpenRouter)
             enabled: Whether AI tagging is enabled
-            model: Model to use for tag generation
+            provider: AI provider - "openai" or "openrouter"
+            base_url: Custom base URL for API (mainly for OpenRouter)
+            model: Model to use for AI requests
             timeout: API timeout in seconds
             max_retries: Max retry attempts
             recovery_mode: Error recovery mode ("automatic" or "manual")
@@ -326,6 +330,8 @@ class ConfigManager:
         # Create config object for validation
         config = AIConfig(
             api_key=api_key.strip() if api_key else None,
+            provider=provider,
+            base_url=base_url,
             model=model,
             enabled=enabled,
             timeout=timeout,
@@ -649,7 +655,10 @@ def get_settings() -> dict:
     # Get AI config
     ai_config = config_manager.get_ai_config()
     if ai_config:
-        settings["openai_api_key"] = ai_config.api_key
+        settings["openai_api_key"] = ai_config.api_key  # Keep for backward compatibility
+        settings["ai_api_key"] = ai_config.api_key
+        settings["ai_provider"] = ai_config.provider
+        settings["ai_base_url"] = ai_config.base_url
         settings["ai_enabled"] = ai_config.enabled
         settings["ai_model"] = ai_config.model
         settings["ai_timeout"] = ai_config.timeout

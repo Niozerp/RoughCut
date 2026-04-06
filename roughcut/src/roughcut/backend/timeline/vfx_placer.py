@@ -1,14 +1,14 @@
-"""SFX placer for placing sound effects on timeline tracks.
+"""VFX placer for placing visual effects templates on timeline tracks.
 
-Handles the placement of AI-suggested SFX clips on the timeline's dedicated
-SFX tracks (Tracks 3-10) with proper timing, fade handles, volume levels,
+Handles the placement of AI-suggested VFX templates on the timeline's dedicated
+VFX tracks (Tracks 11-14) with proper timing, fade transitions, template parameters,
 and track allocation for multiple effects.
 """
 
 import hashlib
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .resolve_api import ResolveApi
@@ -17,40 +17,63 @@ from .cutter import timecode_to_frames, frames_to_timecode
 logger = logging.getLogger(__name__)
 
 
-# Default fade durations in seconds (shorter than music's 2s)
-DEFAULT_SFX_FADE_IN_SECONDS = 1.0
-DEFAULT_SFX_FADE_OUT_SECONDS = 1.0
+# Default fade durations in seconds (shorter than music/SFX)
+DEFAULT_VFX_FADE_IN_SECONDS = 0.5
+DEFAULT_VFX_FADE_OUT_SECONDS = 0.5
 
-# Default volume levels in dB
-DEFAULT_SFX_VOLUME_DB = -12.0
-INTRO_WHOOSH_VOLUME_DB = -10.0
-PIVOT_EMPHASIS_VOLUME_DB = -15.0
-OUTRO_CHIME_VOLUME_DB = -10.0
+# VFX track range (Track 11 to Track 14 = 4 tracks)
+VFX_TRACK_START = 11
+VFX_TRACK_END = 14
+MAX_VFX_TRACKS = 4
 
-# Handle/extension room in seconds (±2 seconds)
-DEFAULT_HANDLE_SECONDS = 2.0
+# Default VFX template parameters by type
+VFX_TEMPLATE_DEFAULTS = {
+    "lower_third": {
+        "speaker_name": "",
+        "title": "",
+        "company": "",
+        "duration_seconds": 5.0,
+        "animation_in": "fade_slide",
+        "animation_out": "fade_out"
+    },
+    "outro_cta": {
+        "cta_text": "Subscribe",
+        "sub_text": "For more content",
+        "duration_seconds": 5.0,
+        "animation_style": "pop_in"
+    },
+    "intro_title": {
+        "title_text": "",
+        "subtitle_text": "",
+        "duration_seconds": 3.0,
+        "animation_style": "reveal"
+    },
+    "transition": {
+        "duration_seconds": 1.0,
+        "animation_style": "wipe"
+    },
+    "generic": {
+        "duration_seconds": 3.0,
+        "animation_style": "fade"
+    }
+}
 
-# SFX track range (Track 3 to Track 10 = 8 tracks)
-SFX_TRACK_START = 3
-SFX_TRACK_END = 10
-MAX_SFX_TRACKS = 8
 
-
-def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optional[Dict[str, Any]]]:
-    """Validate a list of SFX segments for placement.
+def validate_vfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """Validate a list of VFX segments for placement.
     
     Checks:
     - Segments list is not empty
-    - Each segment has required fields (segment_index, sfx_file_path, start_frames, end_frames)
-    - SFX file paths are valid absolute paths
+    - Each segment has required fields (segment_index, vfx_file_path, start_frames, end_frames)
+    - VFX file paths are valid absolute paths
     - Start frame < end frame for each segment
     - No negative frame values
-    - Track numbers are valid (3-10)
-    - Volume levels are valid (if provided)
+    - Track numbers are valid (11-14)
+    - Template type is valid (if provided)
     - Fade durations are valid (if provided)
     
     Args:
-        segments: List of SFX segment dictionaries
+        segments: List of VFX segment dictionaries
         
     Returns:
         Tuple of (is_valid, error_dict)
@@ -59,11 +82,11 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
     """
     if not segments:
         return False, {
-            "code": "NO_SFX_SEGMENTS",
+            "code": "NO_VFX_SEGMENTS",
             "category": "validation",
-            "message": "No SFX segments provided for placement",
+            "message": "No VFX segments provided for placement",
             "recoverable": True,
-            "suggestion": "Ensure AI rough cut generation produced SFX suggestions"
+            "suggestion": "Ensure AI rough cut generation produced VFX suggestions"
         }
     
     seen_indexes = set()
@@ -74,19 +97,19 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "INVALID_SEGMENT_TYPE",
                 "category": "validation",
-                "message": f"SFX segment {i} is not a dictionary",
+                "message": f"VFX segment {i} is not a dictionary",
                 "recoverable": True,
-                "suggestion": "Each SFX segment must be a dictionary with file path and timing data"
+                "suggestion": "Each VFX segment must be a dictionary with file path and timing data"
             }
         
         # Check required fields
-        required_fields = ["segment_index", "sfx_file_path", "start_frames", "end_frames"]
+        required_fields = ["segment_index", "vfx_file_path", "start_frames", "end_frames"]
         for field_name in required_fields:
             if field_name not in segment:
                 return False, {
                     "code": f"MISSING_{field_name.upper()}",
                     "category": "validation",
-                    "message": f"SFX segment {i} missing {field_name} field",
+                    "message": f"VFX segment {i} missing {field_name} field",
                     "recoverable": True,
                     "suggestion": f"Verify segment data includes {field_name} field"
                 }
@@ -98,7 +121,7 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "INVALID_INDEX_TYPE",
                 "category": "validation",
-                "message": f"SFX segment {i}: segment_index must be an integer, got {type(segment_index).__name__}",
+                "message": f"VFX segment {i}: segment_index must be an integer, got {type(segment_index).__name__}",
                 "recoverable": True,
                 "suggestion": "segment_index must be a positive integer"
             }
@@ -107,7 +130,7 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "INVALID_INDEX_VALUE",
                 "category": "validation",
-                "message": f"SFX segment {i}: segment_index must be >= 1, got {segment_index}",
+                "message": f"VFX segment {i}: segment_index must be >= 1, got {segment_index}",
                 "recoverable": True,
                 "suggestion": "segment_index must be a positive integer starting from 1"
             }
@@ -117,19 +140,19 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "DUPLICATE_INDEX",
                 "category": "validation",
-                "message": f"Duplicate SFX segment_index: {segment_index}",
+                "message": f"Duplicate VFX segment_index: {segment_index}",
                 "recoverable": True,
-                "suggestion": "Each SFX segment must have a unique segment_index"
+                "suggestion": "Each VFX segment must have a unique segment_index"
             }
         seen_indexes.add(segment_index)
         
-        # Validate SFX file path
-        file_path = segment["sfx_file_path"]
+        # Validate VFX file path
+        file_path = segment["vfx_file_path"]
         if not isinstance(file_path, str):
             return False, {
                 "code": "INVALID_FILE_PATH_TYPE",
                 "category": "validation",
-                "message": f"SFX segment {i}: sfx_file_path must be a string",
+                "message": f"VFX segment {i}: vfx_file_path must be a string",
                 "recoverable": True,
                 "suggestion": "File path must be a string"
             }
@@ -138,9 +161,9 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "EMPTY_FILE_PATH",
                 "category": "validation",
-                "message": f"SFX segment {i}: sfx_file_path is empty",
+                "message": f"VFX segment {i}: vfx_file_path is empty",
                 "recoverable": True,
-                "suggestion": "Provide a valid SFX file path"
+                "suggestion": "Provide a valid VFX file path"
             }
         
         # Check if absolute path
@@ -148,32 +171,35 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "RELATIVE_FILE_PATH",
                 "category": "validation",
-                "message": f"SFX segment {i}: sfx_file_path must be absolute, got: {file_path}",
+                "message": f"VFX segment {i}: vfx_file_path must be absolute, got: {file_path}",
                 "recoverable": True,
-                "suggestion": "Use absolute file paths for SFX files"
+                "suggestion": "Use absolute file paths for VFX files"
             }
         
-        # Normalize path and check for path traversal attempts
-        normalized_path = os.path.normpath(file_path)
-        if '..' in normalized_path.split(os.sep):
+        # Check for path traversal attempts before normalization
+        # Check for '..' in both forward slash and backslash paths (cross-platform)
+        if '..' in file_path.replace('\\', '/').split('/'):
             return False, {
                 "code": "PATH_TRAVERSAL_DETECTED",
                 "category": "validation",
-                "message": f"SFX segment {i}: path contains parent directory references",
+                "message": f"VFX segment {i}: path contains parent directory references",
                 "recoverable": True,
                 "suggestion": "Provide a clean absolute path without '..' components"
             }
+        
+        # Normalize path for further validation
+        normalized_path = os.path.normpath(file_path)
         
         # Check if file exists and is readable (TOCTOU-safe)
         # Use try/except to avoid race condition between exists() and access()
         try:
             if not os.path.exists(file_path):
                 return False, {
-                    "code": "SFX_FILE_NOT_FOUND",
+                    "code": "VFX_FILE_NOT_FOUND",
                     "category": "file_system",
-                    "message": f"SFX segment {i}: file not found at path: {file_path}",
+                    "message": f"VFX segment {i}: file not found at path: {file_path}",
                     "recoverable": True,
-                    "suggestion": "Verify the SFX file exists and the path is correct"
+                    "suggestion": "Verify the VFX file exists and the path is correct"
                 }
             
             # Check readability by attempting to open the file
@@ -181,25 +207,25 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
                 f.read(1)  # Read one byte to verify access
         except FileNotFoundError:
             return False, {
-                "code": "SFX_FILE_NOT_FOUND",
+                "code": "VFX_FILE_NOT_FOUND",
                 "category": "file_system",
-                "message": f"SFX segment {i}: file not found at path: {file_path}",
+                "message": f"VFX segment {i}: file not found at path: {file_path}",
                 "recoverable": True,
-                "suggestion": "Verify the SFX file exists and the path is correct"
+                "suggestion": "Verify the VFX file exists and the path is correct"
             }
         except PermissionError:
             return False, {
-                "code": "SFX_FILE_NOT_READABLE",
+                "code": "VFX_FILE_NOT_READABLE",
                 "category": "file_system",
-                "message": f"SFX segment {i}: file not readable: {file_path}",
+                "message": f"VFX segment {i}: file not readable: {file_path}",
                 "recoverable": True,
                 "suggestion": "Check file permissions and ensure the file is accessible"
             }
         except OSError as e:
             return False, {
-                "code": "SFX_FILE_ACCESS_ERROR",
+                "code": "VFX_FILE_ACCESS_ERROR",
                 "category": "file_system",
-                "message": f"SFX segment {i}: cannot access file: {file_path} - {str(e)}",
+                "message": f"VFX segment {i}: cannot access file: {file_path} - {str(e)}",
                 "recoverable": True,
                 "suggestion": "Check file permissions and ensure the file is accessible"
             }
@@ -212,7 +238,7 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "NON_INTEGER_FRAMES",
                 "category": "validation",
-                "message": f"SFX segment {i}: start_frames and end_frames must be integers",
+                "message": f"VFX segment {i}: start_frames and end_frames must be integers",
                 "recoverable": True,
                 "suggestion": "Frame values must be integer frame counts"
             }
@@ -222,7 +248,7 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "NEGATIVE_START_FRAME",
                 "category": "validation",
-                "message": f"SFX segment {i} has negative start frame: {start_frames}",
+                "message": f"VFX segment {i} has negative start frame: {start_frames}",
                 "recoverable": True,
                 "suggestion": "Start frame must be non-negative"
             }
@@ -231,7 +257,7 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "NEGATIVE_END_FRAME",
                 "category": "validation",
-                "message": f"SFX segment {i} has negative end frame: {end_frames}",
+                "message": f"VFX segment {i} has negative end frame: {end_frames}",
                 "recoverable": True,
                 "suggestion": "End frame must be non-negative"
             }
@@ -241,7 +267,7 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "INVALID_SEGMENT_RANGE",
                 "category": "validation",
-                "message": f"SFX segment {i}: start frame ({start_frames}) >= end frame ({end_frames})",
+                "message": f"VFX segment {i}: start frame ({start_frames}) >= end frame ({end_frames})",
                 "recoverable": True,
                 "suggestion": "Segment start must be less than segment end"
             }
@@ -253,97 +279,166 @@ def validate_sfx_segments(segments: List[Dict[str, Any]]) -> Tuple[bool, Optiona
             return False, {
                 "code": "FRAME_COUNT_TOO_LARGE",
                 "category": "validation",
-                "message": f"SFX segment {i}: frame count exceeds maximum reasonable value ({MAX_REASONABLE_FRAMES})",
+                "message": f"VFX segment {i}: frame count exceeds maximum reasonable value ({MAX_REASONABLE_FRAMES})",
                 "recoverable": True,
                 "suggestion": "Check timeline duration - maximum supported is approximately 92 hours at 30fps"
             }
         
-        # Validate track number if provided (must be 3-10 for SFX)
-        track_number = segment.get("track_number", SFX_TRACK_START)
-        if not isinstance(track_number, int) or track_number < SFX_TRACK_START or track_number > SFX_TRACK_END:
+        # Validate track number if provided (must be 11-14 for VFX)
+        track_number = segment.get("track_number", VFX_TRACK_START)
+        if not isinstance(track_number, int) or track_number < VFX_TRACK_START or track_number > VFX_TRACK_END:
             return False, {
                 "code": "INVALID_TRACK_NUMBER",
                 "category": "validation",
-                "message": f"SFX segment {i}: track_number must be an integer between {SFX_TRACK_START} and {SFX_TRACK_END}, got {track_number}",
+                "message": f"VFX segment {i}: track_number must be an integer between {VFX_TRACK_START} and {VFX_TRACK_END}, got {track_number}",
                 "recoverable": True,
-                "suggestion": f"SFX tracks must be in range {SFX_TRACK_START}-{SFX_TRACK_END}"
+                "suggestion": f"VFX tracks must be in range {VFX_TRACK_START}-{VFX_TRACK_END}"
             }
         
-        # Validate volume_db if provided
-        volume_db = segment.get("volume_db", DEFAULT_SFX_VOLUME_DB)
-        if not isinstance(volume_db, (int, float)):
+        # Validate template type if provided
+        template_type = segment.get("template_type", "generic")
+        if template_type not in VFX_TEMPLATE_DEFAULTS:
             return False, {
-                "code": "INVALID_VOLUME_TYPE",
+                "code": "INVALID_TEMPLATE_TYPE",
                 "category": "validation",
-                "message": f"SFX segment {i}: volume_db must be a number",
+                "message": f"VFX segment {i}: unknown template_type '{template_type}'",
                 "recoverable": True,
-                "suggestion": "Volume must be a numeric value in dB"
+                "suggestion": f"Valid template types: {', '.join(VFX_TEMPLATE_DEFAULTS.keys())}"
             }
         
         # Validate fade durations if provided
-        fade_in = segment.get("fade_in_seconds", DEFAULT_SFX_FADE_IN_SECONDS)
-        fade_out = segment.get("fade_out_seconds", DEFAULT_SFX_FADE_OUT_SECONDS)
+        fade_in = segment.get("fade_in_seconds", DEFAULT_VFX_FADE_IN_SECONDS)
+        fade_out = segment.get("fade_out_seconds", DEFAULT_VFX_FADE_OUT_SECONDS)
         
-        if not isinstance(fade_in, (int, float)) or fade_in < 0:
+        # Check type is numeric but NOT boolean (bool is subclass of int in Python)
+        if not isinstance(fade_in, (int, float)) or isinstance(fade_in, bool) or fade_in < 0:
             return False, {
                 "code": "INVALID_FADE_IN",
                 "category": "validation",
-                "message": f"SFX segment {i}: fade_in_seconds must be a non-negative number",
+                "message": f"VFX segment {i}: fade_in_seconds must be a non-negative number (not boolean)",
                 "recoverable": True,
-                "suggestion": "Fade duration must be >= 0 seconds"
+                "suggestion": "Fade duration must be a numeric value >= 0 seconds"
             }
         
-        if not isinstance(fade_out, (int, float)) or fade_out < 0:
+        if not isinstance(fade_out, (int, float)) or isinstance(fade_out, bool) or fade_out < 0:
             return False, {
                 "code": "INVALID_FADE_OUT",
                 "category": "validation",
-                "message": f"SFX segment {i}: fade_out_seconds must be a non-negative number",
+                "message": f"VFX segment {i}: fade_out_seconds must be a non-negative number (not boolean)",
                 "recoverable": True,
-                "suggestion": "Fade duration must be >= 0 seconds"
+                "suggestion": "Fade duration must be a numeric value >= 0 seconds"
             }
+        
+        # Validate template_params is a dict if provided
+        template_params = segment.get("template_params")
+        if template_params is not None:
+            if not isinstance(template_params, dict):
+                return False, {
+                    "code": "INVALID_TEMPLATE_PARAMS",
+                    "category": "validation",
+                    "message": f"VFX segment {i}: template_params must be a dictionary",
+                    "recoverable": True,
+                    "suggestion": "template_params should be a dictionary of parameter names and values"
+                }
+            
+            # Validate template_params keys are strings and values are simple types
+            for key, value in template_params.items():
+                if not isinstance(key, str):
+                    return False, {
+                        "code": "INVALID_TEMPLATE_PARAMS_KEY",
+                        "category": "validation",
+                        "message": f"VFX segment {i}: template_params keys must be strings, got {type(key).__name__}",
+                        "recoverable": True,
+                        "suggestion": "All template parameter names should be strings"
+                    }
+                # Values should be simple JSON-serializable types
+                if not isinstance(value, (str, int, float, bool, type(None))):
+                    return False, {
+                        "code": "INVALID_TEMPLATE_PARAMS_VALUE",
+                        "category": "validation",
+                        "message": f"VFX segment {i}: template_params['{key}'] has invalid type {type(value).__name__}",
+                        "recoverable": True,
+                        "suggestion": "Template parameter values should be strings, numbers, booleans, or null"
+                    }
     
     return True, None
 
 
+def detect_vfx_type(file_path: str) -> str:
+    """Detect if VFX is Fusion composition or generator effect.
+    
+    Args:
+        file_path: Path to the VFX file
+        
+    Returns:
+        String indicating VFX type: "fusion_composition", "generator_effect", or "unknown"
+    """
+    file_path_lower = file_path.lower()
+    if file_path_lower.endswith('.comp'):
+        return "fusion_composition"
+    elif file_path_lower.endswith('.setting'):
+        return "generator_effect"
+    else:
+        # Default to generator for unknown types
+        return "generator_effect"
+
+
+def apply_template_params(template_type: str, ai_params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Apply default template parameters and override with AI-provided values.
+    
+    Args:
+        template_type: Type of VFX template (lower_third, outro_cta, etc.)
+        ai_params: Parameters provided by AI (may be None)
+        
+    Returns:
+        Dictionary with merged default and AI parameters
+    """
+    defaults = VFX_TEMPLATE_DEFAULTS.get(template_type, VFX_TEMPLATE_DEFAULTS["generic"])
+    if ai_params:
+        return {**defaults, **ai_params}
+    return defaults.copy()
+
+
 @dataclass
-class SfxPlacement:
-    """Placement of an SFX clip on the timeline.
+class VfxPlacement:
+    """Placement of a VFX template on the timeline.
     
     Attributes:
         segment_index: 1-based segment number from AI
-        track_number: Track number (3-10 for SFX tracks)
+        track_number: Track number (11-14 for VFX tracks)
         timeline_start_frame: Start position on timeline
         timeline_end_frame: End position on timeline
-        sfx_file_path: Absolute path to the SFX file
+        vfx_file_path: Absolute path to the VFX file
         clip_id: Resolve's clip reference (set after creation)
         fade_in_frames: Fade in duration in frames
         fade_out_frames: Fade out duration in frames
-        volume_db: Volume level in dB
-        moment_type: Type of moment (intro_whoosh, pivot_emphasis, outro_chime, etc.)
-        handle_frames: Adjustment handle room on each side in frames (±2 seconds)
+        template_type: Type of VFX template (lower_third, outro_cta, etc.)
+        template_params: Applied template parameters
+        vfx_type: Detected VFX type (fusion_composition or generator_effect)
     """
     segment_index: int
     track_number: int
     timeline_start_frame: int
     timeline_end_frame: int
-    sfx_file_path: str
+    vfx_file_path: str
     clip_id: Optional[str] = None
     fade_in_frames: int = 0
     fade_out_frames: int = 0
-    volume_db: float = DEFAULT_SFX_VOLUME_DB
-    moment_type: str = "generic"
-    handle_frames: int = 0
+    template_type: str = "generic"
+    template_params: Dict[str, Any] = field(default_factory=dict)
+    vfx_type: str = "generator_effect"
 
 
 @dataclass
-class SfxPlacerResult:
-    """Result of an SFX placement operation.
+class VfxPlacerResult:
+    """Result of a VFX placement operation.
     
     Attributes:
-        clips_placed: Number of successfully placed SFX clips
+        clips_placed: Number of successfully placed VFX clips
         tracks_used: List of track numbers that were used
-        total_duration_frames: Total duration of all SFX clips on timeline
-        timeline_positions: List of SFX placements with timeline positions
+        total_duration_frames: Total duration of all VFX clips on timeline
+        timeline_positions: List of VFX placements with timeline positions
+        failed_segments: List of segment indices that failed to place (if any)
         success: Whether the operation succeeded
         error: Error details if operation failed
         fps: Frames per second for timecode conversion
@@ -351,7 +446,8 @@ class SfxPlacerResult:
     clips_placed: int
     tracks_used: List[int]
     total_duration_frames: int
-    timeline_positions: List[SfxPlacement]
+    timeline_positions: List[VfxPlacement]
+    failed_segments: List[int] = field(default_factory=list)
     success: bool = True
     error: Optional[Dict[str, Any]] = None
     fps: int = 30  # Frames per second for timecode conversion
@@ -364,9 +460,17 @@ class SfxPlacerResult:
             
         Returns:
             Timecode string in format "H:MM:SS"
+            
+        Raises:
+            ValueError: If fps is not a positive integer within reasonable bounds
         """
         use_fps = fps or self.fps or 30
-        return frames_to_timecode(self.total_duration_frames, fps=use_fps)
+        
+        # Validate fps is within reasonable bounds (1-1000)
+        if not isinstance(use_fps, (int, float)) or use_fps <= 0 or use_fps > 1000:
+            raise ValueError(f"FPS must be a positive number between 1 and 1000, got {use_fps}")
+        
+        return frames_to_timecode(self.total_duration_frames, fps=int(use_fps))
     
     @property
     def total_duration_timecode(self) -> str:
@@ -374,46 +478,46 @@ class SfxPlacerResult:
         return self.get_total_duration_timecode()
 
 
-class SfxPlacer:
-    """Places AI-suggested SFX clips on the timeline.
+class VfxPlacer:
+    """Places AI-suggested VFX templates on the timeline.
     
     This class handles:
-    - SFX clip placement on dedicated SFX tracks (Tracks 3-10)
-    - Track allocation for multiple SFX (conflict detection)
-    - Fade in/out handles for audio transitions (1-second default)
-    - Volume level management (default -12 dB, configurable per SFX)
-    - Adjustment handles (±2 seconds) for easy editor adjustment
+    - VFX template placement on dedicated VFX tracks (Tracks 11-14)
+    - Track allocation for multiple VFX (conflict detection)
+    - Fade in/out transitions (0.5-second default)
+    - Template parameter management (defaults + AI overrides)
+    - Fusion composition vs generator effect detection
     - Progress reporting during placement operations
     - Integration with Resolve's timeline API
     
     Usage:
-        placer = SfxPlacer()
-        result = placer.place_sfx_clips(
+        placer = VfxPlacer()
+        result = placer.place_vfx_templates(
             timeline_id="RoughCut_interview_001_youtube_2026-04-04",
-            sfx_segments=[
+            vfx_segments=[
                 {
                     "segment_index": 1,
-                    "sfx_file_path": "/path/to/whoosh.wav",
-                    "start_frames": 0,
-                    "end_frames": 90,
+                    "vfx_file_path": "/path/to/lower_third.comp",
+                    "start_frames": 450,
+                    "end_frames": 600,
                     "fade_in_seconds": 0.5,
                     "fade_out_seconds": 0.5,
-                    "volume_db": -10.0,
-                    "moment_type": "intro_whoosh"
+                    "template_type": "lower_third",
+                    "template_params": {"speaker_name": "John Doe", "title": "CEO"}
                 }
             ]
         )
     """
     
     def __init__(self, resolve_api: Optional[ResolveApi] = None):
-        """Initialize the SFX placer.
+        """Initialize the VFX placer.
         
         Args:
             resolve_api: Optional ResolveApi instance for testing/mocking.
                         If not provided, a new instance will be created.
         """
         self.resolve_api = resolve_api or ResolveApi()
-        logger.info("SfxPlacer initialized")
+        logger.info("VfxPlacer initialized")
     
     def _seconds_to_frames(self, seconds: float, fps: int = 30) -> int:
         """Convert seconds to frame count.
@@ -430,42 +534,23 @@ class SfxPlacer:
         """
         if fps <= 0:
             raise ValueError(f"FPS must be a positive number, got {fps}")
-        return int(seconds * fps)
-    
-    def _get_default_volume_for_moment_type(self, moment_type: str) -> float:
-        """Get default volume level based on moment type.
-        
-        Args:
-            moment_type: Type of SFX moment (intro_whoosh, pivot_emphasis, etc.)
-            
-        Returns:
-            Volume level in dB
-        """
-        volume_map = {
-            "intro_whoosh": INTRO_WHOOSH_VOLUME_DB,
-            "pivot_emphasis": PIVOT_EMPHASIS_VOLUME_DB,
-            "outro_chime": OUTRO_CHIME_VOLUME_DB,
-            "transition": -12.0,
-            "accent": -10.0,
-            "underscore": -18.0,
-            "generic": DEFAULT_SFX_VOLUME_DB
-        }
-        return volume_map.get(moment_type, DEFAULT_SFX_VOLUME_DB)
+        # Use round() instead of int() to avoid truncation errors with floating point
+        return round(seconds * fps)
     
     def _check_track_conflict(
         self,
         track_number: int,
         start_frame: int,
         end_frame: int,
-        existing_placements: List[SfxPlacement]
+        existing_placements: List[VfxPlacement]
     ) -> bool:
-        """Check if an SFX segment conflicts with existing placements on a track.
+        """Check if a VFX segment conflicts with existing placements on a track.
         
         Args:
             track_number: Track to check
             start_frame: Proposed start frame
             end_frame: Proposed end frame
-            existing_placements: List of already placed SFX segments
+            existing_placements: List of already placed VFX segments
             
         Returns:
             True if there's a conflict (overlap), False if the track is clear
@@ -487,86 +572,65 @@ class SfxPlacer:
         
         return False
     
-    def _allocate_sfx_track(
+    def _allocate_vfx_track(
         self,
         preferred_track: int,
         start_frame: int,
         end_frame: int,
-        existing_placements: List[SfxPlacement]
+        existing_placements: List[VfxPlacement]
     ) -> int:
-        """Allocate the best available track for an SFX segment.
+        """Allocate the best available track for a VFX segment.
         
         First tries the preferred track, then searches for available tracks
-        in the SFX track range (3-10). If the preferred track has a time 
-        conflict (overlap), searches upward from preferred+1 to SFX_TRACK_END,
-        then downward from SFX_TRACK_START to preferred-1.
+        in the VFX track range (11-14). If the preferred track has a time 
+        conflict (overlap), searches upward from preferred+1 to VFX_TRACK_END,
+        then downward from VFX_TRACK_START to preferred-1.
         
         Args:
-            preferred_track: Preferred track number (usually 3 for first SFX)
-            start_frame: Start frame of the SFX segment on timeline
-            end_frame: End frame of the SFX segment on timeline
-            existing_placements: Already placed SFX segments to check for conflicts
+            preferred_track: Preferred track number (usually 11 for first VFX)
+            start_frame: Start frame of the VFX segment on timeline
+            end_frame: End frame of the VFX segment on timeline
+            existing_placements: Already placed VFX segments to check for conflicts
             
         Returns:
-            Track number to use for this segment (3-10)
+            Track number to use for this segment (11-14)
             
         Raises:
-            TrackAllocationError: If all SFX tracks (3-10) have time conflicts
-            
-        Examples:
-            # No conflicts - returns preferred track
-            >>> allocate_sfx_track(3, 0, 90, [])
-            3
-            
-            # Track 3 occupied at 0-90, no conflict at 100-190
-            >>> existing = [SfxPlacement(1, 3, 0, 90, "/path.wav")]
-            >>> allocate_sfx_track(3, 100, 190, existing)
-            3  # Same track, different time - no conflict
-            
-            # Track 3 occupied at same time, allocates track 4
-            >>> existing = [SfxPlacement(1, 3, 0, 90, "/path.wav")]
-            >>> allocate_sfx_track(3, 0, 90, existing)
-            4  # Conflict on 3, allocated 4
-            
-            # All tracks full - raises exception
-            >>> existing = [SfxPlacement(i, track, 0, 90, f"/{i}.wav") 
-            ...             for i, track in enumerate(range(3, 11), 1)]
-            >>> allocate_sfx_track(3, 0, 90, existing)
-            TrackAllocationError: All SFX tracks (3-10) are full
+            TrackAllocationError: If all VFX tracks (11-14) have time conflicts
         """
         # Ensure preferred track is in valid range
-        if preferred_track < SFX_TRACK_START:
-            preferred_track = SFX_TRACK_START
-        if preferred_track > SFX_TRACK_END:
-            preferred_track = SFX_TRACK_END
+        if preferred_track < VFX_TRACK_START:
+            preferred_track = VFX_TRACK_START
+        if preferred_track > VFX_TRACK_END:
+            preferred_track = VFX_TRACK_END
         
         # Check preferred track first
         if not self._check_track_conflict(preferred_track, start_frame, end_frame, existing_placements):
             return preferred_track
         
-        # Try additional tracks in range (4, 5, 6, etc.)
-        for track in range(preferred_track + 1, SFX_TRACK_END + 1):
+        # Try additional tracks in range (12, 13, 14)
+        for track in range(preferred_track + 1, VFX_TRACK_END + 1):
             if not self._check_track_conflict(track, start_frame, end_frame, existing_placements):
-                logger.debug(f"Allocated track {track} for SFX segment (track {preferred_track} occupied)")
+                logger.debug(f"Allocated track {track} for VFX segment (track {preferred_track} occupied)")
                 return track
         
-        # Try tracks before preferred (in case preferred was > 3)
-        for track in range(SFX_TRACK_START, preferred_track):
+        # Try tracks before preferred (in case preferred was > 11)
+        for track in range(VFX_TRACK_START, preferred_track):
             if not self._check_track_conflict(track, start_frame, end_frame, existing_placements):
-                logger.debug(f"Allocated track {track} for SFX segment (lower track available)")
+                logger.debug(f"Allocated track {track} for VFX segment (lower track available)")
                 return track
         
-        # All SFX tracks full - raise error
+        # All VFX tracks full - raise error
         raise TrackAllocationError(
-            f"All SFX tracks ({SFX_TRACK_START}-{SFX_TRACK_END}) are full. "
-            f"Cannot place SFX at frames {start_frame}-{end_frame}."
+            f"All VFX tracks ({VFX_TRACK_START}-{VFX_TRACK_END}) are full. "
+            f"Cannot place VFX at frames {start_frame}-{end_frame}."
         )
     
-    def _find_sfx_in_media_pool(self, file_path: str) -> Optional[Any]:
-        """Find an SFX file in Resolve's Media Pool.
+    def _find_vfx_in_media_pool(self, file_path: str) -> Optional[Any]:
+        """Find a VFX file in Resolve's Media Pool.
         
         Args:
-            file_path: Absolute path to the SFX file
+            file_path: Absolute path to the VFX file
             
         Returns:
             Media Pool clip object if found, None otherwise
@@ -596,41 +660,41 @@ class SfxPlacer:
                     if clip_props:
                         clip_path = clip_props.get("File Path") or clip_props.get("FilePath")
                         if clip_path and os.path.normpath(clip_path) == os.path.normpath(file_path):
-                            logger.debug(f"Found SFX in media pool: {file_path}")
+                            logger.debug(f"Found VFX in media pool: {file_path}")
                             return clip
                 except Exception as e:
                     logger.debug(f"Error checking clip properties: {e}")
                     continue
             
-            logger.debug(f"SFX not found in media pool: {file_path}")
+            logger.debug(f"VFX not found in media pool: {file_path}")
             return None
             
         except Exception as e:
-            logger.error(f"Error searching media pool for SFX: {e}")
+            logger.error(f"Error searching media pool for VFX: {e}")
             return None
     
-    def _import_sfx_to_pool(self, file_path: str) -> Optional[Any]:
-        """Import an SFX file into Resolve's Media Pool.
+    def _import_vfx_to_pool(self, file_path: str) -> Optional[Any]:
+        """Import a VFX file into Resolve's Media Pool.
         
         Args:
-            file_path: Absolute path to the SFX file
+            file_path: Absolute path to the VFX file
             
         Returns:
             Media Pool clip object if successful, None otherwise
         """
         media_pool = self.resolve_api.get_media_pool()
         if not media_pool:
-            logger.error("Cannot import SFX - Media Pool not available")
+            logger.error("Cannot import VFX - Media Pool not available")
             return None
         
         try:
             # Check if already in pool
-            existing = self._find_sfx_in_media_pool(file_path)
+            existing = self._find_vfx_in_media_pool(file_path)
             if existing:
-                logger.info(f"SFX already in pool, using existing: {file_path}")
+                logger.info(f"VFX already in pool, using existing: {file_path}")
                 return existing
             
-            # Import the SFX file
+            # Import the VFX file
             root_folder = media_pool.GetRootFolder()
             if not root_folder:
                 logger.error("Could not get media pool root folder for import")
@@ -639,34 +703,36 @@ class SfxPlacer:
             imported_items = media_pool.ImportMedia([file_path])
             
             if imported_items and len(imported_items) > 0:
-                logger.info(f"Successfully imported SFX: {file_path}")
+                logger.info(f"Successfully imported VFX: {file_path}")
                 return imported_items[0]
             else:
                 logger.warning(f"ImportMedia returned empty result for: {file_path}")
                 return None
                 
         except Exception as e:
-            logger.exception(f"Error importing SFX to pool: {file_path}")
+            logger.exception(f"Error importing VFX to pool: {file_path}")
             return None
     
-    def _create_timeline_sfx_clip(
+    def _create_timeline_vfx_clip(
         self,
         timeline: Any,
-        sfx_clip: Any,
+        vfx_clip: Any,
         track_index: int,
         timeline_position: int,
         source_in: int,
-        source_out: int
+        source_out: int,
+        vfx_type: str
     ) -> Optional[str]:
-        """Create a timeline clip for SFX with specified in/out points.
+        """Create a timeline clip for VFX with specified in/out points.
         
         Args:
             timeline: Resolve timeline object
-            sfx_clip: Media Pool SFX clip object
-            track_index: Target track number (3+ for SFX)
+            vfx_clip: Media Pool VFX clip object
+            track_index: Target track number (11+ for VFX)
             timeline_position: Frame position on timeline
-            source_in: In point frame on source SFX clip
-            source_out: Out point frame on source SFX clip
+            source_in: In point frame on source VFX clip
+            source_out: Out point frame on source VFX clip
+            vfx_type: Type of VFX (fusion_composition or generator_effect)
             
         Returns:
             Clip ID if successful, None otherwise
@@ -674,9 +740,9 @@ class SfxPlacer:
         try:
             # Check source clip duration if possible
             source_duration = None
-            if hasattr(sfx_clip, 'GetDuration'):
+            if hasattr(vfx_clip, 'GetDuration'):
                 try:
-                    source_duration = sfx_clip.GetDuration()
+                    source_duration = vfx_clip.GetDuration()
                 except Exception:
                     pass
             
@@ -685,15 +751,15 @@ class SfxPlacer:
             # Warn if source is shorter than requested duration
             if source_duration is not None and requested_duration > source_duration:
                 logger.warning(
-                    f"Requested SFX duration ({requested_duration} frames) exceeds "
+                    f"Requested VFX duration ({requested_duration} frames) exceeds "
                     f"source clip duration ({source_duration} frames). "
-                    f"Resolve may extend with silence or loop."
+                    f"Resolve may extend with blank frames or loop."
                 )
             
-            # Use AddClip on timeline for SFX placement
+            # Use AddClip on timeline for VFX placement
             if hasattr(timeline, 'AddClip'):
                 result = timeline.AddClip(
-                    sfx_clip,
+                    vfx_clip,
                     track_index,
                     timeline_position,
                     requested_duration
@@ -706,25 +772,26 @@ class SfxPlacer:
                             clip_id = result.GetName()
                         else:
                             clip_id = self._generate_stable_clip_id(
-                                sfx_clip, timeline_position, source_in, source_out
+                                vfx_clip, timeline_position, source_in, source_out
                             )
                         
                         logger.debug(
-                            f"Created SFX clip: {clip_id} at track {track_index}, "
-                            f"position {timeline_position}, duration {requested_duration}"
+                            f"Created VFX clip: {clip_id} at track {track_index}, "
+                            f"position {timeline_position}, duration {requested_duration}, "
+                            f"type {vfx_type}"
                         )
                         return clip_id
                     except Exception as e:
                         logger.debug(f"Could not get clip ID from result: {e}")
                         return self._generate_stable_clip_id(
-                            sfx_clip, timeline_position, source_in, source_out
+                            vfx_clip, timeline_position, source_in, source_out
                         )
             
-            logger.error("No suitable API method available for creating SFX clip")
+            logger.error("No suitable API method available for creating VFX clip")
             return None
             
         except Exception as e:
-            logger.exception(f"Error creating SFX timeline clip: {e}")
+            logger.exception(f"Error creating VFX timeline clip: {e}")
             return None
     
     def _generate_stable_clip_id(
@@ -754,186 +821,75 @@ class SfxPlacer:
         
         # Create deterministic string and hash it
         # Use UTF-8 encoding with replacement to handle non-ASCII filenames
-        id_string = f"sfx_{source_name}_{timeline_position}_{source_in}_{source_out}"
+        id_string = f"vfx_{source_name}_{timeline_position}_{source_in}_{source_out}"
         return hashlib.md5(id_string.encode('utf-8', errors='replace')).hexdigest()[:16]
     
-    def _apply_fade_and_volume(
+    def _apply_fade_transitions(
         self,
         timeline: Any,
         clip_id: str,
         fade_in_frames: int,
-        fade_out_frames: int,
-        volume_db: float,
-        track_index: int
-    ) -> Dict[str, bool]:
-        """Apply fade in/out handles and volume to an SFX clip.
+        fade_out_frames: int
+    ) -> bool:
+        """Apply fade in/out transitions to a VFX clip.
         
-        Attempts to apply fades and volume to the Resolve timeline clip.
-        Resolve API support varies by version, so this tries multiple methods
-        and reports which operations succeeded.
+        Note: This is a placeholder implementation. The actual Resolve API
+        for setting fade transitions varies by version and may require different
+        approaches (Fusion composition parameters, keyframes, or clip properties).
         
         Args:
             timeline: Resolve timeline object
-            clip_id: ID of the clip to apply settings to
+            clip_id: ID of the clip to apply fades to
             fade_in_frames: Fade in duration in frames
             fade_out_frames: Fade out duration in frames
-            volume_db: Volume level in dB (negative values for attenuation)
-            track_index: Track number where clip is located
             
         Returns:
-            Dictionary indicating which operations succeeded:
-            {
-                "fade_in_applied": bool,
-                "fade_out_applied": bool,
-                "volume_applied": bool
-            }
+            False - fades are not actually applied via API (documented only)
         """
-        results = {
-            "fade_in_applied": False,
-            "fade_out_applied": False,
-            "volume_applied": False
-        }
+        # Currently, Resolve's API for setting fade transitions on VFX is limited.
+        # This is documented for future implementation when API support improves.
+        # For now, fades are documented in the placement result for manual adjustment.
+        # Returns False to indicate fades were not actually applied via API.
         
-        try:
-            # Find the clip on the timeline
-            clip = self._find_clip_on_timeline(timeline, clip_id, track_index)
-            if not clip:
-                logger.warning(f"Could not find clip {clip_id} on track {track_index} for fade/volume application")
-                return results
-            
-            # Try to apply volume via clip property
-            try:
-                # Resolve typically stores volume as "Volume" property in dB
-                if hasattr(clip, 'SetProperty'):
-                    clip.SetProperty("Volume", volume_db)
-                    results["volume_applied"] = True
-                    logger.debug(f"Applied volume {volume_db} dB to clip {clip_id}")
-                elif hasattr(clip, 'SetClipProperty'):
-                    # Alternative API method
-                    clip.SetClipProperty("Volume", str(volume_db))
-                    results["volume_applied"] = True
-                    logger.debug(f"Applied volume {volume_db} dB to clip {clip_id}")
-            except Exception as e:
-                logger.debug(f"Could not apply volume to clip {clip_id}: {e}")
-            
-            # Try to apply fades via clip properties
-            try:
-                # Different Resolve versions may use different property names
-                if hasattr(clip, 'SetProperty'):
-                    # Try setting fade properties
-                    try:
-                        clip.SetProperty("Fade In", fade_in_frames)
-                        results["fade_in_applied"] = True
-                    except:
-                        pass
-                    
-                    try:
-                        clip.SetProperty("Fade Out", fade_out_frames)
-                        results["fade_out_applied"] = True
-                    except:
-                        pass
-                    
-                    if results["fade_in_applied"] or results["fade_out_applied"]:
-                        logger.debug(
-                            f"Applied fades to clip {clip_id}: "
-                            f"in={fade_in_frames}, out={fade_out_frames}"
-                        )
-                        
-            except Exception as e:
-                logger.debug(f"Could not apply fades to clip {clip_id}: {e}")
-            
-            # If we couldn't apply via properties, log for manual adjustment
-            if not any(results.values()):
-                logger.info(
-                    f"Fade/volume could not be auto-applied to clip {clip_id}. "
-                    f"Manual adjustment needed: volume={volume_db}dB, "
-                    f"fade_in={fade_in_frames}frames, fade_out={fade_out_frames}frames"
-                )
-            
-            return results
-            
-        except Exception as e:
-            logger.exception(f"Error applying fade/volume to clip {clip_id}: {e}")
-            return results
+        logger.debug(
+            f"Fade transitions documented for VFX clip {clip_id}: "
+            f"fade_in={fade_in_frames} frames, fade_out={fade_out_frames} frames "
+            f"(manual adjustment required - Resolve API limitation)"
+        )
+        return False
     
-    def _find_clip_on_timeline(self, timeline: Any, clip_id: str, track_index: int) -> Optional[Any]:
-        """Find a clip on the timeline by its ID.
-        
-        Args:
-            timeline: Resolve timeline object
-            clip_id: Clip ID to find
-            track_index: Track number to search
-            
-        Returns:
-            Clip object if found, None otherwise
-        """
-        try:
-            # Try to get items on the specified track
-            if hasattr(timeline, 'GetItemListInTrack'):
-                items = timeline.GetItemListInTrack("audio", track_index)
-                if items:
-                    for item in items:
-                        try:
-                            # Try to match by name/ID
-                            if hasattr(item, 'GetName'):
-                                if item.GetName() == clip_id:
-                                    return item
-                            # Try alternative ID methods
-                            if hasattr(item, 'GetId'):
-                                if item.GetId() == clip_id:
-                                    return item
-                        except:
-                            continue
-            
-            # Alternative: try GetClipList
-            if hasattr(timeline, 'GetClipList'):
-                clips = timeline.GetClipList()
-                if clips:
-                    for clip in clips:
-                        try:
-                            if hasattr(clip, 'GetName') and clip.GetName() == clip_id:
-                                return clip
-                        except:
-                            continue
-            
-            return None
-            
-        except Exception as e:
-            logger.debug(f"Error finding clip {clip_id} on timeline: {e}")
-            return None
-    
-    def place_sfx_clips(
+    def place_vfx_templates(
         self,
         timeline_id: str,
-        sfx_segments: List[Dict[str, Any]],
+        vfx_segments: List[Dict[str, Any]],
         progress_callback: Optional[Callable[[int, int, str], None]] = None
-    ) -> SfxPlacerResult:
-        """Place SFX clips on the timeline.
+    ) -> VfxPlacerResult:
+        """Place VFX templates on the timeline.
         
-        This is the main entry point for SFX placement. It performs
-        all operations non-destructively - placing SFX on dedicated
-        tracks (3-10) without affecting existing content on tracks 1-2.
+        This is the main entry point for VFX placement. It performs
+        all operations non-destructively - placing VFX on dedicated
+        tracks (11-14) without affecting existing content on tracks 1-10.
         
         Args:
             timeline_id: ID of the target timeline
-            sfx_segments: List of SFX segment dictionaries with timing info
+            vfx_segments: List of VFX segment dictionaries with timing info
             progress_callback: Optional callback for progress updates.
                              Called as progress_callback(current, total, message)
             
         Returns:
-            SfxPlacerResult with details of placed clips
+            VfxPlacerResult with details of placed clips
             
         Note:
             No exceptions raised - all errors are captured in result.error
         """
         logger.info(
-            f"Starting SFX placement: {len(sfx_segments)} SFX clips for timeline {timeline_id}"
+            f"Starting VFX placement: {len(vfx_segments)} VFX templates for timeline {timeline_id}"
         )
         
         # Validate timeline_id
         if not timeline_id or not isinstance(timeline_id, str):
             logger.error(f"Invalid timeline_id: {timeline_id}")
-            return SfxPlacerResult(
+            return VfxPlacerResult(
                 clips_placed=0,
                 tracks_used=[],
                 total_duration_frames=0,
@@ -949,10 +905,10 @@ class SfxPlacer:
             )
         
         # Validate segments
-        is_valid, error = validate_sfx_segments(sfx_segments)
+        is_valid, error = validate_vfx_segments(vfx_segments)
         if not is_valid:
-            logger.error(f"SFX segment validation failed: {error}")
-            return SfxPlacerResult(
+            logger.error(f"VFX segment validation failed: {error}")
+            return VfxPlacerResult(
                 clips_placed=0,
                 tracks_used=[],
                 total_duration_frames=0,
@@ -971,7 +927,7 @@ class SfxPlacer:
                 "suggestion": "Ensure DaVinci Resolve is running and the scripting API is enabled in preferences"
             }
             logger.error(error["message"])
-            return SfxPlacerResult(
+            return VfxPlacerResult(
                 clips_placed=0,
                 tracks_used=[],
                 total_duration_frames=0,
@@ -991,7 +947,7 @@ class SfxPlacer:
                 "suggestion": "Ensure timeline was created successfully in previous step"
             }
             logger.error(error["message"])
-            return SfxPlacerResult(
+            return VfxPlacerResult(
                 clips_placed=0,
                 tracks_used=[],
                 total_duration_frames=0,
@@ -1000,166 +956,152 @@ class SfxPlacer:
                 error=error
             )
         
-        # Verify timeline has sufficient tracks for SFX (at least track 3 should exist)
+        # Verify timeline has sufficient tracks for VFX (at least track 11 should exist)
         try:
             # Check if timeline supports track count query
             if hasattr(timeline, 'GetTrackCount'):
                 track_count = timeline.GetTrackCount()
-                if track_count < SFX_TRACK_START:
-                    logger.warning(f"Timeline has only {track_count} tracks, but SFX requires track {SFX_TRACK_START}")
+                if track_count < VFX_TRACK_START:
+                    logger.warning(f"Timeline has only {track_count} tracks, but VFX requires track {VFX_TRACK_START}")
                     # Continue anyway - Resolve may auto-create tracks
         except Exception as e:
             logger.debug(f"Could not verify track count: {e}")
             # Continue - not all Resolve versions support this
         
         # Initialize result tracking
-        successful_placements: List[SfxPlacement] = []
+        successful_placements: List[VfxPlacement] = []
+        failed_segments: List[int] = []  # Track which segments failed
         tracks_used: set = set()
         total_duration = 0
         
         try:
-            # Process each SFX segment
-            for i, segment in enumerate(sfx_segments):
+            # Process each VFX segment
+            for i, segment in enumerate(vfx_segments):
                 segment_index = segment["segment_index"]
-                file_path = segment["sfx_file_path"]
+                file_path = segment["vfx_file_path"]
                 start_frames = segment["start_frames"]
                 end_frames = segment["end_frames"]
-                preferred_track = segment.get("track_number", SFX_TRACK_START)
-                moment_type = segment.get("moment_type", "generic")
+                preferred_track = segment.get("track_number", VFX_TRACK_START)
+                template_type = segment.get("template_type", "generic")
+                ai_template_params = segment.get("template_params", {})
+                
+                # Detect VFX type
+                vfx_type = detect_vfx_type(file_path)
+                
+                # Apply template parameters (defaults + AI overrides)
+                template_params = apply_template_params(template_type, ai_template_params)
                 
                 # Calculate fade durations in frames
-                fade_in_seconds = segment.get("fade_in_seconds", DEFAULT_SFX_FADE_IN_SECONDS)
-                fade_out_seconds = segment.get("fade_out_seconds", DEFAULT_SFX_FADE_OUT_SECONDS)
+                fade_in_seconds = segment.get("fade_in_seconds", DEFAULT_VFX_FADE_IN_SECONDS)
+                fade_out_seconds = segment.get("fade_out_seconds", DEFAULT_VFX_FADE_OUT_SECONDS)
                 fade_in_frames = self._seconds_to_frames(fade_in_seconds)
                 fade_out_frames = self._seconds_to_frames(fade_out_seconds)
                 
-                # Calculate handle frames (±2 seconds)
-                handle_frames = self._seconds_to_frames(DEFAULT_HANDLE_SECONDS)
-                
-                # Get volume level (use provided or default based on moment type)
-                volume_db = segment.get("volume_db")
-                if volume_db is None:
-                    volume_db = self._get_default_volume_for_moment_type(moment_type)
-                
                 # Report progress
-                progress_msg = f"Placing SFX: {os.path.basename(file_path)}"
-                logger.info(f"Progress: {progress_msg} ({i + 1}/{len(sfx_segments)})")
+                progress_msg = f"Placing VFX: {os.path.basename(file_path)} at {frames_to_timecode(start_frames)}"
+                logger.info(f"Progress: {progress_msg} ({i + 1}/{len(vfx_segments)})")
                 
                 if progress_callback:
                     try:
-                        progress_callback(i + 1, len(sfx_segments), progress_msg)
-                    except Exception:
-                        logger.exception(f"Progress callback failed for segment {segment_index}")
+                        progress_callback(i + 1, len(vfx_segments), progress_msg)
+                    except Exception as callback_err:
+                        logger.exception(
+                            f"Progress callback failed for segment {segment_index}: "
+                            f"{type(callback_err).__name__}: {callback_err}"
+                        )
                         # Continue with placement - callback failure shouldn't abort operation
                 
-                # Import SFX to Media Pool if not already there
-                sfx_clip = self._import_sfx_to_pool(file_path)
-                if not sfx_clip:
-                    logger.warning(f"Failed to import SFX: {file_path}")
+                # Import VFX to Media Pool if not already there
+                vfx_clip = self._import_vfx_to_pool(file_path)
+                if not vfx_clip:
+                    logger.warning(f"Failed to import VFX for segment {segment_index}: {file_path}")
+                    failed_segments.append(segment_index)
                     # Continue with other segments (don't fail entire operation)
                     continue
                 
                 # Allocate track (handle overlapping)
                 try:
-                    actual_track = self._allocate_sfx_track(
+                    actual_track = self._allocate_vfx_track(
                         preferred_track,
                         start_frames,
                         end_frames,
                         successful_placements
                     )
                 except TrackAllocationError as e:
-                    logger.error(f"Track allocation failed for SFX segment {segment_index}: {e}")
+                    logger.error(f"Track allocation failed for VFX segment {segment_index}: {e}")
+                    failed_segments.append(segment_index)
                     # Continue with other segments
                     continue
                 
-                # Create timeline clip with handle room (±2 seconds for adjustment)
-                # Extend boundaries to reserve space for easy editor adjustment
-                extended_source_in = max(0, 0 - handle_frames)  # Extend backward by handle_frames
-                extended_source_out = (end_frames - start_frames) + handle_frames  # Extend forward
-                extended_timeline_position = start_frames - handle_frames  # Start earlier on timeline
-                
-                # Ensure timeline position doesn't go negative
-                if extended_timeline_position < 0:
-                    # Adjust handle room if it would place clip before timeline start
-                    handle_adjustment = abs(extended_timeline_position)
-                    extended_timeline_position = 0
-                    extended_source_in += handle_adjustment
-                    logger.debug(f"Adjusted handle room for segment {segment_index} to prevent negative timeline position")
-                
-                clip_id = self._create_timeline_sfx_clip(
+                # Create timeline clip
+                clip_id = self._create_timeline_vfx_clip(
                     timeline=timeline,
-                    sfx_clip=sfx_clip,
+                    vfx_clip=vfx_clip,
                     track_index=actual_track,
-                    timeline_position=extended_timeline_position,
-                    source_in=extended_source_in,
-                    source_out=extended_source_out
+                    timeline_position=start_frames,
+                    source_in=0,  # Use full VFX clip from start
+                    source_out=end_frames - start_frames,  # Duration needed
+                    vfx_type=vfx_type
                 )
                 
                 if clip_id:
                     # Create placement record
-                    placement = SfxPlacement(
+                    placement = VfxPlacement(
                         segment_index=segment_index,
                         track_number=actual_track,
                         timeline_start_frame=start_frames,
                         timeline_end_frame=end_frames,
-                        sfx_file_path=file_path,
+                        vfx_file_path=file_path,
                         clip_id=clip_id,
                         fade_in_frames=fade_in_frames,
                         fade_out_frames=fade_out_frames,
-                        volume_db=volume_db,
-                        moment_type=moment_type,
-                        handle_frames=handle_frames
+                        template_type=template_type,
+                        template_params=template_params,
+                        vfx_type=vfx_type
                     )
                     
                     successful_placements.append(placement)
                     tracks_used.add(actual_track)
                     total_duration += (end_frames - start_frames)
                     
-                    # Apply fade and volume settings via Resolve API
-                    fade_vol_results = self._apply_fade_and_volume(
-                        timeline, clip_id, fade_in_frames, fade_out_frames, 
-                        volume_db, actual_track
-                    )
+                    # Apply fade transitions (documented even if API limited)
+                    self._apply_fade_transitions(timeline, clip_id, fade_in_frames, fade_out_frames)
                     
-                    # Log results
-                    if not any(fade_vol_results.values()):
-                        logger.info(
-                            f"Fade/volume for clip {clip_id} require manual adjustment: "
-                            f"volume={volume_db}dB, fades={fade_in_frames}/{fade_out_frames}frames"
-                        )
-                    
-                    logger.debug(f"SFX segment {segment_index} placed successfully on track {actual_track}")
+                    logger.debug(f"VFX segment {segment_index} placed successfully on track {actual_track}")
                 else:
-                    logger.warning(f"Failed to place SFX segment {segment_index}")
+                    logger.warning(f"Failed to create timeline clip for VFX segment {segment_index}")
+                    failed_segments.append(segment_index)
                     # Continue with other segments
             
             # Log completion
             logger.info(
-                f"SFX placement complete: {len(successful_placements)}/{len(sfx_segments)} "
-                f"clips placed, tracks used: {sorted(tracks_used)}, "
+                f"VFX placement complete: {len(successful_placements)}/{len(vfx_segments)} "
+                f"clips placed, {len(failed_segments)} failed, tracks used: {sorted(tracks_used)}, "
                 f"total duration: {total_duration} frames"
             )
             
-            return SfxPlacerResult(
+            return VfxPlacerResult(
                 clips_placed=len(successful_placements),
                 tracks_used=sorted(list(tracks_used)),
                 total_duration_frames=total_duration,
                 timeline_positions=successful_placements,
+                failed_segments=failed_segments,
                 success=len(successful_placements) > 0
             )
             
         except Exception as e:
-            logger.exception(f"Unexpected error during SFX placement: {e}")
-            return SfxPlacerResult(
+            logger.exception(f"Unexpected error during VFX placement: {e}")
+            return VfxPlacerResult(
                 clips_placed=len(successful_placements),
                 tracks_used=sorted(list(tracks_used)),
                 total_duration_frames=total_duration,
                 timeline_positions=successful_placements,
+                failed_segments=failed_segments,
                 success=False,
                 error={
                     "code": "INTERNAL_ERROR",
                     "category": "internal",
-                    "message": f"Unexpected error during SFX placement: {str(e)}",
+                    "message": f"Unexpected error during VFX placement: {str(e)}",
                     "recoverable": True,
                     "suggestion": "Check application logs and retry the operation"
                 }
@@ -1167,5 +1109,5 @@ class SfxPlacer:
 
 
 class TrackAllocationError(Exception):
-    """Raised when all SFX tracks are full and no allocation is possible."""
+    """Raised when all VFX tracks are full and no allocation is possible."""
     pass

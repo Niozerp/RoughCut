@@ -345,22 +345,46 @@ class MediaFolderConfig:
 
 @dataclass
 class AIConfig:
-    """Configuration for AI services (OpenAI).
+    """Configuration for AI services (OpenAI, OpenRouter, etc.).
     
     Attributes:
-        api_key: OpenAI API key (stored encrypted in file)
-        model: Model to use for tag generation (default: gpt-3.5-turbo)
+        api_key: API key for the selected provider (stored encrypted in file)
+        provider: AI provider to use - "openai" or "openrouter" (default: openai)
+        base_url: Custom base URL for API calls (optional, mainly for OpenRouter)
+        model: Model to use for AI requests (default: gpt-3.5-turbo for OpenAI)
         enabled: Whether AI tagging is enabled
         timeout: API timeout in seconds (default: 30)
         max_retries: Max retry attempts for rate limits (default: 3)
         recovery_mode: Error recovery mode - "automatic" or "manual" (default: automatic)
     """
     api_key: Optional[str] = None
+    provider: str = "openai"  # "openai" or "openrouter"
+    base_url: Optional[str] = None
     model: str = "gpt-3.5-turbo"
     enabled: bool = False
     timeout: float = 30.0
     max_retries: int = 3
     recovery_mode: str = "automatic"  # "automatic" or "manual"
+    
+    # Default models by provider
+    DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
+    DEFAULT_OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet"
+    
+    # Provider base URLs
+    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+    
+    def __post_init__(self):
+        """Post-initialization to set defaults based on provider."""
+        if self.provider == "openrouter" and not self.base_url:
+            self.base_url = self.OPENROUTER_BASE_URL
+        
+        # Set default model if not specified or incompatible with provider
+        if self.provider == "openrouter" and "/" not in self.model:
+            # Model doesn't have provider prefix, use default
+            self.model = self.DEFAULT_OPENROUTER_MODEL
+        elif self.provider == "openai" and "/" in self.model:
+            # OpenRouter-style model for OpenAI provider, reset to default
+            self.model = self.DEFAULT_OPENAI_MODEL
     
     def validate(self) -> tuple[bool, str]:
         """Validate configuration fields.
@@ -381,9 +405,19 @@ class AIConfig:
         if len(self.api_key) < 20:
             return False, "API key appears invalid (too short)"
         
-        # OpenAI keys typically start with "sk-"
-        if not self.api_key.startswith("sk-"):
-            return False, "API key format appears invalid (OpenAI keys start with 'sk-')"
+        # Validate provider
+        if self.provider not in ("openai", "openrouter"):
+            return False, "Provider must be 'openai' or 'openrouter'"
+        
+        # Provider-specific API key validation
+        if self.provider == "openai":
+            # OpenAI keys typically start with "sk-"
+            if not self.api_key.startswith("sk-"):
+                return False, "API key format appears invalid (OpenAI keys start with 'sk-')"
+        elif self.provider == "openrouter":
+            # OpenRouter keys typically start with "sk-or-"
+            if not self.api_key.startswith("sk-or-"):
+                return False, "API key format appears invalid (OpenRouter keys start with 'sk-or-')"
         
         if self.timeout < 5 or self.timeout > 300:
             return False, "Timeout must be between 5 and 300 seconds"
@@ -417,6 +451,8 @@ class AIConfig:
         from .crypto import encrypt_value
         
         result = {
+            'provider': self.provider,
+            'base_url': self.base_url,
             'model': self.model,
             'enabled': self.enabled,
             'timeout': self.timeout,
@@ -462,6 +498,8 @@ class AIConfig:
         
         return cls(
             api_key=key,
+            provider=data.get('provider', 'openai'),
+            base_url=data.get('base_url'),
             model=data.get('model', 'gpt-3.5-turbo'),
             enabled=data.get('enabled', False),
             timeout=data.get('timeout', 30.0),
@@ -473,7 +511,7 @@ class AIConfig:
         """Return a masked representation of the API key for display.
         
         Returns:
-            Masked key string (e.g., "sk-***1234")
+            Masked key string (e.g., "sk-***1234" or "sk-or-***1234")
         """
         if not self.api_key:
             return ""

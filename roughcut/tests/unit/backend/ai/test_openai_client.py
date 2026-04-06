@@ -26,7 +26,26 @@ class TestOpenAIClientInitialization:
             assert client.timeout == 30.0
             assert client.max_retries == 3
             assert client.model == "gpt-3.5-turbo"
+            assert client.base_url is None
             mock_client.assert_called_once_with(api_key="sk-test123456789")
+    
+    def test_init_with_base_url(self):
+        """Test initialization with custom base URL (e.g., OpenRouter)."""
+        with patch('roughcut.backend.ai.openai_client.openai.AsyncOpenAI') as mock_client:
+            client = OpenAIClient(
+                api_key="sk-or-test123456789",
+                base_url="https://openrouter.ai/api/v1",
+                model="anthropic/claude-3.5-sonnet"
+            )
+            
+            assert client.timeout == 30.0
+            assert client.max_retries == 3
+            assert client.model == "anthropic/claude-3.5-sonnet"
+            assert client.base_url == "https://openrouter.ai/api/v1"
+            mock_client.assert_called_once_with(
+                api_key="sk-or-test123456789",
+                base_url="https://openrouter.ai/api/v1"
+            )
     
     def test_init_with_custom_settings(self):
         """Test initialization with custom settings."""

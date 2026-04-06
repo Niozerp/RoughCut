@@ -146,19 +146,20 @@ def initiate_rough_cut(params: Dict[str, Any] | None) -> Dict[str, Any]:
         
         # Get AI configuration
         settings = get_settings()
-        api_key = settings.get("openai_api_key")
+        api_key = settings.get("ai_api_key")
+        base_url = settings.get("ai_base_url")
         
         if not api_key:
             return _error_response(
                 ERROR_CODES["AI_CONFIG_ERROR"],
                 "config",
-                "OpenAI API key not configured",
+                "AI API key not configured",
                 "Configure API key in settings before generating rough cuts"
             )
         
         # Initialize orchestrator
         try:
-            client = OpenAIClient(api_key=api_key)
+            client = OpenAIClient(api_key=api_key, base_url=base_url)
             orchestrator = RoughCutOrchestrator(client)
         except Exception as e:
             logger.exception(f"Failed to initialize AI orchestrator: {e}")
@@ -277,20 +278,21 @@ def initiate_rough_cut_with_progress(
         
         # Get AI configuration
         settings = get_settings()
-        api_key = settings.get("openai_api_key")
+        api_key = settings.get("ai_api_key")
+        base_url = settings.get("ai_base_url")
         
         if not api_key:
             yield _error_response(
                 ERROR_CODES["AI_CONFIG_ERROR"],
                 "config",
-                "OpenAI API key not configured",
+                "AI API key not configured",
                 "Configure API key in settings before generating rough cuts"
             )
             return
         
         # Initialize orchestrator
         try:
-            client = OpenAIClient(api_key=api_key)
+            client = OpenAIClient(api_key=api_key, base_url=base_url)
             orchestrator = RoughCutOrchestrator(client)
         except Exception as e:
             logger.exception(f"Failed to initialize AI orchestrator: {e}")
@@ -473,13 +475,13 @@ def send_data_to_ai(params: Dict[str, Any] | None) -> Dict[str, Any]:
         
         # Get AI configuration
         settings = get_settings()
-        api_key = settings.get("openai_api_key")
+        api_key = settings.get("ai_api_key")
         
         if not api_key:
             return _error_response(
                 ERROR_CODES["AI_CONFIG_ERROR"],
                 "config",
-                "OpenAI API key not configured",
+                "AI API key not configured",
                 "Configure API key in settings before sending data to AI"
             )
         
@@ -647,13 +649,13 @@ def send_data_to_ai_with_progress(
         
         # Get AI configuration
         settings = get_settings()
-        api_key = settings.get("openai_api_key")
+        api_key = settings.get("ai_api_key")
         
         if not api_key:
             yield _error_response(
                 ERROR_CODES["AI_CONFIG_ERROR"],
                 "config",
-                "OpenAI API key not configured",
+                "AI API key not configured",
                 "Configure API key in settings before sending data to AI"
             )
             return

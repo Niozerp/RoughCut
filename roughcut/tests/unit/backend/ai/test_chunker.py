@@ -354,6 +354,33 @@ class TestProviderTokenLimits:
         assert "claude-3-sonnet" in PROVIDER_TOKEN_LIMITS["claude"]
         assert "claude-3-haiku" in PROVIDER_TOKEN_LIMITS["claude"]
     
+    def test_openrouter_limits_exist(self):
+        """Test that OpenRouter token limits are defined."""
+        assert "openrouter" in PROVIDER_TOKEN_LIMITS
+        # Anthropic models via OpenRouter
+        assert "anthropic/claude-3.5-sonnet" in PROVIDER_TOKEN_LIMITS["openrouter"]
+        assert "anthropic/claude-3-opus" in PROVIDER_TOKEN_LIMITS["openrouter"]
+        # OpenAI models via OpenRouter
+        assert "openai/gpt-4o" in PROVIDER_TOKEN_LIMITS["openrouter"]
+        assert "openai/gpt-4" in PROVIDER_TOKEN_LIMITS["openrouter"]
+        # Meta models via OpenRouter
+        assert "meta-llama/llama-3.1-70b-instruct" in PROVIDER_TOKEN_LIMITS["openrouter"]
+        # Google models via OpenRouter
+        assert "google/gemini-pro" in PROVIDER_TOKEN_LIMITS["openrouter"]
+    
+    def test_openrouter_limits_are_reasonable(self):
+        """Test that OpenRouter model limits are reasonable values."""
+        openrouter_limits = PROVIDER_TOKEN_LIMITS["openrouter"]
+        
+        # Claude models should have 200k limit
+        assert openrouter_limits["anthropic/claude-3.5-sonnet"] == 200000
+        
+        # GPT-4o should have 128k limit
+        assert openrouter_limits["openai/gpt-4o"] == 128000
+        
+        # Gemini Pro 1.5 should have 1M limit
+        assert openrouter_limits["google/gemini-pro-1.5"] == 1000000
+    
     def test_default_limit_exists(self):
         """Test that default token limit is defined."""
         assert "default" in PROVIDER_TOKEN_LIMITS

@@ -29,6 +29,28 @@ PROVIDER_TOKEN_LIMITS = {
         "claude-3-sonnet": 200000,
         "claude-3-haiku": 200000,
     },
+    "openrouter": {
+        # Anthropic models via OpenRouter
+        "anthropic/claude-3.5-sonnet": 200000,
+        "anthropic/claude-3.5-sonnet-beta": 200000,
+        "anthropic/claude-3-opus": 200000,
+        "anthropic/claude-3-sonnet": 200000,
+        "anthropic/claude-3-haiku": 200000,
+        # OpenAI models via OpenRouter
+        "openai/gpt-4o": 128000,
+        "openai/gpt-4o-mini": 128000,
+        "openai/gpt-4-turbo": 128000,
+        "openai/gpt-4": 8192,
+        "openai/gpt-3.5-turbo": 16385,
+        # Meta models via OpenRouter
+        "meta-llama/llama-3.1-70b-instruct": 131072,
+        "meta-llama/llama-3.1-405b-instruct": 131072,
+        # Google models via OpenRouter
+        "google/gemini-pro": 128000,
+        "google/gemini-pro-1.5": 1000000,
+        # Mistral models via OpenRouter
+        "mistralai/mistral-large": 128000,
+    },
     "default": 4000  # Conservative fallback
 }
 

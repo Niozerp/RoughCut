@@ -21,10 +21,11 @@ class TestAIConfigValidation:
         assert is_valid is True
         assert error == ""
     
-    def test_valid_config_when_enabled(self):
-        """Test valid enabled configuration."""
+    def test_valid_config_when_enabled_openai(self):
+        """Test valid enabled configuration with OpenAI provider."""
         config = AIConfig(
             enabled=True,
+            provider="openai",
             api_key="sk-test12345678901234567890",
             model="gpt-3.5-turbo",
             timeout=30.0,
@@ -34,6 +35,34 @@ class TestAIConfigValidation:
         
         assert is_valid is True
         assert error == ""
+    
+    def test_valid_config_when_enabled_openrouter(self):
+        """Test valid enabled configuration with OpenRouter provider."""
+        config = AIConfig(
+            enabled=True,
+            provider="openrouter",
+            api_key="sk-or-test12345678901234567890",
+            base_url="https://openrouter.ai/api/v1",
+            model="anthropic/claude-3.5-sonnet",
+            timeout=30.0,
+            max_retries=3
+        )
+        is_valid, error = config.validate()
+        
+        assert is_valid is True
+        assert error == ""
+    
+    def test_invalid_provider(self):
+        """Test validation fails with invalid provider."""
+        config = AIConfig(
+            enabled=True,
+            provider="invalid-provider",
+            api_key="sk-test12345678901234567890"
+        )
+        is_valid, error = config.validate()
+        
+        assert is_valid is False
+        assert "openai or openrouter" in error
     
     def test_invalid_missing_api_key(self):
         """Test validation fails without API key."""
@@ -51,13 +80,29 @@ class TestAIConfigValidation:
         assert is_valid is False
         assert "too short" in error
     
-    def test_invalid_api_key_format(self):
-        """Test validation fails with wrong API key format."""
-        config = AIConfig(enabled=True, api_key="not-sk-prefix-1234567890")
+    def test_invalid_openai_api_key_format(self):
+        """Test validation fails with wrong OpenAI API key format."""
+        config = AIConfig(
+            enabled=True,
+            provider="openai",
+            api_key="not-sk-prefix-1234567890"
+        )
         is_valid, error = config.validate()
         
         assert is_valid is False
         assert "start with 'sk-'" in error
+    
+    def test_invalid_openrouter_api_key_format(self):
+        """Test validation fails with wrong OpenRouter API key format."""
+        config = AIConfig(
+            enabled=True,
+            provider="openrouter",
+            api_key="sk-test12345678901234567890"  # Missing "or-" prefix
+        )
+        is_valid, error = config.validate()
+        
+        assert is_valid is False
+        assert "start with 'sk-or-'" in error
     
     def test_invalid_timeout(self):
         """Test validation fails with invalid timeout."""
@@ -87,9 +132,10 @@ class TestAIConfigValidation:
 class TestAIConfigSerialization:
     """Test AIConfig serialization."""
     
-    def test_to_dict(self):
-        """Test conversion to dictionary."""
+    def test_to_dict_openai(self):
+        """Test conversion to dictionary for OpenAI provider."""
         config = AIConfig(
+            provider="openai",
             api_key="sk-test123",
             model="gpt-4",
             enabled=True,
@@ -99,15 +145,37 @@ class TestAIConfigSerialization:
         
         result = config.to_dict(encrypt_token=False)
         
+        assert result['provider'] == "openai"
         assert result['api_key'] == "sk-test123"
         assert result['model'] == "gpt-4"
         assert result['enabled'] is True
         assert result['timeout'] == 60.0
         assert result['max_retries'] == 5
     
-    def test_from_dict(self):
-        """Test creation from dictionary."""
+    def test_to_dict_openrouter(self):
+        """Test conversion to dictionary for OpenRouter provider."""
+        config = AIConfig(
+            provider="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="sk-or-test123",
+            model="anthropic/claude-3.5-sonnet",
+            enabled=True,
+            timeout=60.0,
+            max_retries=5
+        )
+        
+        result = config.to_dict(encrypt_token=False)
+        
+        assert result['provider'] == "openrouter"
+        assert result['base_url'] == "https://openrouter.ai/api/v1"
+        assert result['api_key'] == "sk-or-test123"
+        assert result['model'] == "anthropic/claude-3.5-sonnet"
+        assert result['enabled'] is True
+    
+    def test_from_dict_openai(self):
+        """Test creation from dictionary for OpenAI provider."""
         data = {
+            'provider': 'openai',
             'api_key': 'sk-test123',
             'model': 'gpt-4',
             'enabled': True,
@@ -117,11 +185,29 @@ class TestAIConfigSerialization:
         
         config = AIConfig.from_dict(data, decrypt_token=False)
         
+        assert config.provider == "openai"
         assert config.api_key == "sk-test123"
         assert config.model == "gpt-4"
         assert config.enabled is True
-        assert config.timeout == 60.0
-        assert config.max_retries == 5
+    
+    def test_from_dict_openrouter(self):
+        """Test creation from dictionary for OpenRouter provider."""
+        data = {
+            'provider': 'openrouter',
+            'base_url': 'https://openrouter.ai/api/v1',
+            'api_key': 'sk-or-test123',
+            'model': 'anthropic/claude-3.5-sonnet',
+            'enabled': True,
+            'timeout': 60.0,
+            'max_retries': 5
+        }
+        
+        config = AIConfig.from_dict(data, decrypt_token=False)
+        
+        assert config.provider == "openrouter"
+        assert config.base_url == "https://openrouter.ai/api/v1"
+        assert config.api_key == "sk-or-test123"
+        assert config.model == "anthropic/claude-3.5-sonnet"
     
     def test_from_dict_with_defaults(self):
         """Test creation from dictionary with defaults."""
@@ -130,10 +216,42 @@ class TestAIConfigSerialization:
         config = AIConfig.from_dict(data, decrypt_token=False)
         
         assert config.api_key == "sk-test"
-        assert config.model == "gpt-3.5-turbo"  # default
+        assert config.provider == "openai"  # default
+        assert config.model == "gpt-3.5-turbo"  # default for openai
         assert config.enabled is False  # default
         assert config.timeout == 30.0  # default
         assert config.max_retries == 3  # default
+    
+    def test_openrouter_default_base_url(self):
+        """Test that OpenRouter provider gets default base URL."""
+        config = AIConfig(
+            provider="openrouter",
+            api_key="sk-or-test12345678901234567890"
+        )
+        
+        # base_url should be auto-set in __post_init__
+        assert config.base_url == "https://openrouter.ai/api/v1"
+    
+    def test_openrouter_default_model(self):
+        """Test that OpenRouter provider gets default model."""
+        config = AIConfig(
+            provider="openrouter",
+            api_key="sk-or-test12345678901234567890"
+        )
+        
+        # model should be auto-set to OpenRouter default in __post_init__
+        assert config.model == "anthropic/claude-3.5-sonnet"
+    
+    def test_openai_model_reset(self):
+        """Test that OpenRouter-style model gets reset for OpenAI provider."""
+        config = AIConfig(
+            provider="openai",
+            api_key="sk-test12345678901234567890",
+            model="anthropic/claude-3.5-sonnet"  # OpenRouter-style model
+        )
+        
+        # model should be reset to OpenAI default in __post_init__
+        assert config.model == "gpt-3.5-turbo"
 
 
 class TestAIConfigStatus:
@@ -172,11 +290,14 @@ class TestAIConfigStatus:
         
         assert config.mask_key() == ""
     
-    def test_mask_key_short(self):
-        """Test masking short key."""
-        config = AIConfig(api_key="sk-1234")
+    def test_mask_key_openrouter(self):
+        """Test OpenRouter API key masking."""
+        config = AIConfig(api_key="sk-or-abc123xyz789")
+        masked = config.mask_key()
         
-        assert config.mask_key() == "***"
+        assert "***" in masked
+        assert masked.startswith("sk-or")
+        assert masked.endswith("789")
 
 
 class TestAppConfigWithAI:
