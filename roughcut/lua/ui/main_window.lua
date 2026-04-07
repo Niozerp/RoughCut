@@ -134,6 +134,27 @@ function mainWindow.create(uiManager)
     
     windowRef = win
     
+    -- Set up event handlers using Fusion's expected pattern for RunLoop()
+    -- RunLoop requires events organized by type, not by element
+    win.On = win.On or {}
+    
+    -- Window-level events
+    win.On.Close = function(ev)
+        print("RoughCut: Main window closing...")
+        -- Close the window and exit message loop
+        pcall(function()
+            if windowRef then
+                windowRef:Close()
+            end
+        end)
+        if dispRef then
+            pcall(function() dispRef:ExitLoop() end)
+        end
+        -- Clear references
+        windowRef = nil
+        dispRef = nil
+    end
+    
     print("RoughCut: Main window created successfully")
     return win
 end
@@ -147,17 +168,21 @@ function mainWindow.show(window)
         return false
     end
     
-    local ok, _ = pcall(function()
+    -- Show the window
+    local showOk, _ = pcall(function()
         window:Show()
     end)
     
-    if not ok then
+    if not showOk then
         print("RoughCut: Error - Failed to show main window")
         return false
     end
     
-    -- NOTE: We do NOT call disp:RunLoop() here because this may be non-blocking
-    -- The calling code is responsible for handling the window lifecycle
+    print("RoughCut: Main window shown")
+    
+    -- NOTE: We do NOT call disp:RunLoop() here.
+    -- RunLoop() blocks the Resolve UI thread and causes 'ontbl' nil errors.
+    -- The window persists via Resolve's native window lifecycle.
     
     return true
 end

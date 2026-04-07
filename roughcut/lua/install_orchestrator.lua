@@ -742,26 +742,23 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             doInstallStep(6)
             
         elseif step == 6 then
-            -- Complete
+            -- Complete - show completion and wait for user to close
+            print("RoughCut: Step 6 reached - completing installation")
             installDialog.showCompletion()
             isInstalling = false
             
-            -- Close dialog after a short delay
-            -- Use Windows-compatible timeout (timeout command on Windows, sleep on Unix)
-            pcall(function()
-                if package.config:sub(1,1) == "\\" then
-                    -- Windows
-                    os.execute("timeout /t 2 >nul 2>&1")
-                else
-                    -- Unix/Linux/Mac
-                    os.execute("sleep 2")
-                end
+            -- Update button to "Close" and enable it for user to click
+            installDialog.setCancelEnabled(true)
+            installDialog.setCancelCallback(function()
+                print("RoughCut: User closed install dialog after completion")
                 installDialog.close()
+                if onComplete then
+                    onComplete({ success = true })
+                end
             end)
             
-            if onComplete then
-                onComplete({ success = true })
-            end
+            -- Return without closing - let user click Close button
+            return
         end
     end
     

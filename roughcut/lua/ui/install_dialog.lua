@@ -18,6 +18,12 @@ local winRef = nil
 local uiRef = nil
 local dispRef = nil
 
+-- State tracking (declared before resetDialogState to avoid nil reference)
+local isCancelled = false
+local startTime = nil
+local currentStep = 0
+local onCancelCallback = nil
+
 -- Reset dialog state to prevent pollution between installations
 local function resetDialogState()
     winRef = nil
@@ -40,14 +46,8 @@ local WIDGET_IDS = {
     etaLabel = "EtaLabel"
 }
 
--- State tracking
-local isCancelled = false
-local startTime = nil
-local currentStep = 0
+-- Total steps constant (separate from state tracking)
 local totalSteps = 6
-
--- Callback function for cancel action
-local onCancelCallback = nil
 
 -- Create the installation progress dialog
 -- @param uiManager Resolve UI Manager instance (fu.UIManager)
@@ -61,6 +61,13 @@ function installDialog.create(uiManager)
     -- Check if bmd is available
     if not bmd then
         print("RoughCut: Error - bmd module not available (required for UIDispatcher)")
+        resetDialogState()
+        return nil
+    end
+    
+    -- Check if UIDispatcher field exists on bmd
+    if not bmd.UIDispatcher then
+        print("RoughCut: Error - bmd.UIDispatcher not available")
         resetDialogState()
         return nil
     end
@@ -248,31 +255,47 @@ end
 -- Close and destroy the installation dialog
 -- @return boolean indicating success
 function installDialog.close()
+    print("RoughCut: Closing install dialog...")
+    
     if not winRef then
-        return true  -- Already closed
+        print("RoughCut: Install dialog already closed (winRef is nil)")
+        return true
+    end
+    
+    print("RoughCut: Hiding install dialog...")
+    -- Hide first to remove from screen immediately
+    local hideOk, hideErr = pcall(function()
+        winRef:Hide()
+    end)
+    if not hideOk then
+        print("RoughCut: Warning - Failed to hide install dialog: " .. tostring(hideErr))
     end
     
     -- Exit the dispatcher loop if it was running (for modal usage)
     if dispRef then
-        local ok, _ = pcall(function()
+        print("RoughCut: Exiting dispatcher loop...")
+        local ok, err = pcall(function()
             dispRef:ExitLoop()
         end)
         if not ok then
-            -- ExitLoop might fail if not running, that's ok
+            print("RoughCut: Warning - ExitLoop failed: " .. tostring(err))
         end
     end
     
     -- Close the window
-    local ok, _ = pcall(function()
+    print("RoughCut: Closing window reference...")
+    local closeOk, closeErr = pcall(function()
         winRef:Close()
     end)
     
-    if not ok then
-        print("RoughCut: Warning - Error closing install dialog")
+    if not closeOk then
+        print("RoughCut: Error - Failed to close install dialog: " .. tostring(closeErr))
+        return false
     end
     
-    -- Clear all references using reset function
+    -- Only clear references on successful close
     resetDialogState()
+    print("RoughCut: Install dialog closed successfully")
     
     return true
 end
@@ -350,9 +373,11 @@ function installDialog.updateProgress(stepNum, totalStepCount, stepName, percent
         end
     end
     
-    -- Update time elapsed
+    -- Update time elapsed and ETA
     if startTime then
         local elapsed = os.time() - startTime
+        
+        -- Update time elapsed label
         local ok3, _ = pcall(function()
             local label = winRef:FindChild(WIDGET_IDS.timeLabel)
             if label then
@@ -370,53 +395,53 @@ function installDialog.updateProgress(stepNum, totalStepCount, stepName, percent
             end
         end
         
-    -- Update ETA
-    if percent and percent > 0 then
-        local totalEstimated = elapsed / (percent / 100)
-        local remaining = math.max(0, totalEstimated - elapsed)
-        local ok5, _ = pcall(function()
-            local label = winRef:FindChild(WIDGET_IDS.etaLabel)
-            if label then
-                if remaining > 60 then
-                    label.Text = string.format("Estimated time remaining: ~%dm", math.ceil(remaining / 60))
-                else
-                    label.Text = string.format("Estimated time remaining: ~%ds", math.ceil(remaining))
-                end
-            end
-        end)
-        if not ok5 then
-            local ok6, _ = pcall(function()
-                if winRef[WIDGET_IDS.etaLabel] then
+        -- Update ETA (guard against div by zero)
+        if percent and percent > 0 then
+            local totalEstimated = elapsed / (percent / 100)
+            local remaining = math.max(0, totalEstimated - elapsed)
+            local ok5, _ = pcall(function()
+                local label = winRef:FindChild(WIDGET_IDS.etaLabel)
+                if label then
                     if remaining > 60 then
-                        winRef[WIDGET_IDS.etaLabel].Text = string.format("Estimated time remaining: ~%dm", math.ceil(remaining / 60))
+                        label.Text = string.format("Estimated time remaining: ~%dm", math.ceil(remaining / 60))
                     else
-                        winRef[WIDGET_IDS.etaLabel].Text = string.format("Estimated time remaining: ~%ds", math.ceil(remaining))
+                        label.Text = string.format("Estimated time remaining: ~%ds", math.ceil(remaining))
                     end
                 end
             end)
-            if not ok6 then
-                print("RoughCut: Warning - Could not update ETA label")
+            if not ok5 then
+                local ok6, _ = pcall(function()
+                    if winRef[WIDGET_IDS.etaLabel] then
+                        if remaining > 60 then
+                            winRef[WIDGET_IDS.etaLabel].Text = string.format("Estimated time remaining: ~%dm", math.ceil(remaining / 60))
+                        else
+                            winRef[WIDGET_IDS.etaLabel].Text = string.format("Estimated time remaining: ~%ds", math.ceil(remaining))
+                        end
+                    end
+                end)
+                if not ok6 then
+                    print("RoughCut: Warning - Could not update ETA label")
+                end
             end
-        end
-    else
-        -- percent is 0 or nil, show calculating message
-        local ok5, _ = pcall(function()
-            local label = winRef:FindChild(WIDGET_IDS.etaLabel)
-            if label then
-                label.Text = "Estimated time remaining: calculating..."
-            end
-        end)
-        if not ok5 then
-            local ok6, _ = pcall(function()
-                if winRef[WIDGET_IDS.etaLabel] then
-                    winRef[WIDGET_IDS.etaLabel].Text = "Estimated time remaining: calculating..."
+        else
+            -- percent is 0 or nil, show calculating message
+            local ok5, _ = pcall(function()
+                local label = winRef:FindChild(WIDGET_IDS.etaLabel)
+                if label then
+                    label.Text = "Estimated time remaining: calculating..."
                 end
             end)
-            if not ok6 then
-                print("RoughCut: Warning - Could not update ETA label")
+            if not ok5 then
+                local ok6, _ = pcall(function()
+                    if winRef[WIDGET_IDS.etaLabel] then
+                        winRef[WIDGET_IDS.etaLabel].Text = "Estimated time remaining: calculating..."
+                    end
+                end)
+                if not ok6 then
+                    print("RoughCut: Warning - Could not update ETA label")
+                end
             end
         end
-    end
     end
     
     return true
