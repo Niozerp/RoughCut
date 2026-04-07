@@ -184,7 +184,7 @@ def verify_installation(project_root: Path, install_path: Path) -> dict:
     }
     
     # Check main entry point exists
-    main_script = install_path / "roughcut.lua"
+    main_script = install_path / "roughcut_main.lua"
     result["checks"]["main_script"] = main_script.exists()
     
     # Check ui modules exist
