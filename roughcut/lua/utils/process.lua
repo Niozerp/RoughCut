@@ -27,15 +27,18 @@ function processUtils.shellEscape(str)
     end
     
     if detectWindows() then
-        -- Windows escaping: wrap in quotes, escape existing quotes
-        -- Windows cmd has limited escaping, PowerShell is safer
-        return '"' .. str:gsub('"', '""') .. '"'
+        -- Windows escaping: wrap in quotes, escape existing quotes by doubling
+        -- Also need to handle backslashes before quotes and percent signs (batch variables)
+        str = str:gsub('%%', '%%%%')  -- Escape % as %% (batch variable expansion)
+        str = str:gsub('\\"', '\\\\"')  -- Escape backslash-quote
+        str = str:gsub('"', '""')  -- Double existing quotes
+        return '"' .. str .. '"'
     else
         -- Unix escaping: wrap in single quotes, handle embedded single quotes
         -- Escape: $ ` " \ | & ; ( ) < > * ? [ ] { } #
         if str:find("[%$`\"\\|&;%(%)<>%*%?%[%]%{ }%#]") then
             -- Use single quotes and escape embedded single quotes
-            return "'" .. str:gsub("'", "'\"'\"'") .. "'"
+            return "'" .. str:gsub("'", '\"'\"'"\') .. "'"
         end
         return str
     end
@@ -60,6 +63,35 @@ function processUtils.run(command, workingDir, timeoutSeconds)
         return result
     end
     
+    -- Check if working directory exists first
+    if workingDir then
+        local dirExists = false
+        
+        -- Escape workingDir for safe shell usage
+        local escapedDir = processUtils.shellEscape(workingDir)
+        
+        -- Try to list directory contents using dir command (Windows) or test -d (Unix)
+        if detectWindows() then
+            -- On Windows, use 'dir' command to check if directory exists
+            local checkCmd = 'dir ' .. escapedDir .. ' /b >nul 2>&1'
+            local ok = os.execute(checkCmd)
+            dirExists = (ok == 0 or ok == true)
+        else
+            -- On Unix, use test -d with escaped path
+            local checkCmd = 'test -d ' .. escapedDir
+            local ok = os.execute(checkCmd)
+            dirExists = (ok == 0 or ok == true)
+        end
+        
+        if not dirExists then
+            print("RoughCut: ERROR - Working directory does not exist: " .. workingDir)
+            result.error = "Directory not found: " .. workingDir
+            return result
+        end
+        
+        print("RoughCut: Working directory verified: " .. workingDir)
+    end
+    
     -- Build command string with proper escaping to prevent injection
     local escapedCmd = {}
     for _, arg in ipairs(command) do
@@ -67,28 +99,24 @@ function processUtils.run(command, workingDir, timeoutSeconds)
     end
     local cmdStr = table.concat(escapedCmd, " ")
     
-    -- Add working directory if specified (with escaping)
+    -- Add working directory if specified (with proper Windows handling)
     if workingDir then
-        cmdStr = string.format("cd %s && %s", processUtils.shellEscape(workingDir), cmdStr)
+        if detectWindows() then
+            -- Use pushd/popd which handles spaces better on Windows
+            -- Avoid outer quotes to prevent nested quote issues with io.popen
+            cmdStr = string.format('cmd /c pushd %s && %s && popd', 
+                processUtils.shellEscape(workingDir), cmdStr)
+        else
+            cmdStr = string.format("cd %s && %s", 
+                processUtils.shellEscape(workingDir), cmdStr)
+        end
     end
     
-    -- Add stderr redirection to capture both streams
-    if detectWindows() then
-        cmdStr = cmdStr .. " 2>&1"
-    else
-        cmdStr = cmdStr .. " 2>&1"
-    end
-    
-    -- Build command string
-    local cmdStr = table.concat(command, " ")
-    
-    -- Add working directory if specified
-    if workingDir then
-        cmdStr = string.format("cd %q && %s", workingDir, cmdStr)
-    end
-    
-    -- Add stderr redirection to capture both streams
+    -- Add stderr redirection to capture both streams (at the very end for Windows)
     cmdStr = cmdStr .. " 2>&1"
+    
+    -- Debug logging
+    print("RoughCut: Executing: " .. cmdStr)
     
     -- Execute command with pcall for error handling
     local ok, handle = pcall(function()
@@ -278,6 +306,35 @@ function processUtils.spawn(command, workingDir)
         return result
     end
     
+    -- Check if working directory exists first
+    if workingDir then
+        local dirExists = false
+        
+        -- Escape workingDir for safe shell usage
+        local escapedDir = processUtils.shellEscape(workingDir)
+        
+        -- Try to list directory contents using dir command (Windows) or test -d (Unix)
+        if detectWindows() then
+            -- On Windows, use 'dir' command to check if directory exists
+            local checkCmd = 'dir ' .. escapedDir .. ' /b >nul 2>&1'
+            local ok = os.execute(checkCmd)
+            dirExists = (ok == 0 or ok == true)
+        else
+            -- On Unix, use test -d with escaped path
+            local checkCmd = 'test -d ' .. escapedDir
+            local ok = os.execute(checkCmd)
+            dirExists = (ok == 0 or ok == true)
+        end
+        
+        if not dirExists then
+            print("RoughCut: ERROR - Working directory does not exist: " .. workingDir)
+            result.error = "Directory not found: " .. workingDir
+            return result
+        end
+        
+        print("RoughCut: Working directory verified: " .. workingDir)
+    end
+    
     -- Build command string with proper escaping
     local escapedCmd = {}
     for _, arg in ipairs(command) do
@@ -285,10 +342,22 @@ function processUtils.spawn(command, workingDir)
     end
     local cmdStr = table.concat(escapedCmd, " ")
     
-    -- Add working directory if specified (with escaping)
-    if workingDir then
-        cmdStr = string.format("cd %s && %s", processUtils.shellEscape(workingDir), cmdStr)
+    -- On Windows with workingDir, we need to handle the working directory
+    -- Since io.popen doesn't support setting working directory directly,
+    -- we prepend a cd command using cmd /c with proper escaping
+    -- This is safer than changing global process state
+    if workingDir and detectWindows() then
+        -- Use cmd /c with pushd/popd which handles spaces and returns to original
+        cmdStr = string.format('cmd /c pushd %s && %s && popd', 
+            processUtils.shellEscape(workingDir), cmdStr)
+    elseif workingDir then
+        -- Unix - use cd && command
+        cmdStr = string.format("cd %s && %s", 
+            processUtils.shellEscape(workingDir), cmdStr)
     end
+    
+    -- Debug logging
+    print("RoughCut: Spawning: " .. cmdStr)
     
     -- Open process for reading
     local ok, handle = pcall(function()
@@ -327,17 +396,44 @@ end
 
 -- Close spawned process
 -- @param handle Process handle from spawn()
--- @return boolean indicating success
+-- @return table with success (boolean) and exitCode (number)
 function processUtils.close(handle)
     if not handle then
-        return true
+        return { success = true, exitCode = 0 }
     end
     
-    local ok, _ = pcall(function()
+    local ok, exitCode = pcall(function()
         return handle:close()
     end)
     
-    return ok
+    -- io.popen close() returns exit status differently on various Lua versions
+    -- It can return: true (success), nil, or a number (exit code)
+    local result = { success = true, exitCode = 0 }
+    
+    if not ok then
+        -- Error during close
+        result.success = false
+        result.exitCode = -1
+    elseif type(exitCode) == "number" then
+        result.exitCode = exitCode
+        result.success = (exitCode == 0)
+    elseif exitCode == nil or exitCode == true then
+        -- Success or unknown - assume success
+        result.success = true
+        result.exitCode = 0
+    else
+        -- Try to parse from string
+        local code = tonumber(tostring(exitCode):match("(%d+)$"))
+        if code then
+            result.exitCode = code
+            result.success = (code == 0)
+        else
+            result.success = true
+            result.exitCode = 0
+        end
+    end
+    
+    return result
 end
 
 -- Kill spawned process (if possible)
@@ -348,9 +444,21 @@ function processUtils.kill(handle)
         return false
     end
     
-    -- Lua doesn't provide direct process killing
-    -- Close the pipe which should signal the process
-    return processUtils.close(handle)
+    -- On Windows, we can't easily get the PID from io.popen handle
+    -- But we can try to close the pipe and use taskkill if we had a PID
+    -- For now, close the pipe which should cause the process to exit
+    -- when it tries to write output
+    
+    -- Attempt to close first
+    local closeResult = processUtils.close(handle)
+    
+    -- Note: Lua io.popen doesn't provide direct process killing capability
+    -- A full implementation would require platform-specific code with PID tracking
+    -- For Windows: use taskkill /F /PID <pid> or taskkill /F /IM <process_name>
+    -- For Unix: use kill -9 <pid>
+    
+    -- Return whether close was successful as a proxy
+    return closeResult.success
 end
 
 return processUtils

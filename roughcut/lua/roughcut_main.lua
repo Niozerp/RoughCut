@@ -1,8 +1,11 @@
--- RoughCut Main Entry Point
+-- RoughCut Main Module
 -- Compatible with DaVinci Resolve's Lua scripting environment
--- Version: 0.2.0
+-- Version: 0.3.1 - DEBUG BUILD
+-- This module is loaded by RoughCut.lua launcher
 
--- Import UI modules
+print("[RoughCut] roughcut_main.lua loaded - version 0.3.1")
+
+-- Import UI modules - paths are already set up by the launcher
 local mainWindow = require("ui.main_window")
 local navigation = require("ui.navigation")
 local installDialog = require("ui.install_dialog")
@@ -17,18 +20,32 @@ logger.init()
 -- State tracking
 local installationInProgress = false
 
--- Get project path from script location
+-- Determine project path from module location
 local function getProjectPath()
-    local scriptDir = debug.getinfo(1, "S").source
-    if scriptDir:sub(1, 1) == "@" then
-        scriptDir = scriptDir:sub(2)
+    -- Get the directory of this module
+    local moduleInfo = debug.getinfo(1, "S")
+    if not moduleInfo or not moduleInfo.source then
+        return nil
     end
-    -- Handle both forward slashes and backslashes (Windows compatibility)
-    scriptDir = scriptDir:gsub("\\", "/")
-    -- Get parent directory of lua/ directory
-    local projectPath = scriptDir:gsub("/lua/roughcut%.lua", "")
-    return projectPath
+    
+    local source = moduleInfo.source
+    if source:sub(1, 1) == "@" then
+        source = source:sub(2)
+    end
+    
+    -- Normalize path
+    source = source:gsub("\\", "/")
+    
+    -- Get directory containing this file (should be .../roughcut/lua/)
+    local dir = source:match("^(.*)/") or "."
+    
+    -- Go up one level to get the project root (parent of lua/)
+    local projectRoot = dir:gsub("/[^/]+$", "")
+    
+    return projectRoot
 end
+
+local projectPath = getProjectPath()
 
 -- Check if installation is needed
 local function checkInstallationNeeded()
@@ -50,27 +67,33 @@ end
 
 -- Launch RoughCut main interface
 -- Creates window, adds navigation, and displays to user
-local function launchRoughCut()
-    -- Step 1: Access Resolve API with error handling
-    local ok, resolve = pcall(function() return Resolve() end)
+-- @param resolve The Resolve API object (passed from launcher)
+local function launchRoughCut(resolve)
+    print("[RoughCut] launchRoughCut() called")
     
-    if not ok or not resolve then
-        print("RoughCut: Error - Could not access Resolve API")
-        logger.error("Could not access Resolve API")
+    -- Step 1: Validate Resolve API was passed
+    if not resolve then
+        print("[RoughCut Error] Resolve object not provided")
+        logger.error("Resolve object not provided to launch function")
         return false
     end
     
-    -- Step 2: Get UI Manager
-    local ok_ui, uiManager = pcall(function() return resolve:GetUIManager() end)
+    -- Step 2: Get UI Manager from global fu object
+    if not fu then
+        print("[RoughCut Error] Fusion global object 'fu' not available")
+        logger.error("Fusion global object 'fu' not available - cannot access UI Manager")
+        return false
+    end
+    
+    local ok_ui, uiManager = pcall(function() return fu.UIManager end)
     
     if not ok_ui or not uiManager then
-        print("RoughCut: Error - Could not access UI Manager")
-        logger.error("Could not access UI Manager")
+        print("[RoughCut Error] Could not access UI Manager via fu.UIManager")
+        logger.error("Could not access UI Manager - fu.UIManager unavailable or nil")
         return false
     end
     
     -- Step 3: Check installation
-    local projectPath = getProjectPath()
     logger.info("Project path: " .. projectPath)
     
     if checkInstallationNeeded() then
@@ -161,46 +184,12 @@ local function launchMainWindow(uiManager)
     config.updateLastRun()
     logger.info("Main window launched successfully")
     
-    print("RoughCut: Main window launched successfully")
+    print("[RoughCut] Main window launched successfully")
     return true
 end
 
--- Main entry point when script is run from Resolve menu
-logger.info("RoughCut starting...")
-local success = launchRoughCut()
-
-if not success then
-    -- Fallback: Show error dialog
-    -- Protect against Resolve API failures - use multiple fallback levels
-    local function showErrorFallback(message)
-        -- Level 1: Try Resolve message box
-        local ok, resolve = pcall(function() return Resolve() end)
-        if ok and resolve then
-            local ok_ui, uiManager = pcall(function() return resolve:GetUIManager() end)
-            if ok_ui and uiManager then
-                local ok_msg = pcall(function()
-                    uiManager:ShowMessageBox(
-                        message,
-                        "RoughCut Error",
-                        "OK"
-                    )
-                end)
-                if ok_msg then return end
-            end
-        end
-        
-        -- Level 2: Print to console
-        print("RoughCut Error: " .. message)
-        
-        -- Level 3: Try logging
-        pcall(function()
-            logger.error("Launch failed: " .. message)
-        end)
-    end
-    
-    showErrorFallback(
-        "RoughCut encountered an error launching.\n\n" ..
-        "Please check the Resolve console and logs for details.\n\n" ..
-        "Log location: " .. tostring(logger.getLogPath())
-    )
-end
+-- Export the launch function for the launcher to call
+-- The launcher handles Resolve API access, we just need to be called
+return {
+    launch = launchRoughCut
+}

@@ -1,0 +1,44 @@
+# Installation Structure
+
+This folder contains the files needed to install RoughCut in DaVinci Resolve.
+
+## Quick Install
+
+1. Copy **ONLY** these items to Resolve's Scripts folder:
+   - `RoughCut.lua` (the launcher)
+   - `roughcut/` folder (the actual plugin)
+
+2. Do NOT copy individual files from inside `roughcut/lua/` - they should stay inside the folder.
+
+## Where to Find the Scripts Folder
+
+- **Windows**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Scripts\`
+- **macOS**: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Workflow Integration Scripts/`
+
+## Correct Structure After Installation
+
+```
+Workflow Integration Scripts/
+├── RoughCut.lua              ← Single menu item (launcher)
+└── roughcut/
+    ├── lua/
+    │   ├── roughcut_main.lua ← Main module (NOT a menu item)
+    │   ├── ui/               ← UI components (NOT in menu)
+    │   ├── utils/            ← Utilities (NOT in menu)
+    │   └── ...
+    ├── src/                  ← Python backend
+    └── templates/            ← Format templates
+```
+
+**Important**: Only `RoughCut.lua` should be in the Scripts folder root. If you see `roughcut_main.lua` there, remove it!
+
+## Troubleshooting
+
+**Problem**: You see multiple menu items like "main_window", "navigation", "media_browser"
+**Solution**: You've copied the individual .lua files incorrectly. Delete them and only keep `RoughCut.lua` and the `roughcut/` folder.
+
+**Problem**: Nothing happens when you select RoughCut from the menu
+**Solution**: 
+1. Check the Resolve console (Workspace > Console) for error messages
+2. Verify the `roughcut/` folder is in the same directory as `RoughCut.lua`
+3. Check that Python 3.10+ is installed for the backend features

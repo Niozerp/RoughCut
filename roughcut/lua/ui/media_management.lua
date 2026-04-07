@@ -976,7 +976,7 @@ function mediaManagement.showReindexConfirmation()
         })
         
         -- What it will do
-        dialog:Add({{
+        dialog:Add({
             type = "Label",
             text = "This will:",
             font = { size = 11, bold = true }

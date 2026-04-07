@@ -1,6 +1,7 @@
 -- RoughCut Installation Progress Dialog
 -- Displays installation progress with step indicators and cancel button
 -- Compatible with DaVinci Resolve's Lua scripting environment
+-- Uses correct Fusion UI API with bmd.UIDispatcher
 
 local installDialog = {}
 
@@ -12,26 +13,44 @@ local DIALOG_CONFIG = {
     id = "RoughCutInstallDialog"
 }
 
--- UI element references
-local windowRef = nil
-local progressBarRef = nil
-local statusLabelRef = nil
-local stepLabelRef = nil
-local timeLabelRef = nil
-local cancelButtonRef = nil
-local uiManagerRef = nil
+-- UI references
+local winRef = nil
+local uiRef = nil
+local dispRef = nil
+
+-- Reset dialog state to prevent pollution between installations
+local function resetDialogState()
+    winRef = nil
+    uiRef = nil
+    dispRef = nil
+    isCancelled = false
+    startTime = nil
+    currentStep = 0
+    onCancelCallback = nil
+end
+
+-- Widget IDs for event handling
+local WIDGET_IDS = {
+    cancelButton = "CancelButton",
+    headerLabel = "HeaderLabel",
+    statusLabel = "StatusLabel",
+    stepLabel = "StepLabel",
+    progressSlider = "ProgressSlider",
+    timeLabel = "TimeLabel",
+    etaLabel = "EtaLabel"
+}
 
 -- State tracking
 local isCancelled = false
 local startTime = nil
 local currentStep = 0
-local totalSteps = 5
+local totalSteps = 6
 
 -- Callback function for cancel action
 local onCancelCallback = nil
 
 -- Create the installation progress dialog
--- @param uiManager Resolve UI Manager instance
+-- @param uiManager Resolve UI Manager instance (fu.UIManager)
 -- @return window table or nil on error
 function installDialog.create(uiManager)
     if not uiManager then
@@ -39,174 +58,158 @@ function installDialog.create(uiManager)
         return nil
     end
     
-    uiManagerRef = uiManager
+    -- Check if bmd is available
+    if not bmd then
+        print("RoughCut: Error - bmd module not available (required for UIDispatcher)")
+        resetDialogState()
+        return nil
+    end
+    
+    uiRef = uiManager
     isCancelled = false
     startTime = os.time()
     currentStep = 0
     
-    -- Create window
-    local ok, window = pcall(function()
-        return uiManager:Add({
-            type = "Window",
-            id = DIALOG_CONFIG.id,
-            title = DIALOG_CONFIG.title,
-            width = DIALOG_CONFIG.width,
-            height = DIALOG_CONFIG.height,
-            spacing = 15,
-            padding = 20
-        })
+    -- Create the UIDispatcher - THIS IS REQUIRED!
+    local ok, disp = pcall(function()
+        return bmd.UIDispatcher(uiManager)
     end)
     
-    if not ok or not window then
-        print("RoughCut: Error - Failed to create install dialog")
+    if not ok or not disp then
+        print("RoughCut: Error - Failed to create UIDispatcher: " .. tostring(disp))
+        resetDialogState()
         return nil
     end
     
-    windowRef = window
+    dispRef = disp
     
-    -- Add header label
-    local okHeader, headerLabel = pcall(function()
-        return window:Add({
-            type = "Label",
-            text = "Setting up RoughCut Python Backend",
-            font = { size = 16, bold = true },
-            alignment = { alignHCenter = true }
+    -- Create window using disp:AddWindow() with nested UI layout
+    local ok2, win = pcall(function()
+        return disp:AddWindow({
+            ID = DIALOG_CONFIG.id,
+            WindowTitle = DIALOG_CONFIG.title,
+            Geometry = {100, 100, DIALOG_CONFIG.width, DIALOG_CONFIG.height},
+            
+            -- Main vertical layout with all children defined declaratively
+            uiManager:VGroup{
+                ID = "MainLayout",
+                Spacing = 15,
+                Weight = 1.0,
+                
+                -- Header label
+                uiManager:Label{
+                    ID = WIDGET_IDS.headerLabel,
+                    Text = "Setting up RoughCut Python Backend",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 16px; font-weight: bold;"
+                },
+                
+                -- Status label
+                uiManager:Label{
+                    ID = WIDGET_IDS.statusLabel,
+                    Text = "Checking Python installation...",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 12px;"
+                },
+                
+                -- Step counter label
+                uiManager:Label{
+                    ID = WIDGET_IDS.stepLabel,
+                    Text = "Step 1 of 6",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 11px;"
+                },
+                
+                -- Progress slider (disabled to look like progress bar)
+                uiManager:Slider{
+                    ID = WIDGET_IDS.progressSlider,
+                    Minimum = 0,
+                    Maximum = 100,
+                    Value = 0,
+                    Weight = 0.0,
+                    Enabled = false  -- Makes it look like a progress bar
+                },
+                
+                -- Time elapsed label
+                uiManager:Label{
+                    ID = WIDGET_IDS.timeLabel,
+                    Text = "Time elapsed: 0s",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 10px;"
+                },
+                
+                -- ETA label
+                uiManager:Label{
+                    ID = WIDGET_IDS.etaLabel,
+                    Text = "Estimated time remaining: calculating...",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 10px; font-style: italic;"
+                },
+                
+                -- Spacer to push button to bottom
+                uiManager:Label{
+                    ID = "Spacer",
+                    Text = "",
+                    Weight = 1.0
+                },
+                
+                -- Horizontal group for button (centered)
+                uiManager:HGroup{
+                    ID = "ButtonGroup",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    
+                    -- Cancel button
+                    uiManager:Button{
+                        ID = WIDGET_IDS.cancelButton,
+                        Text = "Cancel Installation",
+                        Weight = 0.0,
+                        MinimumSize = {150, 30}
+                    }
+                }
+            }
         })
     end)
     
-    if not okHeader then
-        print("RoughCut: Warning - Could not add install dialog header")
+    if not ok2 or not win then
+        print("RoughCut: Error - Failed to create install dialog window: " .. tostring(win))
+        resetDialogState()
+        return nil
     end
     
-    -- Add status label
-    local okStatus, statusLabel = pcall(function()
-        return window:Add({
-            type = "Label",
-            id = "StatusLabel",
-            text = "Checking Python installation...",
-            font = { size = 12 },
-            alignment = { alignHCenter = true }
-        })
-    end)
+    winRef = win
     
-    if okStatus then
-        statusLabelRef = statusLabel
-    else
-        print("RoughCut: Warning - Could not add status label")
-    end
-    
-    -- Add step counter label
-    local okStep, stepLabel = pcall(function()
-        return window:Add({
-            type = "Label",
-            id = "StepLabel",
-            text = "Step 1 of 5",
-            font = { size = 11 },
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    if okStep then
-        stepLabelRef = stepLabel
-    else
-        print("RoughCut: Warning - Could not add step label")
-    end
-    
-    -- Add progress bar
-    local okProgress, progressBar = pcall(function()
-        return window:Add({
-            type = "ProgressBar",
-            id = "InstallProgressBar",
-            minimum = 0,
-            maximum = 100,
-            value = 0,
-            width = 400
-        })
-    end)
-    
-    if okProgress then
-        progressBarRef = progressBar
-    else
-        print("RoughCut: Warning - Could not add progress bar")
-    end
-    
-    -- Add time elapsed label
-    local okTime, timeLabel = pcall(function()
-        return window:Add({
-            type = "Label",
-            id = "TimeLabel",
-            text = "Time elapsed: 0s",
-            font = { size = 10 },
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    if okTime then
-        timeLabelRef = timeLabel
-    else
-        print("RoughCut: Warning - Could not add time label")
-    end
-    
-    -- Add estimated time remaining label
-    local okEta, etaLabel = pcall(function()
-        return window:Add({
-            type = "Label",
-            id = "EtaLabel",
-            text = "Estimated time remaining: calculating...",
-            font = { size = 10, italic = true },
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    if not okEta then
-        print("RoughCut: Warning - Could not add ETA label")
-    end
-    
-    -- Add cancel button
-    local okCancel, cancelButton = pcall(function()
-        return window:Add({
-            type = "Button",
-            id = "CancelButton",
-            text = "Cancel Installation",
-            width = 150,
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    if okCancel then
-        cancelButtonRef = cancelButton
-        -- Set up cancel button callback
-        local okClick, _ = pcall(function()
-            cancelButton.Clicked = function()
-                isCancelled = true
-                if onCancelCallback then
-                    onCancelCallback()
-                end
-                print("RoughCut: Installation cancelled by user")
-            end
-        end)
-        
-        if not okClick then
-            print("RoughCut: Warning - Could not set cancel button callback")
+    -- Set up event handler for cancel button using window.On table
+    -- Fusion uses win.On.ElementID.EventName pattern
+    win.On = win.On or {}
+    win.On[WIDGET_IDS.cancelButton] = win.On[WIDGET_IDS.cancelButton] or {}
+    win.On[WIDGET_IDS.cancelButton].Clicked = function(ev)
+        isCancelled = true
+        if onCancelCallback then
+            onCancelCallback()
         end
-    else
-        print("RoughCut: Warning - Could not add cancel button")
+        print("RoughCut: Installation cancelled by user")
     end
     
     print("RoughCut: Install dialog created successfully")
-    return window
+    return win
 end
 
--- Show the installation dialog
+-- Show the installation dialog (non-modal)
 -- @return boolean indicating success
 function installDialog.show()
-    if not windowRef then
+    if not winRef then
         print("RoughCut: Error - Cannot show install dialog, not created")
         return false
     end
     
     local ok, _ = pcall(function()
-        windowRef:Show()
+        winRef:Show()
     end)
     
     if not ok then
@@ -214,19 +217,24 @@ function installDialog.show()
         return false
     end
     
+    -- NOTE: We do NOT call disp:RunLoop() here because this is a non-blocking dialog.
+    -- The installation runs in the background while the dialog is shown.
+    -- The calling code is responsible for periodically calling updateProgress()
+    -- and checking isCancelled() during the installation process.
+    
     return true
 end
 
 -- Hide the installation dialog
 -- @return boolean indicating success
 function installDialog.hide()
-    if not windowRef then
+    if not winRef then
         print("RoughCut: Error - Cannot hide install dialog, not created")
         return false
     end
     
     local ok, _ = pcall(function()
-        windowRef:Hide()
+        winRef:Hide()
     end)
     
     if not ok then
@@ -240,79 +248,175 @@ end
 -- Close and destroy the installation dialog
 -- @return boolean indicating success
 function installDialog.close()
-    if not windowRef then
+    if not winRef then
         return true  -- Already closed
     end
     
+    -- Exit the dispatcher loop if it was running (for modal usage)
+    if dispRef then
+        local ok, _ = pcall(function()
+            dispRef:ExitLoop()
+        end)
+        if not ok then
+            -- ExitLoop might fail if not running, that's ok
+        end
+    end
+    
+    -- Close the window
     local ok, _ = pcall(function()
-        windowRef:Close()
+        winRef:Close()
     end)
     
     if not ok then
         print("RoughCut: Warning - Error closing install dialog")
     end
     
-    -- Clear references
-    windowRef = nil
-    progressBarRef = nil
-    statusLabelRef = nil
-    stepLabelRef = nil
-    timeLabelRef = nil
-    cancelButtonRef = nil
+    -- Clear all references using reset function
+    resetDialogState()
     
     return true
 end
 
 -- Update progress display
--- @param currentStep Current step number (1-based)
--- @param totalSteps Total number of steps
+-- @param stepNum Current step number (1-based)
+-- @param totalStepCount Total number of steps
 -- @param stepName Human-readable step description
 -- @param percent Completion percentage (0-100)
 -- @return boolean indicating success
-function installDialog.updateProgress(currentStep, totalSteps, stepName, percent)
-    if not windowRef then
+function installDialog.updateProgress(stepNum, totalStepCount, stepName, percent)
+    if not winRef then
         return false
     end
     
-    -- Update step label
-    if stepLabelRef then
+    currentStep = stepNum
+    totalSteps = totalStepCount
+    
+    -- Update step label via window's child reference
+    if winRef.On then
         local ok, _ = pcall(function()
-            stepLabelRef.Text = string.format("Step %d of %d", currentStep, totalSteps)
+            -- Access through the window's FindChild or direct reference if available
+            -- In this API pattern, we can update via winRef's On table or FindChild
+            local label = winRef:FindChild(WIDGET_IDS.stepLabel)
+            if label then
+                label.Text = string.format("Step %d of %d", stepNum, totalStepCount)
+            end
         end)
         if not ok then
-            print("RoughCut: Warning - Could not update step label")
+            -- Fallback: try direct property access
+            local ok2, _ = pcall(function()
+                if winRef[WIDGET_IDS.stepLabel] then
+                    winRef[WIDGET_IDS.stepLabel].Text = string.format("Step %d of %d", stepNum, totalStepCount)
+                end
+            end)
+            if not ok2 then
+                print("RoughCut: Warning - Could not update step label")
+            end
         end
     end
     
-    -- Update status label with step name
-    if statusLabelRef then
-        local ok, _ = pcall(function()
-            statusLabelRef.Text = stepName or "Processing..."
+    -- Update status label
+    local ok, _ = pcall(function()
+        local label = winRef:FindChild(WIDGET_IDS.statusLabel)
+        if label then
+            label.Text = stepName or "Processing..."
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.statusLabel] then
+                winRef[WIDGET_IDS.statusLabel].Text = stepName or "Processing..."
+            end
         end)
-        if not ok then
+        if not ok2 then
             print("RoughCut: Warning - Could not update status label")
         end
     end
     
-    -- Update progress bar
-    if progressBarRef then
-        local ok, _ = pcall(function()
-            progressBarRef.Value = math.max(0, math.min(100, percent or 0))
+    -- Update progress slider
+    local ok, _ = pcall(function()
+        local slider = winRef:FindChild(WIDGET_IDS.progressSlider)
+        if slider then
+            slider.Value = math.max(0, math.min(100, percent or 0))
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.progressSlider] then
+                winRef[WIDGET_IDS.progressSlider].Value = math.max(0, math.min(100, percent or 0))
+            end
         end)
-        if not ok then
-            print("RoughCut: Warning - Could not update progress bar")
+        if not ok2 then
+            print("RoughCut: Warning - Could not update progress slider")
         end
     end
     
     -- Update time elapsed
-    if timeLabelRef and startTime then
+    if startTime then
         local elapsed = os.time() - startTime
-        local ok, _ = pcall(function()
-            timeLabelRef.Text = string.format("Time elapsed: %ds", elapsed)
+        local ok3, _ = pcall(function()
+            local label = winRef:FindChild(WIDGET_IDS.timeLabel)
+            if label then
+                label.Text = string.format("Time elapsed: %ds", elapsed)
+            end
         end)
-        if not ok then
-            print("RoughCut: Warning - Could not update time label")
+        if not ok3 then
+            local ok4, _ = pcall(function()
+                if winRef[WIDGET_IDS.timeLabel] then
+                    winRef[WIDGET_IDS.timeLabel].Text = string.format("Time elapsed: %ds", elapsed)
+                end
+            end)
+            if not ok4 then
+                print("RoughCut: Warning - Could not update time label")
+            end
         end
+        
+    -- Update ETA
+    if percent and percent > 0 then
+        local totalEstimated = elapsed / (percent / 100)
+        local remaining = math.max(0, totalEstimated - elapsed)
+        local ok5, _ = pcall(function()
+            local label = winRef:FindChild(WIDGET_IDS.etaLabel)
+            if label then
+                if remaining > 60 then
+                    label.Text = string.format("Estimated time remaining: ~%dm", math.ceil(remaining / 60))
+                else
+                    label.Text = string.format("Estimated time remaining: ~%ds", math.ceil(remaining))
+                end
+            end
+        end)
+        if not ok5 then
+            local ok6, _ = pcall(function()
+                if winRef[WIDGET_IDS.etaLabel] then
+                    if remaining > 60 then
+                        winRef[WIDGET_IDS.etaLabel].Text = string.format("Estimated time remaining: ~%dm", math.ceil(remaining / 60))
+                    else
+                        winRef[WIDGET_IDS.etaLabel].Text = string.format("Estimated time remaining: ~%ds", math.ceil(remaining))
+                    end
+                end
+            end)
+            if not ok6 then
+                print("RoughCut: Warning - Could not update ETA label")
+            end
+        end
+    else
+        -- percent is 0 or nil, show calculating message
+        local ok5, _ = pcall(function()
+            local label = winRef:FindChild(WIDGET_IDS.etaLabel)
+            if label then
+                label.Text = "Estimated time remaining: calculating..."
+            end
+        end)
+        if not ok5 then
+            local ok6, _ = pcall(function()
+                if winRef[WIDGET_IDS.etaLabel] then
+                    winRef[WIDGET_IDS.etaLabel].Text = "Estimated time remaining: calculating..."
+                end
+            end)
+            if not ok6 then
+                print("RoughCut: Warning - Could not update ETA label")
+            end
+        end
+    end
     end
     
     return true
@@ -349,11 +453,24 @@ end
 -- Enable or disable cancel button
 -- @param enabled Boolean indicating if button should be enabled
 function installDialog.setCancelEnabled(enabled)
-    if cancelButtonRef then
-        local ok, _ = pcall(function()
-            cancelButtonRef.Enabled = enabled
+    if not winRef then
+        return
+    end
+    
+    local ok, _ = pcall(function()
+        local btn = winRef:FindChild(WIDGET_IDS.cancelButton)
+        if btn then
+            btn.Enabled = enabled
+        end
+    end)
+    
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.cancelButton] then
+                winRef[WIDGET_IDS.cancelButton].Enabled = enabled
+            end
         end)
-        if not ok then
+        if not ok2 then
             print("RoughCut: Warning - Could not update cancel button state")
         end
     end
@@ -361,46 +478,143 @@ end
 
 -- Update dialog text to show completion
 function installDialog.showCompletion()
-    if statusLabelRef then
-        local ok, _ = pcall(function()
-            statusLabelRef.Text = "Installation complete!"
+    if not winRef then
+        return
+    end
+    
+    -- Update status label
+    local ok, _ = pcall(function()
+        local label = winRef:FindChild(WIDGET_IDS.statusLabel)
+        if label then
+            label.Text = "Installation complete!"
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.statusLabel] then
+                winRef[WIDGET_IDS.statusLabel].Text = "Installation complete!"
+            end
         end)
-        if not ok then
+        if not ok2 then
             print("RoughCut: Warning - Could not update completion status")
         end
     end
     
-    if progressBarRef then
-        local ok, _ = pcall(function()
-            progressBarRef.Value = 100
+    -- Update header
+    local ok, _ = pcall(function()
+        local label = winRef:FindChild(WIDGET_IDS.headerLabel)
+        if label then
+            label.Text = "RoughCut Setup Complete"
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.headerLabel] then
+                winRef[WIDGET_IDS.headerLabel].Text = "RoughCut Setup Complete"
+            end
         end)
-        if not ok then
+        if not ok2 then
+            print("RoughCut: Warning - Could not update header")
+        end
+    end
+    
+    -- Update progress to 100%
+    local ok, _ = pcall(function()
+        local slider = winRef:FindChild(WIDGET_IDS.progressSlider)
+        if slider then
+            slider.Value = 100
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.progressSlider] then
+                winRef[WIDGET_IDS.progressSlider].Value = 100
+            end
+        end)
+        if not ok2 then
             print("RoughCut: Warning - Could not set final progress")
         end
     end
     
     -- Disable cancel button
     installDialog.setCancelEnabled(false)
+    
+    -- Update button text to "Close"
+    local ok, _ = pcall(function()
+        local btn = winRef:FindChild(WIDGET_IDS.cancelButton)
+        if btn then
+            btn.Text = "Close"
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.cancelButton] then
+                winRef[WIDGET_IDS.cancelButton].Text = "Close"
+            end
+        end)
+        if not ok2 then
+            print("RoughCut: Warning - Could not update button text")
+        end
+    end
 end
 
 -- Update dialog to show error state
 -- @param errorMessage Error message to display
 function installDialog.showError(errorMessage)
-    if statusLabelRef then
-        local ok, _ = pcall(function()
-            statusLabelRef.Text = "Error: " .. (errorMessage or "Installation failed")
+    if not winRef then
+        return
+    end
+    
+    -- Update status label
+    local ok, _ = pcall(function()
+        local label = winRef:FindChild(WIDGET_IDS.statusLabel)
+        if label then
+            label.Text = "Error: " .. (errorMessage or "Installation failed")
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.statusLabel] then
+                winRef[WIDGET_IDS.statusLabel].Text = "Error: " .. (errorMessage or "Installation failed")
+            end
         end)
-        if not ok then
+        if not ok2 then
             print("RoughCut: Warning - Could not update error status")
         end
     end
     
-    -- Enable cancel button (now acts as "Close")
-    if cancelButtonRef then
-        local ok, _ = pcall(function()
-            cancelButtonRef.Text = "Close"
+    -- Update header
+    local ok, _ = pcall(function()
+        local label = winRef:FindChild(WIDGET_IDS.headerLabel)
+        if label then
+            label.Text = "RoughCut Setup Failed"
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.headerLabel] then
+                winRef[WIDGET_IDS.headerLabel].Text = "RoughCut Setup Failed"
+            end
         end)
-        if not ok then
+        if not ok2 then
+            print("RoughCut: Warning - Could not update header")
+        end
+    end
+    
+    -- Change button text to "Close"
+    local ok, _ = pcall(function()
+        local btn = winRef:FindChild(WIDGET_IDS.cancelButton)
+        if btn then
+            btn.Text = "Close"
+        end
+    end)
+    if not ok then
+        local ok2, _ = pcall(function()
+            if winRef[WIDGET_IDS.cancelButton] then
+                winRef[WIDGET_IDS.cancelButton].Text = "Close"
+            end
+        end)
+        if not ok2 then
             print("RoughCut: Warning - Could not update cancel button text")
         end
     end

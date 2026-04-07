@@ -1,0 +1,45 @@
+[2026-04-05 22:51:56] [INFO] RoughCut starting...
+[2026-04-05 22:52:00] [ERROR] Could not access Resolve API
+[2026-04-05 22:52:04] [ERROR] Launch failed: RoughCut encountered an error launching.
+
+Please check the Resolve console (Workspace > Console) for details.
+
+Common issues:
+- Python backend not installed
+- Missing roughcut/ folder next to RoughCut.lua
+- Incorrect installation
+
+Log location: C:\Users\niozerp\.roughcut\roughcut.log
+[2026-04-05 22:58:05] [ERROR] Resolve() returned nil
+[2026-04-05 23:01:35] [ERROR] Resolve() returned nil
+[2026-04-05 23:11:13] [ERROR] Resolve() returned nil
+[2026-04-05 23:12:32] [ERROR] Resolve() returned nil
+[2026-04-05 23:24:55] [ERROR] Could not access UI Manager
+[2026-04-05 23:32:44] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:32:44] [INFO] Installation required, starting setup...
+[2026-04-05 23:32:44] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:32:44] [ERROR] Failed to start installation
+[2026-04-05 23:39:42] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:39:43] [INFO] Installation required, starting setup...
+[2026-04-05 23:39:43] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:39:43] [ERROR] Failed to start installation
+[2026-04-05 23:43:40] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:43:41] [INFO] Installation required, starting setup...
+[2026-04-05 23:43:41] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:43:41] [ERROR] Failed to start installation
+[2026-04-05 23:47:02] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:47:02] [INFO] Installation required, starting setup...
+[2026-04-05 23:47:02] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:47:02] [ERROR] Failed to start installation
+[2026-04-05 23:50:15] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:50:15] [INFO] Installation required, starting setup...
+[2026-04-05 23:50:16] [ERROR] Installation failed: Verification failed
+[2026-04-05 23:50:38] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:50:38] [INFO] Installation required, starting setup...
+[2026-04-05 23:50:39] [ERROR] Installation failed: Verification failed
+[2026-04-05 23:50:56] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:50:56] [INFO] Installation required, starting setup...
+[2026-04-05 23:50:57] [ERROR] Installation failed: Verification failed
+[2026-04-05 23:55:09] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:55:09] [INFO] Installation required, starting setup...
+[2026-04-05 23:55:10] [ERROR] Installation failed: poetry install failed with exit code -1
