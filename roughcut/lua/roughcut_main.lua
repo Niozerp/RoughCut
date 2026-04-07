@@ -7,7 +7,6 @@ print("[RoughCut] roughcut_main.lua loaded - version 0.3.1")
 
 -- Import UI modules - paths are already set up by the launcher
 local mainWindow = require("ui.main_window")
-local navigation = require("ui.navigation")
 local installDialog = require("ui.install_dialog")
 local installOrchestrator = require("install_orchestrator")
 local config = require("utils.config")
@@ -76,19 +75,11 @@ local function launchMainWindow(uiManager)
         return false
     end
     
-    -- Step 2: Set UI Manager for navigation (needed for child windows)
-    navigation.setUIManager(uiManager)
+    -- NOTE: Navigation temporarily disabled - will be restored in future update
+    -- Future Step 2: Set UI Manager for navigation
+    -- Future Step 3: Add navigation buttons
     
-    -- Step 3: Add navigation buttons
-    local navSuccess = navigation.create(window)
-    
-    if not navSuccess then
-        print("RoughCut: Error - Failed to create navigation")
-        logger.error("Failed to create navigation")
-        return false
-    end
-    
-    -- Step 4: Show the window
+    -- Step 2: Show the window
     local showSuccess = mainWindow.show(window)
     
     if not showSuccess then
@@ -97,7 +88,7 @@ local function launchMainWindow(uiManager)
         return false
     end
     
-    -- Update last run timestamp
+    -- Step 3: Update last run timestamp
     config.updateLastRun()
     logger.info("Main window launched successfully")
     

@@ -228,6 +228,12 @@ local function deployLuaPlugin(projectDir)
         return false, "Deployment failed: " .. (deployResult.stderr or deployResult.stdout or "Unknown error")
     end
     
+    -- Check if deployment was skipped (already in correct location)
+    -- Case-insensitive check for 'skipped' in stdout
+    if deployResult.stdout and deployResult.stdout:lower():find("skipped") then
+        print("RoughCut: Deployment skipped - already in correct location")
+    end
+    
     print("RoughCut: Deployment completed successfully")
     return true, nil
 end

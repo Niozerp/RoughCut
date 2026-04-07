@@ -62,6 +62,7 @@ def deploy_lua_plugin(project_root: Path, force: bool = False) -> dict:
         "installed_path": None,
         "files_copied": [],
         "backup_path": None,
+        "skipped": False,
     }
     
     # Find Resolve scripts path
@@ -70,34 +71,84 @@ def deploy_lua_plugin(project_root: Path, force: bool = False) -> dict:
         result["error"] = "Could not find DaVinci Resolve Scripts folder"
         return result
     
-    # Source and destination paths
-    # The lua folder is directly under project_root, not project_root/roughcut/lua
-    lua_source = project_root / "lua"
-    if not lua_source.exists():
-        result["error"] = f"Lua source directory not found: {lua_source}"
+    # Normalize project_root path
+    project_root = Path(project_root).resolve()
+    
+    # Validate project_root is a directory
+    if not project_root.is_dir():
+        result["error"] = f"Project path is not a directory: {project_root}"
         return result
     
-    # Create roughcut folder in Scripts/Utility (this is the plugin folder)
+    # Check if we're already in the scripts directory (already deployed)
+    try:
+        # Check if project_root is inside or equal to scripts_path
+        project_root.relative_to(scripts_path)
+        # If we get here, project_root is inside scripts_path - already deployed
+        print(f"Project is already in Scripts folder at: {project_root}")
+        result["success"] = True
+        result["skipped"] = True
+        result["installed_path"] = str(project_root)
+        result["message"] = "Already deployed in correct location"
+        return result
+    except ValueError:
+        # project_root is not inside scripts_path - need to deploy
+        pass
+    
+    # Source and destination paths
+    lua_source = project_root / "lua"
+    
+    if not lua_source.exists():
+        # Try alternative: maybe lua is in roughcut/lua
+        alt_source = project_root / "roughcut" / "lua"
+        if alt_source.exists():
+            lua_source = alt_source
+            print(f"Using alternative lua source: {lua_source}")
+        else:
+            result["error"] = f"Lua source directory not found: {lua_source}"
+            return result
+    
+    if not lua_source.is_dir():
+        result["error"] = f"Lua source path exists but is not a directory: {lua_source}"
+        return result
+    
+    # Target is the roughcut folder in Scripts/Utility
     deploy_target = scripts_path / "roughcut"
+    
+    # If target exists and is the same as source, skip
+    if deploy_target.exists() and deploy_target.resolve() == project_root:
+        print(f"Target is same as source, skipping deployment")
+        result["success"] = True
+        result["skipped"] = True
+        result["installed_path"] = str(deploy_target)
+        return result
     
     # Backup existing installation if present
     if deploy_target.exists():
+        # Check if it's a symlink and remove it to avoid recursion issues
+        if deploy_target.is_symlink():
+            try:
+                deploy_target.unlink()
+            except Exception as e:
+                result["error"] = f"Failed to remove existing symlink: {e}"
+                return result
+        
         if not force:
             result["error"] = f"RoughCut already installed at {deploy_target}. Use --force to overwrite."
             return result
         
-        # Create backup
-        backup_path = scripts_path / f"roughcut_backup_{int(__import__('time').time())}"
-        try:
-            shutil.move(str(deploy_target), str(backup_path))
-            result["backup_path"] = str(backup_path)
-        except Exception as e:
-            result["error"] = f"Failed to backup existing installation: {e}"
-            return result
+        # Create backup (only if not a symlink which we already removed)
+        if deploy_target.exists():
+            backup_path = scripts_path / f"roughcut_backup_{int(__import__('time').time())}"
+            try:
+                shutil.move(str(deploy_target), str(backup_path))
+                result["backup_path"] = str(backup_path)
+            except Exception as e:
+                result["error"] = f"Failed to backup existing installation: {e}"
+                return result
     
     # Copy lua directory to target
     try:
-        shutil.copytree(lua_source, deploy_target)
+        shutil.copytree(str(lua_source), str(deploy_target))
         result["installed_path"] = str(deploy_target)
         result["success"] = True
         
@@ -107,7 +158,10 @@ def deploy_lua_plugin(project_root: Path, force: bool = False) -> dict:
                 result["files_copied"].append(str(item.relative_to(deploy_target)))
         
     except Exception as e:
-        result["error"] = f"Failed to copy files: {e}"
+        # Sanitize error message - don't expose full paths in production
+        error_msg = str(e)
+        # Only include first 200 chars of error to avoid leaking sensitive paths
+        result["error"] = f"Failed to copy files: {error_msg[:200]}"
         return result
     
     return result
