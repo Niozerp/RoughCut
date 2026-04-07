@@ -36,17 +36,19 @@ end
 -- Check if roughcut Python package is installed system-wide
 -- @return boolean true if roughcut is installed globally
 local function isRoughcutInstalledGlobally()
+    local GLOBAL_VERIFY_MARKER = "INSTALLED"
+    
     -- Try importing roughcut with the system's default Python
-    local checkCmd = {"python", "-c", "import roughcut; print('INSTALLED')"}
+    local checkCmd = {"python", "-c", "import roughcut; print('" .. GLOBAL_VERIFY_MARKER .. "')"}
     local result = processUtils.run(checkCmd, nil, 5)
-    if result.success and result.stdout:find("INSTALLED") then
+    if result.success and result.stdout and #result.stdout > 0 and result.stdout:find(GLOBAL_VERIFY_MARKER) then
         return true
     end
     
     -- Try with python3
-    checkCmd = {"python3", "-c", "import roughcut; print('INSTALLED')"}
+    checkCmd = {"python3", "-c", "import roughcut; print('" .. GLOBAL_VERIFY_MARKER .. "')"}
     result = processUtils.run(checkCmd, nil, 5)
-    return result.success and result.stdout:find("INSTALLED")
+    return result.success and result.stdout and #result.stdout > 0 and result.stdout:find(GLOBAL_VERIFY_MARKER)
 end
 
 -- Find pyproject.toml in common locations
@@ -150,33 +152,83 @@ local function findPyprojectToml()
     return nil
 end
 
+-- Verification constants
+local VERIFY_OK = "OK"
+
 -- Deploy Lua plugin files to Resolve Scripts folder
 -- @param projectDir Absolute path to project directory
 -- @return boolean success, string error
 local function deployLuaPlugin(projectDir)
+    -- Validate input first (Fix #1, #8)
+    if not projectDir or projectDir == "" then
+        print("RoughCut: ERROR - projectDir is nil or empty")
+        return false, "projectDir is required and cannot be empty"
+    end
+    
+    print("RoughCut: Deploying Lua plugin from: " .. tostring(projectDir))
+    
     local deployScript = projectDir .. "/scripts/deploy.py"
     
-    -- Escape the path for safe shell usage
-    local escapedDeployScript = processUtils.shellEscape(deployScript)
+    print("RoughCut: Checking for deploy script at: " .. deployScript)
     
     -- Check if deploy script exists
-    local checkResult = processUtils.run({"python3", "-c", "import os; print('OK' if os.path.exists(" .. escapedDeployScript .. ") else 'MISSING')"}, nil, 5)
-    if not checkResult.success or not checkResult.stdout:find("OK") then
-        -- Try python
-        checkResult = processUtils.run({"python", "-c", "import os; print('OK' if os.path.exists(" .. escapedDeployScript .. ") else 'MISSING')"}, nil, 5)
+    -- Use single quotes for Python string to avoid shell escaping issues (Fix #2)
+    local checkCmd = {"python", "-c", "import os; print('" .. VERIFY_OK .. "' if os.path.exists('" .. deployScript .. "') else 'MISSING')"}
+    print("RoughCut: Running deploy script check: " .. table.concat(checkCmd, " "))
+    local checkResult = processUtils.run(checkCmd, nil, 5)
+    print("RoughCut: Deploy script check result - success: " .. tostring(checkResult.success) .. ", stdout: " .. tostring(checkResult.stdout or "nil"))
+    
+    local pythonFound = false
+    if checkResult.success and checkResult.stdout and checkResult.stdout:find(VERIFY_OK) then
+        pythonFound = true
+    else
+        -- Try python3
+        checkCmd[1] = "python3"
+        print("RoughCut: Retrying with python3...")
+        checkResult = processUtils.run(checkCmd, nil, 5)
+        print("RoughCut: Python3 check result - success: " .. tostring(checkResult.success) .. ", stdout: " .. tostring(checkResult.stdout or "nil"))
+        
+        if checkResult.success and checkResult.stdout and checkResult.stdout:find(VERIFY_OK) then
+            pythonFound = true
+        end
     end
     
-    if not checkResult.success or not checkResult.stdout:find("OK") then
-        return false, "Deploy script not found at: " .. deployScript
+    if not pythonFound then
+        local errorMsg = "Deploy script not found at: " .. deployScript
+        if not checkResult.success then
+            errorMsg = errorMsg .. " (Python command failed: " .. tostring(checkResult.error or "unknown error") .. ")"
+        end
+        print("RoughCut: ERROR - " .. errorMsg)
+        return false, errorMsg
     end
     
-    -- Run deploy script
-    local deployResult = processUtils.runPython(deployScript, {"--project-path", projectDir}, projectDir, 60)
+    print("RoughCut: Deploy script found, executing...")
     
-    if not deployResult.success then
+    -- Run deploy script with --force to handle already-installed case
+    -- Note: --force is intentional for auto-install; overwrites existing without prompt (Fix #7)
+    local deployResult = processUtils.runPython(deployScript, {"--project-path", projectDir, "--force"}, projectDir, 60)
+    
+    print("RoughCut: Deploy result - success: " .. tostring(deployResult.success))
+    print("RoughCut: Deploy result - exitCode: " .. tostring(deployResult.exitCode or "nil"))
+    print("RoughCut: Deploy result - stdout: " .. tostring(deployResult.stdout or "nil"))
+    print("RoughCut: Deploy result - stderr: " .. tostring(deployResult.stderr or "nil"))
+    
+    -- Check for errors even on apparent success (Fix #4)
+    if deployResult.stderr and deployResult.stderr:find("[Ee]rror") then
+        print("RoughCut: WARNING - stderr contains error indicators")
+    end
+    
+    -- Validate exitCode explicitly (Fix #5, #10)
+    local validSuccess = deployResult.success
+    if deployResult.exitCode ~= nil and deployResult.exitCode ~= 0 then
+        validSuccess = false
+    end
+    
+    if not validSuccess then
         return false, "Deployment failed: " .. (deployResult.stderr or deployResult.stdout or "Unknown error")
     end
     
+    print("RoughCut: Deployment completed successfully")
     return true, nil
 end
 
@@ -619,7 +671,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             local poetryCmd = installOrchestrator._poetryCmd or "poetry"
             local verifyCommand = {
                 poetryCmd, "run", "python", "-c",
-                "import roughcut; print('OK')"
+                "import roughcut; print('" .. VERIFY_OK .. "')"
             }
             -- Use the source directory we found earlier, or fall back to finding it
             local sourceDir = installOrchestrator._sourceDir or findPyprojectToml()
@@ -630,11 +682,29 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             print("RoughCut: Command: " .. table.concat(verifyCommand, " "))
             local result = processUtils.run(verifyCommand, sourceDir, 30)
             
+            -- Validate exitCode exists (Fix #5)
+            local exitCode = result.exitCode
+            if exitCode == nil then
+                -- Try to derive from success flag
+                exitCode = result.success and 0 or -1
+            end
+            
             print("RoughCut: Verification result - success: " .. tostring(result.success))
+            print("RoughCut: Verification result - exitCode: " .. tostring(exitCode))
             print("RoughCut: Verification result - stdout: " .. tostring(result.stdout or "nil"))
             print("RoughCut: Verification result - stderr: " .. tostring(result.stderr or "nil"))
             
-            if not result.success or not result.stdout:find("OK") then
+            -- Verification passes if command succeeded (exit code 0)
+            -- stdout check is secondary - io.popen on Windows can have empty stdout even on success
+            -- Fix #10: Use exitCode for primary validation
+            local verified = (exitCode == 0)
+            
+            -- Fix #6: Handle empty stdout properly - check length > 0 before find()
+            if not verified and result.stdout and #result.stdout > 0 and result.stdout:find(VERIFY_OK) then
+                verified = true
+            end
+            
+            if not verified then
                 isInstalling = false
                 print("RoughCut: ERROR - Installation verification failed")
                 installDialog.showError("Installation verification failed. Please try again.")
