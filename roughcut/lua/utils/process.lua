@@ -34,13 +34,10 @@ function processUtils.shellEscape(str)
         str = str:gsub('"', '""')  -- Double existing quotes
         return '"' .. str .. '"'
     else
-        -- Unix escaping: wrap in single quotes, handle embedded single quotes
-        -- Escape: $ ` " \ | & ; ( ) < > * ? [ ] { } #
-        if str:find("[%$`\"\\|&;%(%)<>%*%?%[%]%{ }%#]") then
-            -- Use single quotes and escape embedded single quotes
-            return "'" .. str:gsub("'", '\"'\"'"\') .. "'"
-        end
-        return str
+        -- Unix escaping: wrap in single quotes (prevents all shell expansion)
+        -- Replace embedded single quotes with '\'' (end quote, literal quote, start quote)
+        -- This safely handles all special characters: $ ` " \ | & ; ( ) < > * ? [ ] { } #
+        return "'" .. str:gsub("'", "'\"'\"'") .. "'"
     end
 end
 
