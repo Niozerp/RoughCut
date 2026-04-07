@@ -277,7 +277,12 @@ def main() -> int:
     
     # Verify the installation
     print("\nVerifying installation...")
-    verify_result = verify_installation(project_root, Path(result["installed_path"]))
+    # When skipped, installed_path is project_root, but actual Lua files are in lua/ subdirectory
+    verify_path = Path(result["installed_path"])
+    if result.get("skipped") and (verify_path / "lua").exists():
+        # Files are in lua/ subdirectory when deployment is skipped
+        verify_path = verify_path / "lua"
+    verify_result = verify_installation(project_root, verify_path)
     
     for check, passed in verify_result["checks"].items():
         status = "[OK]" if passed else "[FAIL]"
