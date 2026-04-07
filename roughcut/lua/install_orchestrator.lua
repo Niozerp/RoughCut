@@ -742,22 +742,19 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             doInstallStep(6)
             
         elseif step == 6 then
-            -- Complete - show completion and wait for user to close
+            -- Complete - show completion briefly, then hand off to the main UI
             print("RoughCut: Step 6 reached - completing installation")
             installDialog.showCompletion()
             isInstalling = false
-            
-            -- Update button to "Close" and enable it for user to click
-            installDialog.setCancelEnabled(true)
-            installDialog.setCancelCallback(function()
-                print("RoughCut: User closed install dialog after completion")
-                installDialog.close()
-                if onComplete then
-                    onComplete({ success = true })
-                end
-            end)
-            
-            -- Return without closing - let user click Close button
+
+            -- Hand off to the main UI immediately so the user lands in RoughCut
+            -- instead of being left at a completion dialog that requires another click.
+            installDialog.close()
+
+            if onComplete then
+                onComplete({ success = true })
+            end
+
             return
         end
     end

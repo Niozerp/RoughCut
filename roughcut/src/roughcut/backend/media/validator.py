@@ -380,46 +380,6 @@ class MediaValidator:
                     'reason': 'path_error'
                 }
             )
-                        'path': file_path,
-                        'is_file': False,
-                        'reason': 'not_a_file'
-                    }
-                )
-            
-            # Check if file is readable (we can stat it)
-            try:
-                path.stat()
-                return ValidationCheck(
-                    name='file_accessible',
-                    passed=True,
-                    details={
-                        'path': file_path,
-                        'exists': True,
-                        'size_bytes': path.stat().st_size
-                    }
-                )
-            except (OSError, IOError) as e:
-                return ValidationCheck(
-                    name='file_accessible',
-                    passed=False,
-                    details={
-                        'path': file_path,
-                        'exists': True,
-                        'readable': False,
-                        'error': str(e)
-                    }
-                )
-        
-        except Exception as e:
-            return ValidationCheck(
-                name='file_accessible',
-                passed=False,
-                details={
-                    'path': file_path,
-                    'error': str(e),
-                    'reason': 'path_error'
-                }
-            )
     
     def get_supported_codecs(self) -> set[str]:
         """Return set of supported codec names.

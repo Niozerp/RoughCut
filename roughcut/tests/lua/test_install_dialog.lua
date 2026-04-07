@@ -1,7 +1,7 @@
 -- Tests for install_dialog.lua
 -- These tests validate the installation dialog UI component
 
-local installDialog = require("lua.ui.install_dialog")
+local installDialog = require("ui.install_dialog")
 
 -- Mock UI Manager for testing
 local MockUIManager = {}

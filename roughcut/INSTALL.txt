@@ -12,13 +12,13 @@ This folder contains the files needed to install RoughCut in DaVinci Resolve.
 
 ## Where to Find the Scripts Folder
 
-- **Windows**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Scripts\`
-- **macOS**: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Workflow Integration Scripts/`
+- **Windows**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\`
+- **macOS**: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/`
 
 ## Correct Structure After Installation
 
 ```
-Workflow Integration Scripts/
+Utility/
 ├── RoughCut.lua              ← Single menu item (launcher)
 └── roughcut/
     ├── lua/

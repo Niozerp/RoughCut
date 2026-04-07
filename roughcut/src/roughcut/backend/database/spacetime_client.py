@@ -1128,14 +1128,6 @@ class SpacetimeClient:
                 del self._subscriptions[subscription_id]
                 logger.info(f"Unsubscribed from changes: {subscription_id}")
         
-        Args:
-            subscription_id: ID returned from subscribe_to_changes
-        """
-        async with self._subscription_lock:
-            if subscription_id in self._subscriptions:
-                del self._subscriptions[subscription_id]
-                logger.info(f"Unsubscribed from changes: {subscription_id}")
-    
     def get_stats(self) -> Dict[str, Any]:
         """Get client statistics.
         
@@ -1430,18 +1422,6 @@ class SpacetimeClient:
                     await self._client.unsubscribe(ws_subscription_id)
                 except Exception as e:
                     logger.warning(f"Error cleaning up WebSocket subscription: {e}")
-                )
-            else:
-                # WebSocket unavailable - just wait until unsubscribed
-                while subscription_id in self._subscriptions:
-                    await asyncio.sleep(1)
-                    
-        except asyncio.CancelledError:
-            logger.info(f"Subscription {subscription_id} cancelled")
-        except Exception as e:
-            logger.error(f"Subscription {subscription_id} error: {e}")
-
-
 # Module exports
 __all__ = [
     'SpacetimeClient',

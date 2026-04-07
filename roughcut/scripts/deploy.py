@@ -4,59 +4,120 @@
 # ///
 
 #!/usr/bin/env python3
-"""Deployment script for RoughCut plugin.
-
-Copies Lua files to DaVinci Resolve's Scripts folder for menu integration.
-"""
+"""Deploy RoughCut into DaVinci Resolve's Utility Scripts folder."""
 
 from __future__ import annotations
 
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
+
+LAUNCHER_FILENAME = "RoughCut.lua"
+PACKAGE_DIRNAME = "roughcut"
+REQUIRED_PACKAGE_FILES = [
+    Path("pyproject.toml"),
+    Path("lua") / "roughcut_main.lua",
+    Path("lua") / "ui" / "main_window.lua",
+    Path("lua") / "ui" / "install_dialog.lua",
+    Path("lua") / "utils" / "config.lua",
+    Path("scripts") / "deploy.py",
+]
 
 
 def get_resolve_scripts_path() -> Path | None:
-    """Get the DaVinci Resolve Utility Scripts path.
-    
-    Returns:
-        Path to Resolve's Utility Scripts folder or None if not found
-    """
-    # Standard Resolve paths by platform
+    """Return Resolve's Utility Scripts directory if it exists."""
     if sys.platform == "win32":
         resolve_paths = [
-            Path.home() / "AppData" / "Roaming" / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Scripts" / "Utility",
-            Path("C:") / "ProgramData" / "Blackmagic Design" / "DaVinci Resolve" / "Fusion" / "Scripts" / "Utility",
+            Path.home()
+            / "AppData"
+            / "Roaming"
+            / "Blackmagic Design"
+            / "DaVinci Resolve"
+            / "Support"
+            / "Fusion"
+            / "Scripts"
+            / "Utility",
+            Path("C:/ProgramData")
+            / "Blackmagic Design"
+            / "DaVinci Resolve"
+            / "Support"
+            / "Fusion"
+            / "Scripts"
+            / "Utility",
         ]
-    elif sys.platform == "darwin":  # macOS
+    elif sys.platform == "darwin":
         resolve_paths = [
-            Path.home() / "Library" / "Application Support" / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Scripts" / "Utility",
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Blackmagic Design"
+            / "DaVinci Resolve"
+            / "Support"
+            / "Fusion"
+            / "Scripts"
+            / "Utility",
+            Path("/")
+            / "Library"
+            / "Application Support"
+            / "Blackmagic Design"
+            / "DaVinci Resolve"
+            / "Support"
+            / "Fusion"
+            / "Scripts"
+            / "Utility",
         ]
-    else:  # Linux
+    else:
         resolve_paths = [
             Path.home() / ".local" / "share" / "DaVinciResolve" / "Fusion" / "Scripts" / "Utility",
-            Path("/opt") / "resolve" / "Fusion" / "Scripts" / "Utility",
+            Path("/opt/resolve/Fusion/Scripts/Utility"),
+            Path("/home/resolve/Fusion/Scripts/Utility"),
         ]
-    
+
     for path in resolve_paths:
         if path.exists():
             return path
-    
+
     return None
 
 
-def deploy_lua_plugin(project_root: Path, force: bool = False) -> dict:
-    """Deploy RoughCut Lua plugin to DaVinci Resolve Scripts folder.
-    
-    Args:
-        project_root: Path to project root containing roughcut/lua/
-        force: If True, overwrite existing installation
-        
-    Returns:
-        Dict with deployment status and details
-    """
-    result = {
+def find_source_layout(project_root: Path) -> tuple[Path, Path] | None:
+    """Find the launcher and deployable package directory."""
+    for package_root in (project_root / PACKAGE_DIRNAME, project_root):
+        launcher_path = package_root / LAUNCHER_FILENAME
+        if not launcher_path.is_file():
+            continue
+
+        if all((package_root / relative_path).exists() for relative_path in REQUIRED_PACKAGE_FILES):
+            return launcher_path, package_root
+
+    return None
+
+
+def verify_installation(scripts_path: Path) -> dict[str, object]:
+    """Verify the deployed RoughCut launcher and package structure."""
+    package_root = scripts_path / PACKAGE_DIRNAME
+    checks = {
+        "launcher": (scripts_path / LAUNCHER_FILENAME).is_file(),
+        "package_root": package_root.is_dir(),
+        "main_module": (package_root / "lua" / "roughcut_main.lua").is_file(),
+        "main_window": (package_root / "lua" / "ui" / "main_window.lua").is_file(),
+        "install_dialog": (package_root / "lua" / "ui" / "install_dialog.lua").is_file(),
+        "config": (package_root / "lua" / "utils" / "config.lua").is_file(),
+        "pyproject": (package_root / "pyproject.toml").is_file(),
+        "deploy_script": (package_root / "scripts" / "deploy.py").is_file(),
+    }
+    return {
+        "success": all(checks.values()),
+        "checks": checks,
+        "error": None,
+    }
+
+
+def deploy_package(project_root: Path, force: bool = False) -> dict[str, object]:
+    """Deploy the launcher and package folder into Resolve."""
+    result: dict[str, object] = {
         "success": False,
         "error": None,
         "installed_path": None,
@@ -64,238 +125,128 @@ def deploy_lua_plugin(project_root: Path, force: bool = False) -> dict:
         "backup_path": None,
         "skipped": False,
     }
-    
-    # Find Resolve scripts path
+
     scripts_path = get_resolve_scripts_path()
-    if not scripts_path:
-        result["error"] = "Could not find DaVinci Resolve Scripts folder"
+    if scripts_path is None:
+        result["error"] = "Could not find DaVinci Resolve Utility Scripts folder"
         return result
-    
-    # Normalize project_root path
-    project_root = Path(project_root).resolve()
-    
-    # Validate project_root is a directory
+
+    project_root = project_root.resolve()
     if not project_root.is_dir():
         result["error"] = f"Project path is not a directory: {project_root}"
         return result
-    
-    # Check if we're already in the scripts directory (already deployed)
-    try:
-        # Check if project_root is inside or equal to scripts_path
-        project_root.relative_to(scripts_path)
-        # If we get here, project_root is inside scripts_path - already deployed
-        print(f"Project is already in Scripts folder at: {project_root}")
+
+    source_layout = find_source_layout(project_root)
+    if source_layout is None:
+        result["error"] = (
+            "Could not find RoughCut source layout. Expected either "
+            "`<root>/roughcut/RoughCut.lua` or `<root>/RoughCut.lua` with the full package tree."
+        )
+        return result
+
+    launcher_source, package_source = source_layout
+    launcher_target = scripts_path / LAUNCHER_FILENAME
+    package_target = scripts_path / PACKAGE_DIRNAME
+
+    if package_source == package_target:
         result["success"] = True
         result["skipped"] = True
-        result["installed_path"] = str(project_root)
-        result["message"] = "Already deployed in correct location"
+        result["installed_path"] = str(package_target)
+        result["message"] = "Already deployed in Resolve's Scripts folder"
         return result
-    except ValueError:
-        # project_root is not inside scripts_path - need to deploy
-        pass
-    
-    # Source and destination paths
-    lua_source = project_root / "lua"
-    
-    if not lua_source.exists():
-        # Try alternative: maybe lua is in roughcut/lua
-        alt_source = project_root / "roughcut" / "lua"
-        if alt_source.exists():
-            lua_source = alt_source
-            print(f"Using alternative lua source: {lua_source}")
-        else:
-            result["error"] = f"Lua source directory not found: {lua_source}"
-            return result
-    
-    if not lua_source.is_dir():
-        result["error"] = f"Lua source path exists but is not a directory: {lua_source}"
-        return result
-    
-    # Target is the roughcut folder in Scripts/Utility
-    deploy_target = scripts_path / "roughcut"
-    
-    # If target exists and is the same as source, skip
-    if deploy_target.exists() and deploy_target.resolve() == project_root:
-        print(f"Target is same as source, skipping deployment")
-        result["success"] = True
-        result["skipped"] = True
-        result["installed_path"] = str(deploy_target)
-        return result
-    
-    # Backup existing installation if present
-    if deploy_target.exists():
-        # Check if it's a symlink and remove it to avoid recursion issues
-        if deploy_target.is_symlink():
-            try:
-                deploy_target.unlink()
-            except Exception as e:
-                result["error"] = f"Failed to remove existing symlink: {e}"
-                return result
-        
+
+    if launcher_target.exists() or package_target.exists():
         if not force:
-            result["error"] = f"RoughCut already installed at {deploy_target}. Use --force to overwrite."
+            result["error"] = (
+                f"RoughCut already appears to be installed at {scripts_path}. "
+                "Use --force to overwrite."
+            )
             return result
-        
-        # Create backup (only if not a symlink which we already removed)
-        if deploy_target.exists():
-            backup_path = scripts_path / f"roughcut_backup_{int(__import__('time').time())}"
-            try:
-                shutil.move(str(deploy_target), str(backup_path))
-                result["backup_path"] = str(backup_path)
-            except Exception as e:
-                result["error"] = f"Failed to backup existing installation: {e}"
-                return result
-    
-    # Copy lua directory to target
-    try:
-        shutil.copytree(str(lua_source), str(deploy_target))
-        result["installed_path"] = str(deploy_target)
-        result["success"] = True
-        
-        # List copied files
-        for item in deploy_target.rglob("*"):
-            if item.is_file():
-                result["files_copied"].append(str(item.relative_to(deploy_target)))
-        
-    except Exception as e:
-        # Sanitize error message - don't expose full paths in production
-        error_msg = str(e)
-        # Only include first 200 chars of error to avoid leaking sensitive paths
-        result["error"] = f"Failed to copy files: {error_msg[:200]}"
-        return result
-    
-    return result
 
+        backup_root = scripts_path / f"{PACKAGE_DIRNAME}_backup_{int(time.time())}"
+        backup_root.mkdir(parents=True, exist_ok=True)
 
-def verify_installation(project_root: Path, install_path: Path) -> dict:
-    """Verify the installation is working.
-    
-    Args:
-        project_root: Path to project root
-        install_path: Path where plugin was installed
-        
-    Returns:
-        Dict with verification results
-    """
-    result = {
-        "success": False,
-        "checks": {},
-        "error": None,
-    }
-    
-    # Check main entry point exists
-    main_script = install_path / "roughcut_main.lua"
-    result["checks"]["main_script"] = main_script.exists()
-    
-    # Check ui modules exist
-    ui_dir = install_path / "ui"
-    result["checks"]["ui_directory"] = ui_dir.exists()
-    
-    if ui_dir.exists():
-        required_ui_files = ["main_window.lua", "navigation.lua", "install_dialog.lua"]
-        for ui_file in required_ui_files:
-            result["checks"][f"ui_{ui_file}"] = (ui_dir / ui_file).exists()
-    
-    # Check utils modules exist
-    utils_dir = install_path / "utils"
-    result["checks"]["utils_directory"] = utils_dir.exists()
-    
-    if utils_dir.exists():
-        required_utils = ["config.lua", "logger.lua", "process.lua"]
-        for util_file in required_utils:
-            result["checks"][f"utils_{util_file}"] = (utils_dir / util_file).exists()
-    
-    # Overall success
-    result["success"] = all(result["checks"].values())
-    
+        if launcher_target.exists():
+            shutil.move(str(launcher_target), str(backup_root / LAUNCHER_FILENAME))
+        if package_target.exists():
+            shutil.move(str(package_target), str(backup_root / PACKAGE_DIRNAME))
+
+        result["backup_path"] = str(backup_root)
+
+    shutil.copy2(launcher_source, launcher_target)
+    shutil.copytree(package_source, package_target)
+
+    copied_files = [LAUNCHER_FILENAME]
+    copied_files.extend(
+        str(path.relative_to(scripts_path))
+        for path in package_target.rglob("*")
+        if path.is_file()
+    )
+
+    result["success"] = True
+    result["installed_path"] = str(scripts_path)
+    result["files_copied"] = copied_files
     return result
 
 
 def main() -> int:
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Deploy RoughCut plugin to DaVinci Resolve"
-    )
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(description="Deploy RoughCut into DaVinci Resolve")
     parser.add_argument(
         "--project-path",
-        type=str,
         required=True,
-        help="Absolute path to project directory containing roughcut/lua/",
+        help="Repo root or packaged RoughCut directory to deploy",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing installation",
+        help="Overwrite an existing Resolve installation",
     )
     parser.add_argument(
         "--verify-only",
         action="store_true",
-        help="Only verify existing installation, don't deploy",
+        help="Verify the existing Resolve installation without deploying",
     )
     args = parser.parse_args()
-    
-    project_root = Path(args.project_path).resolve()
-    
-    if not project_root.exists():
-        print(f"Error: Project path does not exist: {project_root}", file=sys.stderr)
+
+    scripts_path = get_resolve_scripts_path()
+    if scripts_path is None:
+        print("Error: Could not find DaVinci Resolve Utility Scripts folder", file=sys.stderr)
         return 1
-    
+
     if args.verify_only:
-        # Just verify existing installation
-        scripts_path = get_resolve_scripts_path()
-        if not scripts_path:
-            print("Error: Could not find DaVinci Resolve Scripts folder", file=sys.stderr)
-            return 1
-        
-        install_path = scripts_path / "roughcut"
-        if not install_path.exists():
-            print("Error: RoughCut not installed", file=sys.stderr)
-            return 1
-        
-        result = verify_installation(project_root, install_path)
-        
+        result = verify_installation(scripts_path)
         print("Verification Results:")
-        for check, passed in result["checks"].items():
-            status = "✓" if passed else "✗"
-            print(f"  {status} {check}")
-        
+        for check_name, passed in result["checks"].items():
+            status = "OK" if passed else "FAIL"
+            print(f"  [{status}] {check_name}")
         return 0 if result["success"] else 1
-    
-    # Deploy the plugin
-    print(f"Deploying RoughCut from {project_root}...")
-    result = deploy_lua_plugin(project_root, force=args.force)
-    
+
+    result = deploy_package(Path(args.project_path), force=args.force)
     if not result["success"]:
         print(f"Error: {result['error']}", file=sys.stderr)
         return 1
-    
-    print(f"[OK] RoughCut deployed successfully to: {result['installed_path']}")
-    print(f"  Files copied: {len(result['files_copied'])}")
-    
-    if result["backup_path"]:
-        print(f"  Backup created at: {result['backup_path']}")
-    
-    # Verify the installation
-    print("\nVerifying installation...")
-    # When skipped, installed_path is project_root, but actual Lua files are in lua/ subdirectory
-    verify_path = Path(result["installed_path"])
-    if result.get("skipped") and (verify_path / "lua").exists():
-        # Files are in lua/ subdirectory when deployment is skipped
-        verify_path = verify_path / "lua"
-    verify_result = verify_installation(project_root, verify_path)
-    
-    for check, passed in verify_result["checks"].items():
-        status = "[OK]" if passed else "[FAIL]"
-        print(f"  {status} {check}")
-    
-    if verify_result["success"]:
-        print("\n[OK] Installation verified successfully!")
-        print("\nYou can now access RoughCut from DaVinci Resolve's Workspace > Scripts menu.")
-        return 0
-    else:
-        print("\n[FAIL] Installation verification failed", file=sys.stderr)
+
+    verify_result = verify_installation(scripts_path)
+    if not verify_result["success"]:
+        print("Deployment finished, but verification failed:", file=sys.stderr)
+        for check_name, passed in verify_result["checks"].items():
+            if not passed:
+                print(f"  - {check_name}", file=sys.stderr)
         return 1
+
+    if result["skipped"]:
+        print(f"Deployment skipped: {result.get('message', 'already installed')}")
+        return 0
+
+    print(f"Installed RoughCut to: {result['installed_path']}")
+    if result["backup_path"]:
+        print(f"Backup created at: {result['backup_path']}")
+    print("Copied files:")
+    for relative_path in result["files_copied"]:
+        print(f"  - {relative_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

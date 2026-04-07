@@ -25,6 +25,31 @@ local windowRef = nil
 local uiManagerRef = nil
 local dispRef = nil
 
+local function closeMainWindow(window, closeWindow)
+    local targetWindow = window or windowRef
+
+    if targetWindow then
+        pcall(function()
+            targetWindow:Hide()
+        end)
+    end
+
+    if dispRef then
+        pcall(function()
+            dispRef:ExitLoop()
+        end)
+    end
+
+    if closeWindow ~= false and targetWindow then
+        pcall(function()
+            targetWindow:Close()
+        end)
+    end
+
+    windowRef = nil
+    dispRef = nil
+end
+
 -- Create and configure the main window
 -- @param uiManager Resolve UI Manager instance
 -- @return window table or nil on error
@@ -134,25 +159,10 @@ function mainWindow.create(uiManager)
     
     windowRef = win
     
-    -- Set up event handlers using Fusion's expected pattern for RunLoop()
-    -- RunLoop requires events organized by type, not by element
-    win.On = win.On or {}
-    
-    -- Window-level events
-    win.On.Close = function(ev)
-        print("RoughCut: Main window closing...")
-        -- Close the window and exit message loop
-        pcall(function()
-            if windowRef then
-                windowRef:Close()
-            end
-        end)
-        if dispRef then
-            pcall(function() dispRef:ExitLoop() end)
-        end
-        -- Clear references
-        windowRef = nil
-        dispRef = nil
+    -- Resolve/Fusion uses CloseRequested for dispatcher-managed windows.
+    win.CloseRequested = function()
+        print("RoughCut: Main window close requested...")
+        closeMainWindow(windowRef, false)
     end
     
     print("RoughCut: Main window created successfully")
@@ -180,9 +190,20 @@ function mainWindow.show(window)
     
     print("RoughCut: Main window shown")
     
-    -- NOTE: We do NOT call disp:RunLoop() here.
-    -- RunLoop() blocks the Resolve UI thread and causes 'ontbl' nil errors.
-    -- The window persists via Resolve's native window lifecycle.
+    -- Keep the window alive until the user closes it.
+    -- Resolve/Fusion Utility scripts need the dispatcher loop to stay open.
+    if dispRef then
+        local loopOk, loopErr = pcall(function()
+            dispRef:RunLoop()
+        end)
+
+        if not loopOk then
+            print("RoughCut: Error - Dispatcher loop failed: " .. tostring(loopErr))
+            return false
+        end
+    else
+        print("RoughCut: Warning - No dispatcher available for main window loop")
+    end
     
     return true
 end
@@ -212,33 +233,35 @@ function mainWindow.close(window)
     
     local success = true
     
-    -- Exit the dispatcher loop if it was running
-    -- Note: ExitLoop may hang if dispatcher is stuck; pcall provides timeout-like protection
     if dispRef then
         local ok = pcall(function()
             dispRef:ExitLoop()
         end)
         if not ok then
             print("RoughCut: Warning - Failed to exit dispatcher loop (may be stuck)")
-            -- Force clear reference even if exit failed
-            dispRef = nil
             success = false
         end
     end
-    
-    -- Close the window
+
     local ok = pcall(function()
-        window:Close()
+        window:Hide()
     end)
     if not ok then
+        print("RoughCut: Warning - Failed to hide window")
+        success = false
+    end
+
+    local closeOk = pcall(function()
+        window:Close()
+    end)
+    if not closeOk then
         print("RoughCut: Warning - Failed to close window")
         success = false
     end
-    
-    -- Clear references
+
     windowRef = nil
     dispRef = nil
-    
+
     return success
 end
 

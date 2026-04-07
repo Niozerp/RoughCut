@@ -80,6 +80,11 @@ local function launchMainWindow(uiManager)
     -- Future Step 3: Add navigation buttons
     
     -- Step 2: Show the window
+    -- Record launch time before entering the UI loop, since show() now blocks
+    -- until the user closes the main window.
+    config.updateLastRun()
+    logger.info("Main window entering UI loop")
+
     local showSuccess = mainWindow.show(window)
     
     if not showSuccess then
@@ -87,12 +92,9 @@ local function launchMainWindow(uiManager)
         logger.error("Failed to show main window")
         return false
     end
-    
-    -- Step 3: Update last run timestamp
-    config.updateLastRun()
-    logger.info("Main window launched successfully")
-    
-    print("[RoughCut] Main window launched successfully")
+
+    logger.info("Main window closed")
+    print("[RoughCut] Main window closed")
     return true
 end
 
@@ -148,7 +150,17 @@ local function launchRoughCut(resolve)
                     logger.info("Installation completed successfully")
                     config.markInstalled()
                     -- Continue to main window
-                    launchMainWindow(uiManager)
+                    local launched = launchMainWindow(uiManager)
+                    if not launched then
+                        logger.error("Main window failed to launch after installation")
+                        pcall(function()
+                            uiManager:ShowMessageBox(
+                                "RoughCut installed successfully, but the main UI could not be opened.\n\nPlease check the Resolve console for details.",
+                                "RoughCut Launch Error",
+                                "OK"
+                            )
+                        end)
+                    end
                 end
             end,
             function(error)

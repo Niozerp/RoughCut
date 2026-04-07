@@ -2,8 +2,8 @@
 -- Tests for main_window.lua and navigation.lua components
 -- Run within DaVinci Resolve's Lua scripting environment
 
-local mainWindow = require("lua.ui.main_window")
-local navigation = require("lua.ui.navigation")
+local mainWindow = require("ui.main_window")
+local navigation = require("ui.navigation")
 
 -- Test framework (simple version)
 local tests = {}

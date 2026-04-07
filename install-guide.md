@@ -11,7 +11,7 @@
 3. You should see:
    - `install.bat` — **Double-click this on Windows** ⭐
    - `install.sh` — **Run this on macOS/Linux** ⭐
-   - `roughcut/` — The Python backend folder with Lua scripts inside
+   - `roughcut/` — The deployable package (`RoughCut.lua`, `lua/`, `src/`, `scripts/`, `templates/`)
 
 > 💡 **Tip**: The installer handles everything automatically. Manual steps are only needed if the auto-installer fails.
 
@@ -54,24 +54,35 @@ If the automatic installer can't find Resolve or you prefer manual control:
 
 **Windows:**
 ```
-1. Copy roughcut/lua/roughcut.lua
+1. Copy roughcut/RoughCut.lua
 2. Navigate to: %APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\
    (Paste into File Explorer address bar)
 3. Paste the file
+4. Copy the entire roughcut/ folder into the same Utility folder so Resolve can load roughcut/lua/roughcut_main.lua
 ```
 
 **macOS:**
 ```bash
-# Copy roughcut/lua/roughcut.lua to:
+# Copy roughcut/RoughCut.lua to:
 ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/
+
+cp roughcut/RoughCut.lua ~/Library/Application\ Support/Blackmagic\ Design/DaVinci\ Resolve/Support/Fusion/Scripts/Utility/
+
+# Copy the roughcut/ folder next to it:
+cp -r roughcut ~/Library/Application\ Support/Blackmagic\ Design/DaVinci\ Resolve/Support/Fusion/Scripts/Utility/
 ```
 
 **Linux:**
 ```bash
-# Copy roughcut/lua/roughcut.lua to:
+# Copy roughcut/RoughCut.lua to:
 ~/.local/share/DaVinciResolve/Fusion/Scripts/Utility/
 # or
 /opt/resolve/Fusion/Scripts/Utility/ (system-wide)
+
+cp roughcut/RoughCut.lua ~/.local/share/DaVinciResolve/Fusion/Scripts/Utility/
+
+# Copy the roughcut/ folder next to it as well:
+cp -r roughcut ~/.local/share/DaVinciResolve/Fusion/Scripts/Utility/
 ```
 
 ### Install Python Backend
@@ -255,7 +266,7 @@ Or install manually:
 curl -sSL https://install.python-poetry.org | python3 -
 ```
 
-### "Failed to copy roughcut.lua" with error codes
+### "Failed to copy RoughCut.lua" with error codes
 
 **The new installer shows debug output to help diagnose copy failures.**
 
@@ -277,11 +288,11 @@ Common error codes and solutions:
 
 **Error code: 2 or 3**
 - File not found or path not found
-- Check that the source file exists in `roughcut\lua\roughcut.lua`
+- Check that the source file exists in `roughcut\RoughCut.lua`
 - Verify the target path is correct
 
 **Source file NOT found**
-- The installer can't find `roughcut\lua\roughcut.lua`
+- The installer can't find `roughcut\RoughCut.lua`
 - Make sure you extracted the entire ZIP file
 - Run install.bat from inside the RoughCut folder (not from elsewhere)
 
@@ -292,7 +303,9 @@ Common error codes and solutions:
 
 **Solution steps:**
 1. Close DaVinci Resolve completely
-2. Verify the source file exists: `roughcut\lua\roughcut.lua`
+2. Verify the source files exist:
+   - `roughcut\RoughCut.lua`
+   - `roughcut\lua\roughcut_main.lua`
 3. Run as Administrator if permission issues persist
 4. Check the debug output - it shows exactly what path was used
 
@@ -309,7 +322,8 @@ Common error codes and solutions:
 To remove RoughCut:
 
 1. **Delete from Resolve**:
-   - Delete `roughcut.lua` from the Scripts/Utility folder
+   - Delete `RoughCut.lua` from the Scripts/Utility folder
+   - Delete the deployed `roughcut/` folder from the Scripts/Utility folder
    - (Path shown during installation, or see "Manual Installation" section above)
 
 2. **Delete backend**:

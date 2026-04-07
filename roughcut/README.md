@@ -6,30 +6,33 @@ An AI-powered DaVinci Resolve plugin that transforms dormant media asset librari
 
 ### Method 1: Simple Installation (Recommended)
 
-**Important**: Only copy the launcher script to Resolve's Scripts folder. Do NOT copy the entire lua folder.
+**Important**: Put only `RoughCut.lua` at the Utility scripts root. Keep the rest of RoughCut inside a sibling `roughcut/` folder.
 
-1. **Copy just ONE file** - `RoughCut.lua` - into DaVinci Resolve's Scripts folder:
-   - **macOS**: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Workflow Integration Scripts/`
-   - **Windows**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Scripts\`
+1. **Copy `RoughCut.lua`** into DaVinci Resolve's Utility Scripts folder:
+   - **macOS**: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/`
+   - **Windows**: `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\`
 
-2. **Copy the RoughCut modules folder** to the SAME location:
-   - Copy the entire `roughcut/` folder (containing `lua/`, `src/`, etc.) so it sits next to `RoughCut.lua`
+2. **Copy the entire `roughcut/` folder** to the same location so it sits next to `RoughCut.lua`.
    - Final structure should look like:
       ```
-      Workflow Integration Scripts/
+      Utility/
       ├── RoughCut.lua          ← The launcher (ONLY menu item)
-      ├── roughcut/             ← All the actual code
+      ├── roughcut/             ← RoughCut package root
       │   ├── lua/
-      │   │   ├── roughcut_main.lua  ← Main module (loaded by launcher)
+      │   │   ├── roughcut_main.lua
       │   │   ├── ui/
       │   │   └── utils/
-      │   └── src/
-      └── (other scripts)
+      │   ├── scripts/
+      │   ├── src/
+      │   ├── templates/
+      │   ├── pyproject.toml
+      │   └── poetry.lock
+      └── (other utility scripts)
       ```
 
-3. Restart Resolve or refresh the Scripts menu (Workspace > Scripts > Update)
+3. Restart Resolve or refresh the Scripts menu.
 
-4. Access RoughCut from **Workspace > Scripts > RoughCut**
+4. Access RoughCut from **Workspace > Scripts > Utility > RoughCut**
 
 ### What Gets Installed Where
 
@@ -43,35 +46,26 @@ An AI-powered DaVinci Resolve plugin that transforms dormant media asset librari
 
 ### Method 2: Developer Installation
 
+From the `roughcut/` directory in this repo, use the deploy helper:
+
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd roughcut
-
-# Install dependencies
-poetry install
-
-# Copy launcher and modules to Resolve Scripts folder
-# Windows:
-copy RoughCut.lua "C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Scripts\"
-xcopy /E /I roughcut "C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Workflow Integration Scripts\roughcut\"
-
-# macOS:
-cp RoughCut.lua "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Workflow Integration Scripts/"
-cp -r roughcut "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Support/Workflow Integration Scripts/"
+python scripts/deploy.py --project-path . --force
 ```
+
+The deploy helper installs:
+- `RoughCut.lua` into Resolve's `Support/Fusion/Scripts/Utility/` folder
+- the full `roughcut/` package tree alongside it so the launcher, Lua modules, backend installer, and Python package stay in sync
 
 ## Verification
 
 After installation:
 1. Open DaVinci Resolve
 2. Go to **Workspace > Scripts** menu
-3. You should see ONE menu item: **RoughCut**
-4. Select **RoughCut**
-5. On first launch, RoughCut will:
+3. Open **Utility** and select **RoughCut**
+4. On first launch, RoughCut will:
    - Check for Python backend
    - Install dependencies if needed (shows progress dialog)
-   - Open the main RoughCut window
+   - Transition directly into the main RoughCut window after installation finishes
 
 ## Getting Started
 
@@ -80,10 +74,7 @@ After installation:
 When you first run RoughCut:
 1. **Installation Check**: RoughCut checks if Python backend is installed
 2. **Auto-Install**: If needed, it automatically installs Python dependencies (takes 2-5 minutes)
-3. **Main Window**: Opens with 3 main options:
-   - **Manage Media** - Set up your Music, SFX, and VFX folders
-   - **Manage Formats** - Define rough cut templates
-   - **Create Rough Cut** - Start the AI-powered workflow
+3. **Main Window**: Opens the RoughCut UI after installation completes
 
 ### Using RoughCut
 
@@ -133,7 +124,7 @@ roughcut/
 │       ├── config/            # Configuration module
 │       └── protocols/         # Lua ↔ Python communication
 ├── lua/
-│   ├── roughcut.lua          # Main Lua module
+│   ├── roughcut_main.lua     # Main Lua module
 │   ├── ui/                   # UI components
 │   │   ├── main_window.lua
 │   │   ├── navigation.lua

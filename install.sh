@@ -14,9 +14,12 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-SCRIPT_NAME="roughcut.lua"
-SOURCE_LUA="$(cd "$(dirname "$0")" && pwd)/roughcut/lua/roughcut.lua"
-BACKEND_DIR="$(cd "$(dirname "$0")" && pwd)/roughcut"
+INSTALL_ROOT="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_NAME="RoughCut.lua"
+MODULE_DIR_NAME="roughcut"
+SOURCE_MODULE_ROOT="$INSTALL_ROOT/roughcut"
+SOURCE_LAUNCHER="$INSTALL_ROOT/roughcut/$SCRIPT_NAME"
+BACKEND_DIR="$SOURCE_MODULE_ROOT"
 
 # Print with colors
 print_info() {
@@ -36,12 +39,29 @@ print_error() {
 }
 
 # Check if source files exist first
-if [[ ! -f "$SOURCE_LUA" ]]; then
-    print_error "Cannot find roughcut.lua"
-    print_error "Looked in: $SOURCE_LUA"
+if [[ ! -f "$SOURCE_LAUNCHER" ]]; then
+    print_error "Cannot find RoughCut launcher"
+    print_error "Looked in: $SOURCE_LAUNCHER"
     echo ""
     echo "Make sure you're running this script from the extracted RoughCut folder."
-    echo "This folder should contain: roughcut/, install.sh, install-guide.md"
+    echo "This folder should contain: roughcut/, install.sh, and install.bat"
+    echo ""
+    exit 1
+fi
+
+if [[ ! -d "$SOURCE_MODULE_ROOT" ]]; then
+    print_error "Cannot find RoughCut module tree"
+    print_error "Looked in: $SOURCE_MODULE_ROOT"
+    echo ""
+    echo "Make sure you're running this script from the extracted RoughCut folder."
+    echo "This folder should contain: roughcut/, install.sh, and install.bat"
+    echo ""
+    exit 1
+fi
+
+if [[ ! -f "$SOURCE_MODULE_ROOT/lua/roughcut_main.lua" ]] || [[ ! -f "$SOURCE_MODULE_ROOT/scripts/install.py" ]] || [[ ! -f "$SOURCE_MODULE_ROOT/pyproject.toml" ]]; then
+    print_error "The RoughCut module tree is incomplete."
+    print_error "Expected roughcut/lua/roughcut_main.lua, roughcut/scripts/install.py, and roughcut/pyproject.toml"
     echo ""
     exit 1
 fi
@@ -301,13 +321,13 @@ if [[ -z "$RESOLVE_SCRIPTS" ]]; then
     RESOLVE_SCRIPTS="${RESOLVE_SCRIPTS/#\~/$HOME}"
     
     # Check if user gave us the Scripts folder or the Utility folder
-    if [[ -f "$RESOLVE_SCRIPTS/roughcut.lua" ]]; then
-        print_info "It looks like you already have roughcut.lua here."
+    if [[ -f "$RESOLVE_SCRIPTS/$SCRIPT_NAME" ]]; then
+        print_info "It looks like you already have $SCRIPT_NAME here."
         print_info "Using this location: $RESOLVE_SCRIPTS"
     fi
     
     # If they gave us the Scripts folder (not Utility), check and create Utility
-    if [[ ! -d "$RESOLVE_SCRIPTS/Utility" ]]; then
+    if [[ "$(basename "$RESOLVE_SCRIPTS")" != "Utility" && ! -d "$RESOLVE_SCRIPTS/Utility" ]]; then
         if [[ -d "$RESOLVE_SCRIPTS" ]]; then
             print_info "Creating Utility subfolder..."
             mkdir -p "$RESOLVE_SCRIPTS/Utility"
@@ -329,9 +349,9 @@ echo ""
 print_ok "Resolve Scripts folder: $RESOLVE_SCRIPTS"
 echo ""
 
-# Copy Lua script
+# Copy launcher and module tree
 echo ""
-print_info "Installing RoughCut Lua script..."
+print_info "Installing RoughCut launcher and module tree..."
 
 # Check if Resolve is running (it might lock the file)
 RESOLVE_RUNNING=0
@@ -358,10 +378,33 @@ if [[ $RESOLVE_RUNNING -eq 1 ]]; then
     echo ""
 fi
 
-if cp "$SOURCE_LUA" "$RESOLVE_SCRIPTS/"; then
-    print_ok "roughcut.lua copied to Scripts/Utility"
+TARGET_LAUNCHER="$RESOLVE_SCRIPTS/$SCRIPT_NAME"
+TARGET_MODULE_ROOT="$RESOLVE_SCRIPTS/$MODULE_DIR_NAME"
+INSTALL_TIMESTAMP="$(date +%s)"
+
+if [[ -e "$TARGET_MODULE_ROOT" ]]; then
+    MODULE_BACKUP="$RESOLVE_SCRIPTS/${MODULE_DIR_NAME}_backup_$INSTALL_TIMESTAMP"
+    if mv "$TARGET_MODULE_ROOT" "$MODULE_BACKUP"; then
+        print_info "Backed up existing module tree to $MODULE_BACKUP"
+    else
+        print_error "Failed to back up existing module tree at $TARGET_MODULE_ROOT"
+        exit 1
+    fi
+fi
+
+if [[ -f "$TARGET_LAUNCHER" ]]; then
+    LAUNCHER_BACKUP="$RESOLVE_SCRIPTS/${SCRIPT_NAME%.lua}_backup_$INSTALL_TIMESTAMP.lua"
+    if cp "$TARGET_LAUNCHER" "$LAUNCHER_BACKUP"; then
+        print_info "Backed up existing launcher to $LAUNCHER_BACKUP"
+    else
+        print_warn "Could not back up existing launcher. It will be overwritten."
+    fi
+fi
+
+if cp "$SOURCE_LAUNCHER" "$TARGET_LAUNCHER"; then
+    print_ok "$SCRIPT_NAME copied to Scripts/Utility"
 else
-    print_error "Failed to copy roughcut.lua"
+    print_error "Failed to copy $SCRIPT_NAME"
     echo ""
     echo "Possible causes:"
     echo "  - DaVinci Resolve is running (close it and try again)"
@@ -370,6 +413,38 @@ else
     echo ""
     exit 1
 fi
+
+if cp -R "$SOURCE_MODULE_ROOT" "$RESOLVE_SCRIPTS/"; then
+    print_ok "roughcut/ package copied to Scripts/Utility/$MODULE_DIR_NAME"
+else
+    print_error "Failed to copy RoughCut module tree"
+    echo ""
+    echo "Possible causes:"
+    echo "  - DaVinci Resolve is running (close it and try again)"
+    echo "  - Permission denied (try: sudo ./install.sh)"
+    echo "  - Path is incorrect"
+    echo ""
+    exit 1
+fi
+
+print_info "Verifying installed files..."
+
+REQUIRED_INSTALL_PATHS=(
+    "$TARGET_LAUNCHER"
+    "$TARGET_MODULE_ROOT/lua/roughcut_main.lua"
+    "$TARGET_MODULE_ROOT/lua/ui/main_window.lua"
+    "$TARGET_MODULE_ROOT/scripts/install.py"
+    "$TARGET_MODULE_ROOT/pyproject.toml"
+)
+
+for required_path in "${REQUIRED_INSTALL_PATHS[@]}"; do
+    if [[ -e "$required_path" ]]; then
+        print_ok "Verified: $required_path"
+    else
+        print_error "Missing required installed file: $required_path"
+        exit 1
+    fi
+done
 
 # Check Python
 echo ""
@@ -469,7 +544,8 @@ echo "============================================"
 echo "     RoughCut Installation Complete!"
 echo "============================================"
 echo ""
-print_ok "roughcut.lua installed to Resolve Scripts"
+print_ok "$SCRIPT_NAME installed to Resolve Scripts"
+print_ok "roughcut/ module tree installed alongside the launcher"
 
 if [[ -z "$SKIP_PYTHON" ]]; then
     print_ok "Python backend ready"
@@ -488,7 +564,7 @@ echo "TROUBLESHOOTING:"
 echo "----------------"
 echo "- If script doesn't appear: Restart Resolve completely"
 echo "- If backend fails: It will auto-install when you run RoughCut"
-echo "- For help: See install-guide.md in this folder"
+echo "- For help: See roughcut/README.md or roughcut/INSTALL.txt"
 echo ""
 echo "Installation location: $RESOLVE_SCRIPTS"
 echo ""
