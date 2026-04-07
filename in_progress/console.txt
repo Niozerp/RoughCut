@@ -1,0 +1,47 @@
+[RoughCut Launcher] Starting...
+[RoughCut Launcher] Scripts directory: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility
+[RoughCut Launcher] Checking: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua/roughcut_main.lua
+[RoughCut Launcher] Found modules at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua
+[RoughCut Launcher] Connecting to DaVinci Resolve...
+[RoughCut Launcher] Got Resolve via fusion:GetResolve() on attempt 1
+[RoughCut Launcher] Connected to Resolve successfully
+[RoughCut Launcher] Added to package.path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua/?.lua;C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua/?/init.lua
+[RoughCut Launcher] Loading roughcut_main module...
+[RoughCut] roughcut_main.lua loaded - version 0.3.1
+[RoughCut Launcher] Calling launch function...
+[RoughCut] launchRoughCut() called
+RoughCut: Install dialog created successfully
+RoughCut: Executing: python3 --version 2>&1
+RoughCut: Checking for Poetry...
+RoughCut: Trying 'poetry' command...
+RoughCut: Executing: poetry --version 2>&1
+RoughCut: Poetry found in PATH
+RoughCut: Using Poetry command: poetry
+RoughCut: Checking if roughcut is already installed globally...
+RoughCut: Executing: python -c "import roughcut; print('INSTALLED')" 2>&1
+RoughCut: Python backend already installed globally - skipping local installation
+RoughCut: Verifying installation...
+RoughCut: Executing: python -c "import roughcut; print('INSTALLED')" 2>&1
+RoughCut: Verified - roughcut is installed globally
+RoughCut: Searching for pyproject.toml...
+RoughCut: Checking path 1: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/pyproject.toml
+RoughCut: FOUND roughcut pyproject.toml at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/pyproject.toml
+RoughCut: Source directory: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+RoughCut: Deploying Lua plugin from: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+RoughCut: Checking for deploy script at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py
+RoughCut: Running deploy script check: python -c import os; print('OK' if os.path.exists('C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py') else 'MISSING')
+RoughCut: Executing: python -c "import os; print('OK' if os.path.exists('C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py') else 'MISSING')" 2>&1
+RoughCut: Deploy script check result - success: true, stdout: OK
+RoughCut: Deploy script found, executing...
+RoughCut: Executing: where python3 2>&1
+RoughCut: Working directory verified: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+RoughCut: Executing: cmd /c pushd "C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut" && python3 "C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py" --project-path "C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut" --force && popd 2>&1
+RoughCut: Deploy result - success: true
+RoughCut: Deploy result - exitCode: 0
+RoughCut: Deploy result - stdout: Deploying RoughCut from C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut...
+Error: Failed to copy files: [WinError 3] The system cannot find the path specified: 'C:\\Users\\niozerp\\AppData\\Roaming\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility\\roughcut\\lua'
+RoughCut: Deploy result - stderr: 
+RoughCut: Deployment completed successfully
+RoughCut: Error - Failed to create main window
+RoughCut: Error - Failed to create main window
+[RoughCut Launcher] Launch successful

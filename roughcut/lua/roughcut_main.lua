@@ -65,6 +65,46 @@ local function checkInstallationNeeded()
     return true
 end
 
+-- Launch main window (separate from install flow)
+local function launchMainWindow(uiManager)
+    -- Step 1: Create main window
+    local window = mainWindow.create(uiManager)
+    
+    if not window then
+        print("RoughCut: Error - Failed to create main window")
+        logger.error("Failed to create main window")
+        return false
+    end
+    
+    -- Step 2: Set UI Manager for navigation (needed for child windows)
+    navigation.setUIManager(uiManager)
+    
+    -- Step 3: Add navigation buttons
+    local navSuccess = navigation.create(window)
+    
+    if not navSuccess then
+        print("RoughCut: Error - Failed to create navigation")
+        logger.error("Failed to create navigation")
+        return false
+    end
+    
+    -- Step 4: Show the window
+    local showSuccess = mainWindow.show(window)
+    
+    if not showSuccess then
+        print("RoughCut: Error - Failed to show main window")
+        logger.error("Failed to show main window")
+        return false
+    end
+    
+    -- Update last run timestamp
+    config.updateLastRun()
+    logger.info("Main window launched successfully")
+    
+    print("[RoughCut] Main window launched successfully")
+    return true
+end
+
 -- Launch RoughCut main interface
 -- Creates window, adds navigation, and displays to user
 -- @param resolve The Resolve API object (passed from launcher)
@@ -146,46 +186,6 @@ local function launchRoughCut(resolve)
         -- No installation needed, launch main window directly
         return launchMainWindow(uiManager)
     end
-end
-
--- Launch main window (separate from install flow)
-local function launchMainWindow(uiManager)
-    -- Step 1: Create main window
-    local window = mainWindow.create(uiManager)
-    
-    if not window then
-        print("RoughCut: Error - Failed to create main window")
-        logger.error("Failed to create main window")
-        return false
-    end
-    
-    -- Step 2: Set UI Manager for navigation (needed for child windows)
-    navigation.setUIManager(uiManager)
-    
-    -- Step 3: Add navigation buttons
-    local navSuccess = navigation.create(window)
-    
-    if not navSuccess then
-        print("RoughCut: Error - Failed to create navigation")
-        logger.error("Failed to create navigation")
-        return false
-    end
-    
-    -- Step 4: Show the window
-    local showSuccess = mainWindow.show(window)
-    
-    if not showSuccess then
-        print("RoughCut: Error - Failed to show main window")
-        logger.error("Failed to show main window")
-        return false
-    end
-    
-    -- Update last run timestamp
-    config.updateLastRun()
-    logger.info("Main window launched successfully")
-    
-    print("[RoughCut] Main window launched successfully")
-    return true
 end
 
 -- Export the launch function for the launcher to call

@@ -71,7 +71,8 @@ def deploy_lua_plugin(project_root: Path, force: bool = False) -> dict:
         return result
     
     # Source and destination paths
-    lua_source = project_root / "roughcut" / "lua"
+    # The lua folder is directly under project_root, not project_root/roughcut/lua
+    lua_source = project_root / "lua"
     if not lua_source.exists():
         result["error"] = f"Lua source directory not found: {lua_source}"
         return result

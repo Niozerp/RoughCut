@@ -9,16 +9,29 @@ local isWindows = nil
 local function detectWindows()
     if isWindows == nil then
         -- Check multiple indicators for Windows
-        local osEnv = os.getenv("OS")
-        local pathEnv = os.getenv("PATH")
-        isWindows = (osEnv and osEnv:lower():find("windows")) or 
+        -- Use pcall to handle environments where os.getenv or package.config might be restricted
+        local ok, result = pcall(function()
+            local osEnv = os.getenv("OS")
+            local pathEnv = os.getenv("PATH")
+            local configSep = package.config and package.config:sub(1,1) or nil
+            
+            return (osEnv and osEnv:lower():find("windows")) or 
                    (pathEnv and pathEnv:find(";")) or
-                   (package.config:sub(1,1) == "\\")
+                   (configSep == "\\")
+        end)
+        
+        if ok then
+            isWindows = result
+        else
+            -- Fallback: assume Windows if pcall fails (DaVinci Resolve runs on Windows)
+            isWindows = true
+        end
     end
     return isWindows
 end
 
 -- Enhanced shell escape that handles more dangerous characters
+-- On Windows: Only quote if necessary - simple args without spaces should not be quoted
 -- @param str String to escape
 -- @return escaped string safe for shell
 function processUtils.shellEscape(str)
@@ -27,11 +40,34 @@ function processUtils.shellEscape(str)
     end
     
     if detectWindows() then
-        -- Windows escaping: wrap in quotes, escape existing quotes by doubling
-        -- Also need to handle backslashes before quotes and percent signs (batch variables)
-        str = str:gsub('%%', '%%%%')  -- Escape % as %% (batch variable expansion)
-        str = str:gsub('\\"', '\\\\"')  -- Escape backslash-quote
-        str = str:gsub('"', '""')  -- Double existing quotes
+        -- Windows escaping: Be conservative - only quote when necessary
+        -- Check if string is already fully quoted (starts and ends with ")
+        local hasOuterQuotes = (str:len() > 1 and str:sub(1, 1) == '"' and str:sub(-1) == '"')
+        
+        if hasOuterQuotes then
+            -- String is already quoted, preserve internal quotes
+            local inner = str:sub(2, -2)  -- Remove outer quotes temporarily
+            inner = inner:gsub('%%', '%%%%')  -- Escape % as %% (batch variable expansion)
+            inner = inner:gsub('"', '""')  -- Double any internal quotes
+            return '"' .. inner .. '"'  -- Re-wrap with quotes
+        end
+        
+        -- Check if string needs quoting (has spaces, special chars, or quotes)
+        -- Special chars in cmd: & | < > ^ ( ) ! % " 
+        local needsQuoting = str:find("[%s&|<>%(%)!%%\"]") ~= nil
+        
+        if not needsQuoting then
+            -- Simple string - no spaces, special chars, or quotes
+            -- Just escape % characters which have special meaning in batch
+            return str:gsub('%%', '%%%%')
+        end
+        
+        -- Needs quoting - escape and wrap
+        -- Escape % first to prevent batch variable expansion
+        str = str:gsub('%%', '%%%%')
+        -- Double any existing quotes
+        str = str:gsub('"', '""')
+        -- Wrap in quotes
         return '"' .. str .. '"'
     else
         -- Unix escaping: wrap in single quotes (prevents all shell expansion)
@@ -91,8 +127,14 @@ function processUtils.run(command, workingDir, timeoutSeconds)
     
     -- Build command string with proper escaping to prevent injection
     local escapedCmd = {}
-    for _, arg in ipairs(command) do
-        table.insert(escapedCmd, processUtils.shellEscape(arg))
+    for i, arg in ipairs(command) do
+        -- Use pcall to catch any errors from shellEscape
+        local ok, escaped = pcall(processUtils.shellEscape, arg)
+        if not ok then
+            result.error = "Failed to escape argument #" .. i .. ": " .. tostring(escaped)
+            return result
+        end
+        table.insert(escapedCmd, escaped)
     end
     local cmdStr = table.concat(escapedCmd, " ")
     
@@ -100,9 +142,10 @@ function processUtils.run(command, workingDir, timeoutSeconds)
     if workingDir then
         if detectWindows() then
             -- Use pushd/popd which handles spaces better on Windows
-            -- Avoid outer quotes to prevent nested quote issues with io.popen
-            cmdStr = string.format('cmd /c pushd %s && %s && popd', 
-                processUtils.shellEscape(workingDir), cmdStr)
+            -- For cmd /c, we need to be careful with quoting - escape the workingDir
+            -- but cmdStr is already properly escaped by shellEscape
+            local escapedDir = processUtils.shellEscape(workingDir)
+            cmdStr = string.format('cmd /c pushd %s && %s && popd', escapedDir, cmdStr)
         else
             cmdStr = string.format("cd %s && %s", 
                 processUtils.shellEscape(workingDir), cmdStr)
@@ -110,7 +153,10 @@ function processUtils.run(command, workingDir, timeoutSeconds)
     end
     
     -- Add stderr redirection to capture both streams (at the very end for Windows)
-    cmdStr = cmdStr .. " 2>&1"
+    -- Only add if not already present
+    if not cmdStr:find("2>&1$") then
+        cmdStr = cmdStr .. " 2>&1"
+    end
     
     -- Debug logging
     print("RoughCut: Executing: " .. cmdStr)
@@ -334,8 +380,14 @@ function processUtils.spawn(command, workingDir)
     
     -- Build command string with proper escaping
     local escapedCmd = {}
-    for _, arg in ipairs(command) do
-        table.insert(escapedCmd, processUtils.shellEscape(arg))
+    for i, arg in ipairs(command) do
+        -- Use pcall to catch any errors from shellEscape
+        local ok, escaped = pcall(processUtils.shellEscape, arg)
+        if not ok then
+            result.error = "Failed to escape argument #" .. i .. ": " .. tostring(escaped)
+            return result
+        end
+        table.insert(escapedCmd, escaped)
     end
     local cmdStr = table.concat(escapedCmd, " ")
     

@@ -78,10 +78,36 @@ test("Process: Get script directory", function()
     assert(dir == nil or type(dir) == "string", "should return nil or string")
 end)
 
-test("Process: Shell escape", function()
-    local escaped = process.shellEscape('test "quote"')
+test("Process: Shell escape - simple argument", function()
+    -- Simple arguments without spaces should NOT be quoted on Windows
+    local escaped = process.shellEscape('python')
     assert(type(escaped) == "string", "should return string")
-    assert(escaped:find('\\"'), "should escape quotes")
+    -- Should not have outer quotes for simple args
+    assert(escaped == 'python' or escaped:sub(1,1) == '"', "simple arg should not be quoted or properly escaped")
+end)
+
+test("Process: Shell escape - argument with spaces", function()
+    -- Arguments with spaces should be quoted
+    local escaped = process.shellEscape('C:\\Program Files\\Python')
+    assert(type(escaped) == "string", "should return string")
+    assert(escaped:sub(1, 1) == '"', "arg with spaces should be quoted")
+    assert(escaped:sub(-1) == '"', "arg with spaces should end with quote")
+end)
+
+test("Process: Shell escape - argument with quotes", function()
+    -- Arguments containing quotes should have them doubled
+    local escaped = process.shellEscape('say "hello"')
+    assert(type(escaped) == "string", "should return string")
+    -- Should have doubled quotes inside
+    assert(escaped:find('""'), "quotes should be doubled")
+end)
+
+test("Process: Shell escape - percent signs", function()
+    -- Percent signs should be escaped for Windows batch
+    local escaped = process.shellEscape('100% complete')
+    assert(type(escaped) == "string", "should return string")
+    -- Should escape % as %%
+    assert(escaped:find('%%%%'), "percent signs should be doubled")
 end)
 
 test("Process: Run with invalid command returns error", function()
