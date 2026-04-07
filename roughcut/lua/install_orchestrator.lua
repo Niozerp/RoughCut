@@ -541,6 +541,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             
             -- For now, do synchronous read
             local outputLines = {}
+            local lineCount = 0
             print("RoughCut: Reading poetry install output...")
             while true do
                 local line = processUtils.readLine(installProcessHandle.handle)
