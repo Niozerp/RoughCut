@@ -106,7 +106,7 @@ interface AssetListProps {
   filter: FilterType
 }
 
-function AssetList({ category, filter }: AssetListProps) {
+function AssetList({ category: _category, filter: _filter }: AssetListProps) {
   // Placeholder assets - in real implementation, these would come from the backend
   const placeholderAssets = [
     { id: 1, name: 'Corporate Upbeat', tags: ['Upbeat', 'Corporate'], duration: '2:34', used: true },

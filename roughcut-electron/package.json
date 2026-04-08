@@ -2,11 +2,12 @@
   "name": "roughcut-electron",
   "version": "1.0.0",
   "description": "RoughCut Electron Desktop App - AI-powered media asset management and rough cut generation",
-  "main": "dist/main.js",
+  "main": "dist/electron/main.js",
   "scripts": {
+    "start": "npm run dev",
     "dev": "npm run build && electron .",
-    "build": "tsc && vite build",
-    "build:electron": "tsc",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

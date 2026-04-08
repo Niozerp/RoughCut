@@ -17,7 +17,7 @@ import {
 type ResolveStatus = 'connected' | 'connecting' | 'disconnected'
 
 function App() {
-  const [resolveStatus, setResolveStatus] = useState<ResolveStatus>('connected')
+  const [resolveStatus] = useState<ResolveStatus>('connected')
   const [commandOpen, setCommandOpen] = useState(false)
 
   // ⌘K keyboard shortcut
