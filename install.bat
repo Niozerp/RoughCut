@@ -1,26 +1,21 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+:: Create log file for debugging
+set "INSTALL_LOG=%TEMP%\roughcut_install.log"
+echo RoughCut Install Log - %date% %time% > "%INSTALL_LOG%"
+echo ============================================ >> "%INSTALL_LOG%"
+
 echo ============================================
 echo     RoughCut Installer for Windows
 echo ============================================
 echo.
+echo [INFO] Log file: %INSTALL_LOG%
 
 :: Configuration
 set "LAUNCHER_NAME=RoughCut.lua"
 set "SOURCE_LAUNCHER=%~dp0roughcut\RoughCut.lua"
 set "BACKEND_DIR=%~dp0roughcut"
-
-:: Check if running as admin (we don't need admin, but warn if they do)
-net session >nul 2>&1
-if %errorlevel% == 0 (
-    echo [WARNING] Running as Administrator. This is not required.
-    echo [WARNING] It's safer to run without admin privileges.
-    echo.
-    choice /C YN /M "Continue anyway"
-    if errorlevel 2 exit /b 1
-    echo.
-)
 
 :: Check if source files exist first
 if not exist "%SOURCE_LAUNCHER%" (
@@ -45,60 +40,12 @@ if not exist "%BACKEND_DIR%" (
 )
 
 :: Find DaVinci Resolve Scripts folder
-echo [1/4] Looking for DaVinci Resolve installation...
+echo [1/5] Looking for DaVinci Resolve installation...
 echo.
 
 set "RESOLVE_SCRIPTS="
-set "RESOLVE_FOUND=0"
 
-:: First, check if Resolve is installed by looking for the executable
-echo [INFO] Checking for DaVinci Resolve installation...
-
-set "RESOLVE_EXE="
-for %%p in (
-    "C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe"
-    "C:\Program Files (x86)\Blackmagic Design\DaVinci Resolve\Resolve.exe"
-    "C:\Program Files\Blackmagic Design\DaVinci Resolve Studio\Resolve.exe"
-    "C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe"
-) do (
-    if exist %%p (
-        set "RESOLVE_EXE=%%p"
-        set "RESOLVE_FOUND=1"
-        echo [FOUND] DaVinci Resolve: %%p
-        goto :resolve_found
-    )
-)
-
-:: Check registry for Resolve installation
-for /f "tokens=*" %%a in ('reg query "HKLM\SOFTWARE\Blackmagic Design\DaVinci Resolve" /v Path 2^>nul ^| findstr "Path"') do (
-    for /f "tokens=2*" %%b in ('echo %%a') do (
-        if exist "%%c\Resolve.exe" (
-            set "RESOLVE_EXE=%%c\Resolve.exe"
-            set "RESOLVE_FOUND=1"
-            echo [FOUND] DaVinci Resolve via registry: %%c
-            goto :resolve_found
-        )
-    )
-)
-
-:resolve_found
-if %RESOLVE_FOUND%==0 (
-    echo [WARNING] DaVinci Resolve executable not found!
-    echo.
-    echo Possible reasons:
-    echo   - Resolve is not installed
-    echo   - Resolve is installed in a non-standard location
-    echo   - This is a portable/folder-based installation
-    echo.
-    echo We'll try to find the Scripts folder anyway...
-    echo.
-)
-
-:: Now look for Scripts
-echo [INFO] Searching for Resolve Scripts folder...
-echo.
-
-:: Check common Windows paths (multiple variations)
+:: Check common Windows paths
 echo [INFO] Checking: %%APPDATA%% path...
 set "TEST_PATH=%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility"
 if exist "%TEST_PATH%" (
@@ -124,9 +71,6 @@ if exist "%TEST_PATH%" (
 )
 
 :: If Utility folder doesn't exist, check if the Scripts folder exists
-:: (we can create Utility if needed)
-echo [INFO] Checking for Scripts folder (without Utility subfolder)...
-
 set "TEST_PATH=%APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts"
 if exist "%TEST_PATH%" (
     echo [INFO] Found Scripts folder, creating Utility subfolder...
@@ -140,67 +84,6 @@ if exist "%TEST_PATH%" (
     )
 )
 
-set "TEST_PATH=%LOCALAPPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts"
-if exist "%TEST_PATH%" (
-    echo [INFO] Found Scripts folder, creating Utility subfolder...
-    mkdir "%TEST_PATH%\Utility" >nul 2>&1
-    if exist "%TEST_PATH%\Utility" (
-        set "RESOLVE_SCRIPTS=%TEST_PATH%\Utility"
-        echo [OK] Created Utility folder: %TEST_PATH%\Utility
-        goto :found_resolve
-    ) else (
-        echo [ERROR] Failed to create Utility folder. Permission denied?
-    )
-)
-
-set "TEST_PATH=%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts"
-if exist "%TEST_PATH%" (
-    echo [INFO] Found Scripts folder, creating Utility subfolder...
-    mkdir "%TEST_PATH%\Utility" >nul 2>&1
-    if exist "%TEST_PATH%\Utility" (
-        set "RESOLVE_SCRIPTS=%TEST_PATH%\Utility"
-        echo [OK] Created Utility folder: %TEST_PATH%\Utility
-        goto :found_resolve
-    ) else (
-        echo [ERROR] Failed to create Utility folder. Permission denied?
-    )
-)
-
-:: Check if Resolve Support folder exists (we can create the whole path)
-echo [INFO] Checking for Resolve Support folder...
-
-set "TEST_PATH=%APPDATA%\Blackmagic Design\DaVinci Resolve\Support"
-if exist "%TEST_PATH%" (
-    echo [INFO] Found Resolve Support folder, creating Scripts\Utility...
-    mkdir "%TEST_PATH%\Fusion\Scripts\Utility" >nul 2>&1
-    if exist "%TEST_PATH%\Fusion\Scripts\Utility" (
-        set "RESOLVE_SCRIPTS=%TEST_PATH%\Fusion\Scripts\Utility"
-        echo [OK] Created Scripts\Utility folder: %TEST_PATH%\Fusion\Scripts\Utility
-        goto :found_resolve
-    ) else (
-        echo [ERROR] Failed to create Scripts\Utility folder.
-    )
-)
-
-:: Check if Resolve is installed via registry for the Support path
-for /f "tokens=*" %%a in ('reg query "HKLM\SOFTWARE\Blackmagic Design\DaVinci Resolve" /v Path 2^>nul ^| findstr "Path"') do (
-    for /f "tokens=2*" %%b in ('echo %%a') do (
-        if exist "%%c\Support\Fusion\Scripts" (
-            echo [INFO] Found Resolve via registry, checking/creating Utility folder...
-            if not exist "%%c\Support\Fusion\Scripts\Utility" (
-                mkdir "%%c\Support\Fusion\Scripts\Utility" >nul 2>&1
-            )
-            if exist "%%c\Support\Fusion\Scripts\Utility" (
-                set "RESOLVE_SCRIPTS=%%c\Support\Fusion\Scripts\Utility"
-                echo [FOUND] Scripts folder via registry: !RESOLVE_SCRIPTS!
-                goto :found_resolve
-            ) else (
-                echo [ERROR] Failed to create Utility folder in registry path.
-            )
-        )
-    )
-)
-
 :: Not found - ask user
 cls
 echo ============================================
@@ -209,199 +92,27 @@ echo ============================================
 echo.
 echo [ERROR] Could not automatically find or create DaVinci Resolve Scripts folder.
 echo.
-echo Let's figure this out together.
+echo Tip: Copy one of these paths, paste in File Explorer address bar:
 echo.
-
-:: First, ask if Resolve is installed
-echo Is DaVinci Resolve installed on this computer?
-echo.
-echo   1. Yes, it's installed (standard location)
-echo   2. Yes, but it's in a custom/portable location
-echo   3. No, Resolve is not installed yet
-echo   4. I'm not sure / Cancel installation
-echo.
-
-choice /C 1234 /M "Select option"
-if errorlevel 4 goto :error
-if errorlevel 3 (
-    echo.
-    echo [INFO] You need to install DaVinci Resolve first.
-    echo.
-    echo Download from: https://www.blackmagicdesign.com/products/davinciresolve/
-    echo.
-    echo After installing Resolve, run this installer again.
-    echo.
-    choice /C YN /M "Open download page now"
-    if errorlevel 2 goto :wait_exit
-    if errorlevel 1 (
-        start https://www.blackmagicdesign.com/products/davinciresolve/
-        goto :wait_exit
-    )
-)
-if errorlevel 2 goto :custom_location
-if errorlevel 1 goto :help_find_location
-
-:help_find_location
-cls
-echo ============================================
-echo     Finding Resolve Scripts Folder
-echo ============================================
-echo.
-echo Let's find your Scripts folder:
-echo.
-echo Step 1: Open DaVinci Resolve
-echo Step 2: Go to: Workspace ^> Scripts ^> Edit...
-echo Step 3: Note the folder path that opens
-echo.
-echo This is your Scripts folder. The file goes in the "Utility" subfolder.
-echo.
-echo Common locations to check:
-echo.
-echo Windows (per-user):
-echo   %%APPDATA%%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\
-echo.
-echo Windows (system-wide):
-echo   %%PROGRAMDATA%%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\
-echo.
-echo Tip: Copy one of the paths above, paste in File Explorer address bar,
-echo then press Enter to navigate there.
-echo.
-echo Press any key to open File Explorer and help you find it...
-
-pause >nul
-
-:: Try to open the most likely locations
-if exist "%APPDATA%\Blackmagic Design" (
-    start explorer "%APPDATA%\Blackmagic Design\DaVinci Resolve"
-) else if exist "%PROGRAMDATA%\Blackmagic Design" (
-    start explorer "%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve"
-) else (
-    start explorer "%APPDATA%"
-)
-
-goto :ask_for_path
-
-:custom_location
-cls
-echo ============================================
-echo     Custom/Portable Installation
-echo ============================================
-echo.
-echo You have DaVinci Resolve in a custom or portable location.
-echo.
-echo Please navigate to where Resolve is installed and find:
-echo   Resolve\Support\Fusion\Scripts\Utility\
-echo.
-echo Or if the Utility folder doesn't exist yet:
-echo   Resolve\Support\Fusion\Scripts\
-echo   (We'll create the Utility folder for you)
-echo.
-echo Example portable path:
-echo   D:\DaVinci Resolve\Support\Fusion\Scripts\Utility\
-echo.
-
-:ask_for_path
-echo.
-echo ============================================
-echo IMPORTANT: Path Entry Instructions
-echo ============================================
-echo.
-echo When pasting the path:
-echo   - REMOVE any quotes at the beginning and end
-echo   - REMOVE any trailing backslash (\) at the end
-echo   - Example: C:\Users\You\Scripts\Utility
-echo   - NOT: "C:\Users\You\Scripts\Utility\" (no quotes, no trailing \)
+echo %%APPDATA%%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\
 echo.
 echo Paste the full path to the folder:
-echo (Leave blank to cancel)
-echo.
-set /p "USER_INPUT_PATH=Path: "
+set /p "RESOLVE_SCRIPTS=Path: "
 
-:: Trim quotes and spaces from input
-set "RESOLVE_SCRIPTS=%USER_INPUT_PATH:"=%"
-
-:: Remove trailing backslash if present (fixes copy command issues)
-if "%RESOLVE_SCRIPTS:~-1%"=="\" set "RESOLVE_SCRIPTS=%RESOLVE_SCRIPTS:~0,-1%"
-
-:: Remove trailing spaces
-:trim_loop
-if "%RESOLVE_SCRIPTS:~-1%"==" " (
-    set "RESOLVE_SCRIPTS=%RESOLVE_SCRIPTS:~0,-1%"
-    goto trim_loop
-)
-
-:: Check if empty
 if "%RESOLVE_SCRIPTS%"=="" (
     echo.
     echo Installation cancelled by user.
-    goto :error
+    pause
+    exit /b 1
 )
 
-:: Debug output
-echo.
-echo [DEBUG] You entered: %RESOLVE_SCRIPTS%
+:: Remove trailing backslash if present
+if "%RESOLVE_SCRIPTS:~-1%"=="\" set "RESOLVE_SCRIPTS=%RESOLVE_SCRIPTS:~0,-1%"
 
-:: Check if user gave us the Scripts folder or the Utility folder
-if exist "%RESOLVE_SCRIPTS%\RoughCut.lua" (
-    echo [INFO] It looks like you already have RoughCut.lua here.
-    echo [INFO] Using this location: %RESOLVE_SCRIPTS%
-    goto :found_resolve
-)
-
-:: If they gave us the Scripts folder (not Utility), check and create Utility
-if not exist "%RESOLVE_SCRIPTS%\Utility" (
-    if exist "%RESOLVE_SCRIPTS%" (
-        echo [INFO] Creating Utility subfolder at: %RESOLVE_SCRIPTS%\Utility
-        mkdir "%RESOLVE_SCRIPTS%\Utility"
-        if %errorlevel% neq 0 (
-            echo [ERROR] Failed to create Utility folder!
-            echo [ERROR] Error code: %errorlevel%
-            echo.
-            echo This might be due to:
-            echo   - Permission denied (try running as Administrator)
-            echo   - Invalid path (check the path you entered)
-            echo   - Disk full or other system error
-            echo.
-            echo The path you entered was: %RESOLVE_SCRIPTS%
-            echo.
-            choice /C YN /M "Try again"
-            if errorlevel 2 goto :error
-            if errorlevel 1 goto :ask_for_path
-        )
-        if exist "%RESOLVE_SCRIPTS%\Utility" (
-            set "RESOLVE_SCRIPTS=%RESOLVE_SCRIPTS%\Utility"
-            echo [OK] Created Utility folder: %RESOLVE_SCRIPTS%
-        ) else (
-            echo [ERROR] Utility folder was not created despite no error!
-            choice /C YN /M "Try again"
-            if errorlevel 2 goto :error
-            if errorlevel 1 goto :ask_for_path
-        )
-    ) else (
-        echo [ERROR] The path does not exist: %RESOLVE_SCRIPTS%
-        echo.
-        echo Please check:
-        echo   - The path is spelled correctly
-        echo   - The folders actually exist
-        echo   - You have permission to access this location
-        echo.
-        choice /C YN /M "Try again"
-        if errorlevel 2 goto :error
-        if errorlevel 1 goto :ask_for_path
-    )
-) else (
-    :: Utility folder already exists
-    set "RESOLVE_SCRIPTS=%RESOLVE_SCRIPTS%\Utility"
-    echo [OK] Using existing Utility folder: %RESOLVE_SCRIPTS%
-)
-
-:: Final verification
 if not exist "%RESOLVE_SCRIPTS%" (
-    echo [ERROR] Cannot access path: %RESOLVE_SCRIPTS%
-    echo.
-    choice /C YN /M "Try again"
-    if errorlevel 2 goto :error
-    if errorlevel 1 goto :ask_for_path
+    echo [ERROR] The path does not exist: %RESOLVE_SCRIPTS%
+    pause
+    exit /b 1
 )
 
 :found_resolve
@@ -409,370 +120,259 @@ echo.
 echo [OK] Resolve Scripts folder: %RESOLVE_SCRIPTS%
 echo.
 
-:: Copy launcher and backend folder
-echo [2/5] Installing RoughCut launcher and backend...
+:: Step 2: Build Electron UI FIRST (before copying anything)
+echo [2/5] Building Electron UI...
+echo.
+echo ============================================
+echo ELECTRON BUILD DIAGNOSTICS
+echo ============================================
+echo.
 
-:: Check if Resolve is running (it might lock the file)
+if exist "%~dp0roughcut\electron\package.json" (
+    echo [DIAGNOSTIC] Found Electron app at: %~dp0roughcut\electron\
+    echo.
+    
+    :: DIAGNOSTIC: Check what's in electron folder before build
+    echo [DIAGNOSTIC] Contents of %~dp0roughcut\electron\ before build:
+    dir /b "%~dp0roughcut\electron\" 2>nul | findstr /v "node_modules" || echo   (empty or no access)
+    echo.
+    
+    :: DIAGNOSTIC: Check if dist exists before build
+    if exist "%~dp0roughcut\electron\dist" (
+        echo [DIAGNOSTIC] dist\ folder EXISTS before build
+        dir /b "%~dp0roughcut\electron\dist\" 2>nul || echo   (folder exists but empty)
+        echo.
+    ) else (
+        echo [DIAGNOSTIC] dist\ folder does NOT exist yet (expected)
+        echo.
+    )
+    
+    :: Check for npm
+    echo [DIAGNOSTIC] Checking for npm...
+    where npm >nul 2>&1
+    if %errorlevel% neq 0 (
+        where npm.cmd >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [WARNING] Node.js/npm not found in PATH!
+            echo [WARNING] Electron UI will be copied but may not work.
+            echo [INFO] Install Node.js from https://nodejs.org/
+            echo.
+            goto :skip_electron_build
+        )
+    )
+    echo [DIAGNOSTIC] npm found in PATH
+echo.
+    
+    :: Check if dist/main.js already exists
+    if exist "%~dp0roughcut\electron\dist\main.js" (
+        echo [DIAGNOSTIC] dist\main.js already exists - skipping npm install/build
+        echo [INFO] Skipping rebuild. Delete dist\ folder to force rebuild.
+        echo.
+        goto :electron_built
+    )
+    
+    :: Install dependencies
+    echo [INFO] Installing Electron dependencies (npm install)...
+    echo [INFO] This may take 2-3 minutes on first run...
+    echo [INFO] You will see npm output below...
+    echo.
+    
+    cd /d "%~dp0roughcut\electron"
+    
+    :: Run npm install - output shown on screen
+    call npm install
+    set "NPM_INSTALL_ERROR=%errorlevel%"
+    
+    if %NPM_INSTALL_ERROR% neq 0 (
+        echo.
+        echo [ERROR] npm install FAILED with exit code %NPM_INSTALL_ERROR%!
+        echo.
+        pause
+        goto :skip_electron_build
+    ) else (
+        echo.
+        echo [OK] npm install completed successfully
+        echo.
+    )
+    
+    :: Build the app
+    echo [INFO] Building Electron app (npm run build)...
+    echo [INFO] This may take 1-2 minutes...
+    echo [INFO] You will see build output below...
+    echo.
+    
+    :: Run npm build - output shown on screen
+    call npm run build
+    set "NPM_BUILD_ERROR=%errorlevel%"
+    
+    if %NPM_BUILD_ERROR% neq 0 (
+        echo.
+        echo [ERROR] npm run build FAILED with exit code %NPM_BUILD_ERROR%!
+        echo.
+        pause
+        goto :skip_electron_build
+    ) else (
+        echo.
+        echo [OK] npm run build completed successfully
+        echo.
+    )
+    
+    :: DIAGNOSTIC: Check dist folder after build
+    echo ============================================
+    echo [DIAGNOSTIC] Checking build output...
+    echo ============================================
+    if exist "%~dp0roughcut\electron\dist" (
+        echo [DIAGNOSTIC] dist\ folder was created
+        echo.
+        echo [DIAGNOSTIC] Contents of dist\ folder:
+        dir /s /b "%~dp0roughcut\electron\dist\" 2>nul
+        echo.
+    ) else (
+        echo [DIAGNOSTIC] ERROR: dist\ folder was NOT created!
+        echo.
+    )
+    
+    :: Verify dist/main.js was created
+    if not exist "%~dp0roughcut\electron\dist\main.js" (
+        echo [WARNING] Build completed but dist\main.js not found!
+        echo [WARNING] Build process may have failed silently.
+        echo.
+        echo [DIAGNOSTIC] Listing ALL files in electron folder:
+        dir /s /b "%~dp0roughcut\electron\" 2>nul | findstr /v "node_modules"
+        echo.
+        pause
+        goto :skip_electron_build
+    ) else (
+        echo [OK] Verified: dist\main.js exists
+        echo.
+    )
+    
+    :electron_built
+    echo [OK] Electron UI ready
+    echo.
+) else (
+    echo [INFO] No Electron app found at: %~dp0roughcut\electron\
+    echo [INFO] Skipping Electron build.
+    echo.
+)
+
+:skip_electron_build
+
+:: Step 3: Copy files to Resolve
+echo [3/5] Installing RoughCut to DaVinci Resolve...
+echo.
+
+:: Check if Resolve is running
 tasklist | findstr /I "Resolve.exe" >nul
 if %errorlevel% == 0 (
     echo [WARNING] DaVinci Resolve appears to be running!
     echo [WARNING] Please close Resolve before continuing.
     echo.
     choice /C YC /M "Continue anyway (might fail) or Cancel"
-    if errorlevel 2 goto :error
+    if errorlevel 2 exit /b 1
     echo.
 )
 
-:: Debug: Show what we're copying where
-echo [DEBUG] Copying launcher from: %SOURCE_LAUNCHER%
-echo [DEBUG] Copying backend from: %BACKEND_DIR%
-echo [DEBUG] Copying to: %RESOLVE_SCRIPTS%
-
-:: Perform the copy and capture result immediately
+:: Copy launcher
+echo [INFO] Copying RoughCut.lua...
 copy /Y "%SOURCE_LAUNCHER%" "%RESOLVE_SCRIPTS%\" >nul
-set "COPY_RESULT=%errorlevel%"
-
-if "%COPY_RESULT%"=="0" (
-    echo [OK] RoughCut.lua copied successfully
-) else (
-    echo.
+if %errorlevel% neq 0 (
     echo [ERROR] Failed to copy RoughCut.lua
-    echo [ERROR] Copy command returned error code: %COPY_RESULT%
+    echo [ERROR] Make sure Resolve is closed and you have permissions.
     echo.
-    echo Possible causes:
-    echo   - DaVinci Resolve is running (close it and try again)
-    echo   - Permission denied (run install.bat as Administrator once)
-    echo   - Path is incorrect (verify the Utility folder exists)
-    echo   - Source file missing: %SOURCE_LAUNCHER%
-    echo.
-    echo Checking source file:
-    if exist "%SOURCE_LAUNCHER%" (
-        echo   [OK] Source file found
-    ) else (
-        echo   [ERROR] Source file NOT found at: %SOURCE_LAUNCHER%
-    )
-    echo.
-    echo Checking target folder:
-    if exist "%RESOLVE_SCRIPTS%" (
-        echo   [OK] Target folder found
-    ) else (
-        echo   [ERROR] Target folder NOT found: %RESOLVE_SCRIPTS%
-    )
-    echo.
-    
-    :: Special case: Error code 1 might still mean success with xcopy
-    :: Let's verify the file actually got copied
-    if exist "%RESOLVE_SCRIPTS%\RoughCut.lua" (
-        echo.
-        echo [INFO] File actually exists at destination despite error code!
-        echo [INFO] Installation likely succeeded. Continuing...
-        echo.
-        goto :copy_success
-    )
-    
-    choice /C YN /M "Try running as Administrator"
-    if errorlevel 2 goto :error
-    if errorlevel 1 (
-        echo.
-        echo Please right-click install.bat and select "Run as administrator"
-        echo Then try again.
-        goto :wait_exit
-    )
+    pause
+    exit /b 1
 )
-
-:copy_success
-echo [OK] RoughCut.lua installed to Scripts/Utility
+echo [OK] RoughCut.lua installed
 echo.
 
-:: Copy the roughcut backend folder
-echo [INFO] Copying RoughCut backend folder...
-echo [DEBUG] Source: %BACKEND_DIR%
-echo [DEBUG] Target: %RESOLVE_SCRIPTS%\roughcut\
-
-:: Use xcopy to copy the entire directory
+:: Copy roughcut folder
+echo [INFO] Copying roughcut\ folder (this includes Electron UI if built)...
 if exist "%RESOLVE_SCRIPTS%\roughcut\" (
-    echo [INFO] Existing roughcut folder found, updating...
+    echo [INFO] Removing existing roughcut folder...
     rmdir /S /Q "%RESOLVE_SCRIPTS%\roughcut\" >nul 2>&1
 )
 
-xcopy /E /I /Y "%BACKEND_DIR%" "%RESOLVE_SCRIPTS%\roughcut\" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [WARNING] xcopy returned error code: %errorlevel%
-    echo [WARNING] This might be normal. Checking if files exist...
+echo [DIAGNOSTIC] Source: %~dp0roughcut\
+echo [DIAGNOSTIC] Target: %RESOLVE_SCRIPTS%\roughcut\
+echo.
+
+xcopy /E /I /Y "%~dp0roughcut\" "%RESOLVE_SCRIPTS%\roughcut\"
+set "XCOPY_RESULT=%errorlevel%"
+
+if %XCOPY_RESULT% neq 0 (
+    echo.
+    echo [WARNING] xcopy returned error code: %XCOPY_RESULT%
+    echo [WARNING] Checking if files exist anyway...
+    echo.
 )
 
 :: Verify the copy worked
+echo [DIAGNOSTIC] Verifying copy...
 if exist "%RESOLVE_SCRIPTS%\roughcut\lua\roughcut_main.lua" (
-    echo [OK] Backend folder copied successfully
+    echo [OK] roughcut\lua\roughcut_main.lua found at destination
 ) else (
-    echo [ERROR] Failed to copy backend folder!
-    echo [ERROR] Expected to find: %RESOLVE_SCRIPTS%\roughcut\lua\roughcut_main.lua
-    echo.
-    echo Please try:
-    echo   1. Close DaVinci Resolve completely
-    echo   2. Delete any existing roughcut folder in Scripts
-    echo   3. Run install.bat again
-    echo.
-    choice /C YN /M "Continue anyway (will likely fail)"
-    if errorlevel 2 goto :error
+    echo [ERROR] roughcut\lua\roughcut_main.lua NOT found!
 )
+
+:: DIAGNOSTIC: Check if dist was copied
+echo.
+echo [DIAGNOSTIC] Checking if Electron dist\ was copied...
+if exist "%RESOLVE_SCRIPTS%\roughcut\electron\dist" (
+    echo [OK] electron\dist\ folder exists at destination
+    echo [DIAGNOSTIC] Contents:
+    dir /b "%RESOLVE_SCRIPTS%\roughcut\electron\dist\" 2>nul || echo (empty)
+) else (
+    echo [WARNING] electron\dist\ folder NOT found at destination!
+    echo [WARNING] Electron UI will not work.
+)
+
+if exist "%RESOLVE_SCRIPTS%\roughcut\electron\dist\main.js" (
+    echo [OK] electron\dist\main.js exists at destination - Electron ready!
+) else (
+    echo [ERROR] electron\dist\main.js NOT found at destination!
+    echo [ERROR] Electron UI will fail to launch.
+)
+
 echo.
 
-:: Copy the roughcut-electron folder (if it exists)
-echo [INFO] Copying RoughCut Electron UI folder...
-echo [DEBUG] Source: %~dp0roughcut-electron\
-echo [DEBUG] Target: %RESOLVE_SCRIPTS%\roughcut-electron\
-
-if exist "%~dp0roughcut-electron\package.json" (
-    if exist "%RESOLVE_SCRIPTS%\roughcut-electron\" (
-        echo [INFO] Existing roughcut-electron folder found, updating...
-        rmdir /S /Q "%RESOLVE_SCRIPTS%\roughcut-electron\" >nul 2>&1
-    )
-    
-    xcopy /E /I /Y "%~dp0roughcut-electron\" "%RESOLVE_SCRIPTS%\roughcut-electron\" >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [WARNING] xcopy returned error code: %errorlevel%
-        echo [WARNING] This might be normal. Checking if files exist...
-    )
-    
-    :: Verify the copy worked
-    if exist "%RESOLVE_SCRIPTS%\roughcut-electron\package.json" (
-        echo [OK] Electron UI folder copied successfully
-    ) else (
-        echo [WARNING] Failed to copy Electron UI folder
-        echo [INFO] The Electron UI will not be available
-        echo [INFO] You can still use the native Resolve UI
-    )
-) else (
-    echo [INFO] roughcut-electron folder not found in source
-    echo [INFO] Skipping Electron UI installation
-)
+:: Step 4: Check Python
+echo [4/5] Checking Python installation...
 echo.
-
-:: Check Python
-echo [3/5] Checking Python installation...
 
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     python3 --version >nul 2>&1
     if %errorlevel% neq 0 (
         echo [WARNING] Python not found!
+        echo [INFO] RoughCut will use Lua features only (no AI).
+        echo [INFO] Install Python 3.10+ for full functionality.
         echo.
-        echo RoughCut requires Python 3.10+ for AI features.
-        echo.
-        echo Would you like to:
-        echo   1. Continue anyway (Lua features only, no AI)
-        echo   2. Open Python download page
-        echo   3. Cancel installation
-        echo.
-        choice /C 123 /M "Select option"
-        if errorlevel 3 goto :error
-        if errorlevel 2 (
-            start https://www.python.org/downloads/
-            echo.
-            echo Please install Python 3.10+, then run this installer again.
-            goto :wait_exit
-        )
-        if errorlevel 1 (
-            echo.
-            echo [INFO] Continuing without Python. AI features will not be available.
-            echo [INFO] You can install Python later and the backend will auto-install.
-            goto :skip_python
-        )
+    ) else (
+        for /f "tokens=2" %%a in ('python3 --version 2^>^&1') do echo [OK] Found Python %%a
     )
-)
-
-for /f "tokens=2" %%a in ('python --version 2^>^&1') do set PYTHON_VERSION=%%a
-echo [OK] Found Python %PYTHON_VERSION%
-
-:: Check Poetry
-echo.
-echo [4/5] Installing Python backend...
-
-poetry --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [INFO] Poetry not found. Installing automatically...
-    echo.
-    
-    :: Install Poetry
-    powershell -Command "(Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -" 2>nul
-    
-    if %errorlevel% neq 0 (
-        echo [WARNING] Automatic Poetry installation failed.
-        echo.
-        echo The RoughCut Lua script will attempt to install dependencies
-        echo on first run. Just click "Yes" when prompted.
-        echo.
-        echo Or install manually:
-        echo   1. Open PowerShell as Administrator
-        echo   2. Run: (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | py -
-        echo   3. Close and reopen this installer
-        echo.
-        goto :skip_poetry
-    )
-    
-    :: Refresh PATH
-    call :refresh_path
-    
-    poetry --version >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [WARNING] Poetry installed but not in PATH.
-        echo [INFO] Please restart this installer, or let auto-install handle it.
-        goto :skip_poetry
-    )
-    
-    for /f "tokens=3" %%a in ('poetry --version 2^>^&1') do set POETRY_VERSION=%%a
-    echo [OK] Poetry %POETRY_VERSION% installed
 ) else (
-    for /f "tokens=3" %%a in ('poetry --version 2^>^&1') do set POETRY_VERSION=%%a
-    echo [OK] Poetry %POETRY_VERSION% found
+    for /f "tokens=2" %%a in ('python --version 2^>^&1') do echo [OK] Found Python %%a
 )
 
-:: Install Python dependencies
+:: Step 5: Summary
 echo.
-echo Installing RoughCut Python backend...
-echo (This may take a few minutes on first run)
-echo.
-
-cd /d "%BACKEND_DIR%"
-poetry install --no-interaction
-
-if %errorlevel% neq 0 (
-    echo.
-    echo [WARNING] Backend installation had issues.
-    echo [INFO] The Lua script will retry on first run.
-    echo.
-) else (
-    echo [OK] Python backend installed successfully
-)
-
-:skip_poetry
-:skip_python
-
-:: Install Electron UI
-echo.
-echo [5/5] Checking Electron UI dependencies...
-
-:: Check if Node.js/npm is available
-where npm >nul 2>&1
-if %errorlevel% neq 0 (
-    where npm.cmd >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [INFO] Node.js/npm not found. Checking common locations...
-        
-        :: Check common Windows paths
-        if exist "C:\Program Files\nodejs\npm.cmd" (
-            set "NPM_PATH=C:\Program Files\nodejs\npm.cmd"
-            echo [OK] Found npm at: C:\Program Files\nodejs\
-            goto :npm_found
-        )
-        if exist "C:\Program Files (x86)\nodejs\npm.cmd" (
-            set "NPM_PATH=C:\Program Files (x86)\nodejs\npm.cmd"
-            echo [OK] Found npm at: C:\Program Files (x86)\nodejs\
-            goto :npm_found
-        )
-        if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\npm.cmd" (
-            set "NPM_PATH=%LOCALAPPDATA%\Microsoft\WindowsApps\npm.cmd"
-            echo [OK] Found npm at: %LOCALAPPDATA%\Microsoft\WindowsApps\
-            goto :npm_found
-        )
-        
-        echo [WARNING] Node.js/npm not found!
-        echo.
-        echo The modern Electron UI requires Node.js.
-        echo.
-        echo Would you like to:
-        echo   1. Continue with native Resolve UI (no Electron)
-        echo   2. Open Node.js download page
-        echo   3. Cancel installation
-        echo.
-        choice /C 123 /M "Select option"
-        if errorlevel 3 goto :error
-        if errorlevel 2 (
-            start https://nodejs.org/
-            echo.
-            echo Please install Node.js, then run this installer again.
-            goto :wait_exit
-        )
-        if errorlevel 1 (
-            echo.
-            echo [INFO] Continuing without Electron UI.
-            echo [INFO] The native Resolve UI will be used instead.
-            goto :skip_electron
-        )
-    )
-)
-
-:npm_found
-:: Check if roughcut-electron exists
-if not exist "%~dp0roughcut-electron\package.json" (
-    echo [INFO] roughcut-electron folder not found, skipping Electron UI install
-    goto :skip_electron
-)
-
-:: Check if dependencies already installed
-if exist "%~dp0roughcut-electron\node_modules\.package-lock.json" (
-    echo [OK] Electron dependencies already installed
-    goto :skip_electron
-)
-
-echo [INFO] Installing Electron UI dependencies...
-echo [INFO] This may take 2-3 minutes...
-echo.
-
-cd /d "%~dp0roughcut-electron"
-
-if defined NPM_PATH (
-    "%NPM_PATH%" install
-) else (
-    npm install
-)
-
-if %errorlevel% neq 0 (
-    echo [WARNING] Electron dependency installation had issues.
-    echo [INFO] The script will try to install on first run from Resolve.
-    echo.
-) else (
-    echo [OK] Electron UI dependencies installed successfully
-)
-
-:skip_electron
-
-:: Success!
-:: Verify the files actually exist at the destination
-if not exist "%RESOLVE_SCRIPTS%\RoughCut.lua" (
-    echo [ERROR] Installation verification failed!
-    echo [ERROR] Launcher not found at: %RESOLVE_SCRIPTS%\RoughCut.lua
-    echo.
-    echo The copy reported success but the file is not in place.
-    echo This might be a permissions issue.
-    echo.
-    goto :error
-)
-
-if not exist "%RESOLVE_SCRIPTS%\roughcut\lua\roughcut_main.lua" (
-    echo [ERROR] Installation verification failed!
-    echo [ERROR] Backend not found at: %RESOLVE_SCRIPTS%\roughcut\lua\roughcut_main.lua
-    echo.
-    echo The folder copy may have failed.
-    echo.
-    goto :error
-)
-
-cls
 echo ============================================
 echo     RoughCut Installation Complete!
 echo ============================================
 echo.
 echo [✓] RoughCut.lua installed to: %RESOLVE_SCRIPTS%
-echo [✓] Backend folder installed: %RESOLVE_SCRIPTS%\roughcut\
-if exist "%RESOLVE_SCRIPTS%\roughcut-electron\package.json" (
-    echo [✓] Electron UI installed: %RESOLVE_SCRIPTS%\roughcut-electron\
+echo [✓] Backend folder: %RESOLVE_SCRIPTS%\roughcut\
+if exist "%RESOLVE_SCRIPTS%\roughcut\electron\dist\main.js" (
+    echo [✓] Electron UI built and installed correctly
 ) else (
-    echo [i] Electron UI not installed (requires Node.js)
+    echo [✗] Electron UI NOT installed correctly - will fail on launch
+    if exist "%~dp0roughcut\electron\dist\main.js" (
+        echo [INFO] Build succeeded in source but copy failed
+    ) else (
+        echo [INFO] Build may have failed or was skipped
+    )
 )
-echo [✓] Files verified at destination
-echo [✓] Python backend ready (or will auto-install)
 echo.
 echo NEXT STEPS:
 echo -----------
@@ -783,14 +383,24 @@ echo.
 echo TROUBLESHOOTING:
 echo ----------------
 echo - If script doesn't appear: Restart Resolve completely
-echo - If backend fails: It will auto-install when you run RoughCut
 echo - For help: See README.md in the roughcut folder
 echo.
+echo ============================================
+echo DIAGNOSTIC INFO FOR DEBUGGING:
+echo ============================================
+echo Source roughcut\electron\dist\main.js: %~dp0roughcut\electron\dist\main.js
+echo Dest   roughcut\electron\dist\main.js: %RESOLVE_SCRIPTS%\roughcut\electron\dist\main.js
+echo.
+echo Source exists: 
+if exist "%~dp0roughcut\electron\dist\main.js" (echo YES) else (echo NO)
+echo Dest   exists: 
+if exist "%RESOLVE_SCRIPTS%\roughcut\electron\dist\main.js" (echo YES) else (echo NO)
+echo ============================================
+echo.
 
-choice /C YN /M "Would you like to launch DaVinci Resolve now"
+choice /C YN /M "Launch DaVinci Resolve now"
 if errorlevel 2 goto :done
 if errorlevel 1 (
-    :: Try to find and launch Resolve
     if exist "C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe" (
         start "" "C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe"
     ) else if exist "C:\Program Files (x86)\Blackmagic Design\DaVinci Resolve\Resolve.exe" (
@@ -802,39 +412,30 @@ if errorlevel 1 (
 
 :done
 echo.
-echo Installation complete! Enjoy using RoughCut! 🎬
+echo Installation complete
 echo.
-echo Installation location: %RESOLVE_SCRIPTS%
+echo Location: %RESOLVE_SCRIPTS%
 echo.
-pause
-goto :eof
+echo Debug log: %INSTALL_LOG%
+echo.
+
+:end_of_script
+echo.
+echo ============================================
+echo PRESS ANY KEY TO EXIT
+echo ============================================
+echo.
+set /p "EXITCONFIRM=Press Enter to exit..."
+exit /b 0
 
 :error
 echo.
 echo ============================================
-echo     Installation Failed or Cancelled
+echo     Installation Failed
 echo ============================================
 echo.
 echo Please check the error messages above.
 echo.
-echo For detailed help, see: install-guide.md
+echo Debug log: %INSTALL_LOG%
 echo.
-echo Press any key to exit...
-pause >nul
-exit /b 1
-
-:wait_exit
-echo.
-echo Press any key to exit...
-pause >nul
-exit /b 0
-
-:refresh_path
-:: Refresh environment variables without restarting
-for /f "tokens=*" %%a in ('path') do set "PATH=%%a"
-for /f "skip=2 tokens=3*" %%a in ('reg query "HKCU\Environment" /v Path 2^>nul') do (
-    set "USER_PATH=%%a %%b"
-    setx PATH "%%a %%b" >nul 2>&1
-)
-if not "%USER_PATH%"=="" set "PATH=%PATH%;%USER_PATH%"
-goto :eof
+goto :end_of_script

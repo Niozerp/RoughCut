@@ -2,6 +2,7 @@
   "name": "roughcut-electron",
   "version": "1.0.0",
   "description": "RoughCut Electron Desktop App - AI-powered media asset management and rough cut generation",
+  "type": "module",
   "main": "dist/electron/main.js",
   "scripts": {
     "start": "npm run dev",

@@ -427,27 +427,27 @@ else
     exit 1
 fi
 
-# Copy roughcut-electron folder if it exists
-ELECTRON_SOURCE="$INSTALL_ROOT/roughcut-electron"
-ELECTRON_TARGET="$RESOLVE_SCRIPTS/roughcut-electron"
+# Copy roughcut/electron folder if it exists
+ELECTRON_SOURCE="$INSTALL_ROOT/roughcut/electron"
+ELECTRON_TARGET="$RESOLVE_SCRIPTS/roughcut/electron"
 
 if [[ -f "$ELECTRON_SOURCE/package.json" ]]; then
-    print_info "Copying roughcut-electron folder..."
+    print_info "Copying roughcut/electron folder..."
     
     if [[ -d "$ELECTRON_TARGET" ]]; then
-        print_info "Existing roughcut-electron folder found, updating..."
+        print_info "Existing electron folder found, updating..."
         rm -rf "$ELECTRON_TARGET"
     fi
     
-    if cp -R "$ELECTRON_SOURCE" "$RESOLVE_SCRIPTS/"; then
-        print_ok "roughcut-electron/ copied to Scripts/Utility/"
+    if cp -R "$ELECTRON_SOURCE" "$RESOLVE_SCRIPTS/roughcut/"; then
+        print_ok "electron/ copied to Scripts/Utility/roughcut/"
     else
-        print_warn "Failed to copy roughcut-electron folder"
+        print_warn "Failed to copy electron folder"
         print_info "The Electron UI will not be available"
         print_info "You can still use the native Resolve UI"
     fi
 else
-    print_info "roughcut-electron folder not found, skipping"
+    print_info "roughcut/electron folder not found, skipping"
 fi
 
 print_info "Verifying installed files..."
@@ -609,25 +609,42 @@ fi
 
 # Install Electron dependencies if npm is available
 if [[ -z "$SKIP_ELECTRON" ]]; then
-    # Check if roughcut-electron exists
-    if [[ ! -f "$INSTALL_ROOT/roughcut-electron/package.json" ]]; then
-        print_info "roughcut-electron folder not found, skipping Electron UI install"
+    # Check if roughcut/electron exists
+    if [[ ! -f "$INSTALL_ROOT/roughcut/electron/package.json" ]]; then
+        print_info "roughcut/electron folder not found, skipping Electron UI install"
     else
         # Check if dependencies already installed
-        if [[ -d "$INSTALL_ROOT/roughcut-electron/node_modules" ]]; then
+        if [[ -d "$INSTALL_ROOT/roughcut/electron/node_modules" ]]; then
             print_ok "Electron dependencies already installed"
         else
             print_info "Installing Electron UI dependencies..."
             print_info "This may take 2-3 minutes..."
             echo ""
             
-            cd "$INSTALL_ROOT/roughcut-electron"
+            cd "$INSTALL_ROOT/roughcut/electron"
             
             if $NPM_CMD install; then
                 print_ok "Electron UI dependencies installed successfully"
             else
                 print_warn "Electron dependency installation had issues."
                 print_info "The script will try to install on first run from Resolve."
+                SKIP_BUILD=1
+            fi
+        fi
+        
+        # Build the Electron app
+        if [[ -z "$SKIP_BUILD" ]]; then
+            print_info "Building Electron UI..."
+            print_info "This may take 1-2 minutes..."
+            echo ""
+            
+            cd "$INSTALL_ROOT/roughcut/electron"
+            
+            if $NPM_CMD run build; then
+                print_ok "Electron UI built successfully"
+            else
+                print_warn "Electron build had issues."
+                print_info "The script will try to build on first run from Resolve."
             fi
         fi
     fi
@@ -642,7 +659,7 @@ echo ""
 print_ok "$SCRIPT_NAME installed to Resolve Scripts"
 print_ok "roughcut/ module tree installed alongside the launcher"
 
-if [[ -f "$RESOLVE_SCRIPTS/roughcut-electron/package.json" ]]; then
+if [[ -f "$RESOLVE_SCRIPTS/roughcut/electron/package.json" ]]; then
     print_ok "Electron UI installed"
 elif [[ -z "$SKIP_ELECTRON" ]]; then
     print_info "Electron UI not installed (requires Node.js)"
