@@ -351,7 +351,7 @@ echo ""
 
 # Copy launcher and module tree
 echo ""
-print_info "Installing RoughCut launcher and module tree..."
+print_info "[2/5] Installing RoughCut launcher and module tree..."
 
 # Check if Resolve is running (it might lock the file)
 RESOLVE_RUNNING=0
@@ -448,7 +448,7 @@ done
 
 # Check Python
 echo ""
-print_info "Checking Python installation..."
+print_info "[3/5] Checking Python installation..."
 
 PYTHON_CMD=""
 
@@ -495,7 +495,7 @@ fi
 # Check Poetry and install backend (if we have Python)
 if [[ -z "$SKIP_PYTHON" ]]; then
     echo ""
-    print_info "Checking Poetry package manager..."
+    print_info "[4/5] Installing Python backend..."
     
     if ! command -v poetry &> /dev/null; then
         print_info "Poetry not found. Installing automatically..."
@@ -534,6 +534,76 @@ if [[ -z "$SKIP_PYTHON" ]]; then
         else
             print_warn "Backend installation had issues."
             print_info "The Lua script will retry on first run."
+        fi
+    fi
+fi
+
+# Install Electron UI
+echo ""
+print_info "[5/5] Checking Electron UI dependencies..."
+
+# Check if Node.js/npm is available
+NPM_CMD=""
+if command -v npm &> /dev/null; then
+    NPM_CMD="npm"
+elif command -v npm.cmd &> /dev/null; then
+    NPM_CMD="npm.cmd"
+fi
+
+if [[ -z "$NPM_CMD" ]]; then
+    print_warn "Node.js/npm not found!"
+    echo ""
+    echo "The modern Electron UI requires Node.js."
+    echo ""
+    read -rp "Continue with native Resolve UI (no Electron)? [Y/n]: " response
+    if [[ ! "$response" =~ ^[Yy]$ ]] && [[ -n "$response" ]]; then
+        if [[ "$PLATFORM" == "Mac" ]]; then
+            echo ""
+            echo "Install Node.js via Homebrew:"
+            echo "  brew install node"
+            echo ""
+            echo "Or download from: https://nodejs.org/"
+        else
+            echo ""
+            echo "Install Node.js via your package manager:"
+            echo "  Ubuntu/Debian: sudo apt install nodejs npm"
+            echo "  Fedora: sudo dnf install nodejs npm"
+            echo "  Arch: sudo pacman -S nodejs npm"
+        fi
+        exit 0
+    fi
+    
+    echo ""
+    print_info "Continuing without Electron UI."
+    print_info "The native Resolve UI will be used instead."
+    SKIP_ELECTRON=1
+else
+    NPM_VERSION=$($NPM_CMD --version 2>&1)
+    print_ok "npm $NPM_VERSION found"
+fi
+
+# Install Electron dependencies if npm is available
+if [[ -z "$SKIP_ELECTRON" ]]; then
+    # Check if roughcut-electron exists
+    if [[ ! -f "$INSTALL_ROOT/roughcut-electron/package.json" ]]; then
+        print_info "roughcut-electron folder not found, skipping Electron UI install"
+    else
+        # Check if dependencies already installed
+        if [[ -d "$INSTALL_ROOT/roughcut-electron/node_modules" ]]; then
+            print_ok "Electron dependencies already installed"
+        else
+            print_info "Installing Electron UI dependencies..."
+            print_info "This may take 2-3 minutes..."
+            echo ""
+            
+            cd "$INSTALL_ROOT/roughcut-electron"
+            
+            if $NPM_CMD install; then
+                print_ok "Electron UI dependencies installed successfully"
+            else
+                print_warn "Electron dependency installation had issues."
+                print_info "The script will try to install on first run from Resolve."
+            fi
         fi
     fi
 fi

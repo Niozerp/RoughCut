@@ -410,7 +410,7 @@ echo [OK] Resolve Scripts folder: %RESOLVE_SCRIPTS%
 echo.
 
 :: Copy launcher and backend folder
-echo [2/4] Installing RoughCut launcher and backend...
+echo [2/5] Installing RoughCut launcher and backend...
 
 :: Check if Resolve is running (it might lock the file)
 tasklist | findstr /I "Resolve.exe" >nul
@@ -519,7 +519,7 @@ if exist "%RESOLVE_SCRIPTS%\roughcut\lua\roughcut_main.lua" (
 echo.
 
 :: Check Python
-echo [3/4] Checking Python installation...
+echo [3/5] Checking Python installation...
 
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
@@ -556,7 +556,7 @@ echo [OK] Found Python %PYTHON_VERSION%
 
 :: Check Poetry
 echo.
-echo [4/4] Checking Poetry package manager...
+echo [4/5] Installing Python backend...
 
 poetry --version >nul 2>&1
 if %errorlevel% neq 0 (
@@ -617,6 +617,95 @@ if %errorlevel% neq 0 (
 
 :skip_poetry
 :skip_python
+
+:: Install Electron UI
+echo.
+echo [5/5] Checking Electron UI dependencies...
+
+:: Check if Node.js/npm is available
+where npm >nul 2>&1
+if %errorlevel% neq 0 (
+    where npm.cmd >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [INFO] Node.js/npm not found. Checking common locations...
+        
+        :: Check common Windows paths
+        if exist "C:\Program Files\nodejs\npm.cmd" (
+            set "NPM_PATH=C:\Program Files\nodejs\npm.cmd"
+            echo [OK] Found npm at: C:\Program Files\nodejs\
+            goto :npm_found
+        )
+        if exist "C:\Program Files (x86)\nodejs\npm.cmd" (
+            set "NPM_PATH=C:\Program Files (x86)\nodejs\npm.cmd"
+            echo [OK] Found npm at: C:\Program Files (x86)\nodejs\
+            goto :npm_found
+        )
+        if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\npm.cmd" (
+            set "NPM_PATH=%LOCALAPPDATA%\Microsoft\WindowsApps\npm.cmd"
+            echo [OK] Found npm at: %LOCALAPPDATA%\Microsoft\WindowsApps\
+            goto :npm_found
+        )
+        
+        echo [WARNING] Node.js/npm not found!
+        echo.
+        echo The modern Electron UI requires Node.js.
+        echo.
+        echo Would you like to:
+        echo   1. Continue with native Resolve UI (no Electron)
+        echo   2. Open Node.js download page
+        echo   3. Cancel installation
+        echo.
+        choice /C 123 /M "Select option"
+        if errorlevel 3 goto :error
+        if errorlevel 2 (
+            start https://nodejs.org/
+            echo.
+            echo Please install Node.js, then run this installer again.
+            goto :wait_exit
+        )
+        if errorlevel 1 (
+            echo.
+            echo [INFO] Continuing without Electron UI.
+            echo [INFO] The native Resolve UI will be used instead.
+            goto :skip_electron
+        )
+    )
+)
+
+:npm_found
+:: Check if roughcut-electron exists
+if not exist "%~dp0roughcut-electron\package.json" (
+    echo [INFO] roughcut-electron folder not found, skipping Electron UI install
+    goto :skip_electron
+)
+
+:: Check if dependencies already installed
+if exist "%~dp0roughcut-electron\node_modules\.package-lock.json" (
+    echo [OK] Electron dependencies already installed
+    goto :skip_electron
+)
+
+echo [INFO] Installing Electron UI dependencies...
+echo [INFO] This may take 2-3 minutes...
+echo.
+
+cd /d "%~dp0roughcut-electron"
+
+if defined NPM_PATH (
+    "%NPM_PATH%" install
+) else (
+    npm install
+)
+
+if %errorlevel% neq 0 (
+    echo [WARNING] Electron dependency installation had issues.
+    echo [INFO] The script will try to install on first run from Resolve.
+    echo.
+) else (
+    echo [OK] Electron UI dependencies installed successfully
+)
+
+:skip_electron
 
 :: Success!
 :: Verify the files actually exist at the destination
