@@ -1,5 +1,5 @@
 -- RoughCut Installation Orchestrator
--- Handles Python backend auto-installation from Lua side
+-- Handles Python backend and Electron UI auto-installation from Lua side
 -- Coordinates detection, installation, and UI updates
 
 local installOrchestrator = {}
@@ -7,6 +7,9 @@ local installOrchestrator = {}
 -- Import modules
 local installDialog = require("ui.install_dialog")
 local processUtils = require("utils.process")
+
+-- Import Electron bridge for installation
+local electronBridge = require("ui.electron_bridge")
 
 -- State tracking
 local installProcessHandle = nil
@@ -51,6 +54,103 @@ local function isRoughcutInstalledGlobally()
     checkCmd = {"python3", "-c", "import roughcut; print('" .. GLOBAL_VERIFY_MARKER .. "')"}
     result = processUtils.run(checkCmd, nil, 5)
     return result.success and result.stdout and #result.stdout > 0 and result.stdout:find(GLOBAL_VERIFY_MARKER)
+end
+
+-- Check if Node.js/npm is available for Electron UI
+-- @return boolean true if npm is found
+local function isNpmAvailable()
+    -- Check standard commands first
+    if processUtils.commandExists("npm") then
+        return true
+    end
+    
+    if processUtils.commandExists("npm.cmd") then
+        return true
+    end
+    
+    -- On Windows, check common Node.js installation paths
+    local isWindows = package.config:sub(1,1) == "\\"
+    if isWindows then
+        local commonPaths = {
+            "C:/Program Files/nodejs/npm.cmd",
+            "C:/Program Files (x86)/nodejs/npm.cmd",
+            os.getenv("LOCALAPPDATA") .. "/Microsoft/WindowsApps/npm.cmd",
+            os.getenv("USERPROFILE") .. "/AppData/Roaming/npm/npm.cmd",
+        }
+        
+        for _, path in ipairs(commonPaths) do
+            if path then
+                local f = io.open(path, "r")
+                if f then
+                    f:close()
+                    print("RoughCut: Found npm at: " .. path)
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Get the full path to npm
+-- @return string path to npm or "npm" as fallback
+local function getNpmPath()
+    if processUtils.commandExists("npm") then
+        return "npm"
+    end
+    
+    if processUtils.commandExists("npm.cmd") then
+        return "npm.cmd"
+    end
+    
+    -- On Windows, check common Node.js installation paths
+    local isWindows = package.config:sub(1,1) == "\\"
+    if isWindows then
+        local commonPaths = {
+            "C:/Program Files/nodejs/npm.cmd",
+            "C:/Program Files (x86)/nodejs/npm.cmd",
+            os.getenv("LOCALAPPDATA") .. "/Microsoft/WindowsApps/npm.cmd",
+            os.getenv("USERPROFILE") .. "/AppData/Roaming/npm/npm.cmd",
+        }
+        
+        for _, path in ipairs(commonPaths) do
+            if path then
+                local f = io.open(path, "r")
+                if f then
+                    f:close()
+                    return path
+                end
+            end
+        end
+    end
+    
+    return "npm"
+end
+
+-- Check if Electron dependencies are already installed
+-- @param projectDir string project directory path
+-- @return boolean true if node_modules exists
+local function areElectronDepsInstalled(projectDir)
+    if not projectDir then
+        return false
+    end
+    
+    local nodeModulesPath = projectDir .. "/roughcut-electron/node_modules"
+    local f = io.open(nodeModulesPath .. "/.package-lock.json", "r")
+    if f then
+        f:close()
+        return true
+    end
+    
+    -- Also check for the directory itself
+    f = io.open(nodeModulesPath, "r")
+    if f then
+        f:close()
+        return true
+    end
+    
+    return false
 end
 
 -- Find pyproject.toml in common locations
@@ -455,7 +555,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
         
         if step == 1 then
             -- Check Python
-            installDialog.updateProgress(1, 6, "Checking Python installation...", 10)
+            installDialog.updateProgress(1, 7, "Checking Python installation...", 10)
             
             local result = processUtils.run({"python3", "--version"}, nil, 5)
             if not result.success then
@@ -472,7 +572,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
             
         elseif step == 2 then
             -- Check Poetry
-            installDialog.updateProgress(2, 6, "Checking Poetry installation...", 25)
+            installDialog.updateProgress(2, 7, "Checking Poetry installation...", 25)
             print("RoughCut: Checking for Poetry...")
             
             -- Try multiple Poetry detection strategies
@@ -561,13 +661,13 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
             
         elseif step == 3 then
             -- Install dependencies
-            installDialog.updateProgress(3, 6, "Installing dependencies...", 50)
+            installDialog.updateProgress(3, 7, "Installing dependencies...", 50)
             
             -- First, check if roughcut is already installed globally
             print("RoughCut: Checking if roughcut is already installed globally...")
             if isRoughcutInstalledGlobally() then
                 print("RoughCut: Python backend already installed globally - skipping local installation")
-                installDialog.updateProgress(3, 6, "Python backend already installed globally", 95)
+                installDialog.updateProgress(3, 7, "Python backend already installed globally", 95)
                 -- Skip to verification step
                 doInstallStep(4)
                 return
@@ -602,7 +702,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
             if displayDir and #displayDir > 30 then
                 displayDir = "..." .. displayDir:sub(-30)
             end
-            installDialog.updateProgress(3, 6, "Found source at: " .. (displayDir or "unknown"), 55)
+            installDialog.updateProgress(3, 7, "Found source at: " .. (displayDir or "unknown"), 55)
             
             -- Run poetry install from the source directory
             local command = {poetryCmd, "install", "--no-interaction"}
@@ -650,7 +750,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
                     -- Update progress every few lines
                     if lineCount % 5 == 0 then
                         local percent = math.min(50 + (lineCount / 20) * 45, 95)
-                        installDialog.updateProgress(3, 6, line:sub(1, 40), percent)
+                        installDialog.updateProgress(3, 7, line:sub(1, 40), percent)
                     end
                     -- Continue reading
                     -- In real Resolve, we'd use a timer or next idle callback
@@ -693,7 +793,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
 
                 if lineCount % 5 == 0 then
                     local percent = math.min(50 + (lineCount / 20) * 45, 95)
-                    installDialog.updateProgress(3, 6, line:sub(1, 40), percent)
+                    installDialog.updateProgress(3, 7, line:sub(1, 40), percent)
                 else
                     installDialog.pumpEvents(false)
                 end
@@ -745,7 +845,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
             
         elseif step == 4 then
             -- Verify installation
-            installDialog.updateProgress(4, 6, "Verifying installation...", 95)
+            installDialog.updateProgress(4, 7, "Verifying installation...", 95)
             print("RoughCut: Verifying installation...")
             
             -- Check if roughcut is globally installed (fast path)
@@ -802,8 +902,63 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
             doInstallStep(5)
             
         elseif step == 5 then
+            -- Install Electron UI dependencies (npm install)
+            installDialog.updateProgress(5, 7, "Installing Electron UI dependencies...", 75)
+            
+            -- Check if npm is available
+            if not isNpmAvailable() then
+                print("RoughCut: WARNING - npm not found, skipping Electron UI installation")
+                print("RoughCut: To use the modern Electron UI, install Node.js from https://nodejs.org/")
+                -- Continue to deploy step anyway - native UI will still work
+                doInstallStep(6)
+                return
+            end
+            
+            -- Check if Electron dependencies are already installed
+            local sourceDir = installOrchestrator._sourceDir or findPyprojectToml() or projectPath
+            if areElectronDepsInstalled(sourceDir) then
+                print("RoughCut: Electron dependencies already installed, skipping npm install")
+                doInstallStep(6)
+                return
+            end
+            
+            -- Check if roughcut-electron exists
+            local electronPackagePath = sourceDir .. "/roughcut-electron/package.json"
+            local f = io.open(electronPackagePath, "r")
+            if not f then
+                print("RoughCut: WARNING - roughcut-electron/package.json not found, skipping Electron UI")
+                doInstallStep(6)
+                return
+            end
+            f:close()
+            
+            print("RoughCut: Installing Electron dependencies (npm install)...")
+            print("RoughCut: This may take 2-3 minutes...")
+            
+            local npmCmd = getNpmPath()
+            local electronDir = sourceDir .. "/roughcut-electron"
+            
+            print("RoughCut: Using npm at: " .. npmCmd)
+            print("RoughCut: Installing in: " .. electronDir)
+            
+            -- Run npm install
+            local npmResult = processUtils.run({npmCmd, "install"}, electronDir, 300)  -- 5 minute timeout
+            
+            if not npmResult.success then
+                print("RoughCut: WARNING - npm install failed: " .. tostring(npmResult.error))
+                print("RoughCut: stdout: " .. tostring(npmResult.stdout))
+                print("RoughCut: stderr: " .. tostring(npmResult.stderr))
+                print("RoughCut: Continuing with native UI...")
+                -- Don't fail - user can still use the native Resolve UI
+            else
+                print("RoughCut: Electron dependencies installed successfully!")
+            end
+            
+            doInstallStep(6)
+            
+        elseif step == 6 then
             -- Deploy Lua plugin files
-            installDialog.updateProgress(5, 6, "Deploying plugin files to Resolve...", 95)
+            installDialog.updateProgress(6, 7, "Deploying plugin files to Resolve...", 90)
             
             -- Use the source directory we found earlier, or fall back to projectPath
             local sourceDir = installOrchestrator._sourceDir or findPyprojectToml() or projectPath
@@ -813,11 +968,11 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
                 return
             end
             
-            doInstallStep(6)
+            doInstallStep(7)
             
-        elseif step == 6 then
+        elseif step == 7 then
             -- Complete and return a success result to the caller.
-            print("RoughCut: Step 6 reached - completing installation")
+            print("RoughCut: Step 7 reached - completing installation")
             installDialog.showCompletion()
             finalize(true, nil)
             return
