@@ -1,0 +1,290 @@
+[2026-04-05 22:51:56] [INFO] RoughCut starting...
+[2026-04-05 22:52:00] [ERROR] Could not access Resolve API
+[2026-04-05 22:52:04] [ERROR] Launch failed: RoughCut encountered an error launching.
+
+Please check the Resolve console (Workspace > Console) for details.
+
+Common issues:
+- Python backend not installed
+- Missing roughcut/ folder next to RoughCut.lua
+- Incorrect installation
+
+Log location: C:\Users\niozerp\.roughcut\roughcut.log
+[2026-04-05 22:58:05] [ERROR] Resolve() returned nil
+[2026-04-05 23:01:35] [ERROR] Resolve() returned nil
+[2026-04-05 23:11:13] [ERROR] Resolve() returned nil
+[2026-04-05 23:12:32] [ERROR] Resolve() returned nil
+[2026-04-05 23:24:55] [ERROR] Could not access UI Manager
+[2026-04-05 23:32:44] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:32:44] [INFO] Installation required, starting setup...
+[2026-04-05 23:32:44] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:32:44] [ERROR] Failed to start installation
+[2026-04-05 23:39:42] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:39:43] [INFO] Installation required, starting setup...
+[2026-04-05 23:39:43] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:39:43] [ERROR] Failed to start installation
+[2026-04-05 23:43:40] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:43:41] [INFO] Installation required, starting setup...
+[2026-04-05 23:43:41] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:43:41] [ERROR] Failed to start installation
+[2026-04-05 23:47:02] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:47:02] [INFO] Installation required, starting setup...
+[2026-04-05 23:47:02] [ERROR] Installation failed: Failed to create installation dialog
+[2026-04-05 23:47:02] [ERROR] Failed to start installation
+[2026-04-05 23:50:15] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:50:15] [INFO] Installation required, starting setup...
+[2026-04-05 23:50:16] [ERROR] Installation failed: Verification failed
+[2026-04-05 23:50:38] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:50:38] [INFO] Installation required, starting setup...
+[2026-04-05 23:50:39] [ERROR] Installation failed: Verification failed
+[2026-04-05 23:50:56] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:50:56] [INFO] Installation required, starting setup...
+[2026-04-05 23:50:57] [ERROR] Installation failed: Verification failed
+[2026-04-05 23:55:09] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:55:09] [INFO] Installation required, starting setup...
+[2026-04-05 23:55:10] [ERROR] Installation failed: poetry install failed with exit code -1
+[2026-04-05 23:59:09] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-05 23:59:09] [INFO] Installation required, starting setup...
+[2026-04-05 23:59:10] [ERROR] Installation failed: No pyproject.toml found
+[2026-04-06 00:04:11] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 00:04:11] [INFO] Installation required, starting setup...
+[2026-04-06 00:04:13] [ERROR] Installation failed: No pyproject.toml found and roughcut not installed globally
+[2026-04-06 00:10:08] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 00:10:09] [INFO] Installation required, starting setup...
+[2026-04-06 00:10:11] [ERROR] Installation failed: pyproject.toml not found in any location
+[2026-04-06 00:10:27] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 00:10:27] [INFO] Installation required, starting setup...
+[2026-04-06 00:10:30] [ERROR] Installation failed: pyproject.toml not found in any location
+[2026-04-06 19:24:11] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 19:24:11] [INFO] Installation required, starting setup...
+[2026-04-06 19:24:12] [ERROR] Installation failed: poetry install failed with exit code -1
+[2026-04-06 19:27:22] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 19:27:22] [INFO] Installation required, starting setup...
+[2026-04-06 19:27:23] [ERROR] Installation failed: poetry install failed with exit code -1
+[2026-04-06 19:30:34] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 19:30:35] [INFO] Installation required, starting setup...
+[2026-04-06 19:30:35] [ERROR] Installation failed: Could not start poetry process: Directory not found: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 19:33:51] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 19:33:51] [INFO] Installation required, starting setup...
+[2026-04-06 19:33:53] [ERROR] Installation failed: poetry install failed with exit code -1
+[2026-04-06 19:52:39] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 19:52:39] [INFO] Installation required, starting setup...
+[2026-04-06 21:52:30] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 21:52:30] [INFO] Installation required, starting setup...
+[2026-04-06 21:52:33] [ERROR] Installation failed: Verification failed
+[2026-04-06 21:56:05] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 21:56:05] [INFO] Installation required, starting setup...
+[2026-04-06 21:56:08] [ERROR] Installation failed: Deploy script not found at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py
+[2026-04-06 22:01:44] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:01:44] [INFO] Installation required, starting setup...
+[2026-04-06 22:01:46] [ERROR] Installation failed: Deploy script not found at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py
+[2026-04-06 22:02:39] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:02:39] [INFO] Installation required, starting setup...
+[2026-04-06 22:02:42] [ERROR] Installation failed: Deploy script not found at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py
+[2026-04-06 22:06:09] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:06:10] [INFO] Installation required, starting setup...
+[2026-04-06 22:08:41] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:08:41] [INFO] Installation required, starting setup...
+[2026-04-06 22:10:51] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:10:51] [INFO] Installation required, starting setup...
+[2026-04-06 22:10:56] [INFO] Installation completed successfully
+[2026-04-06 22:13:25] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:13:25] [INFO] Installation required, starting setup...
+[2026-04-06 22:13:30] [INFO] Installation completed successfully
+[2026-04-06 22:15:31] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:15:31] [INFO] Installation required, starting setup...
+[2026-04-06 22:15:35] [INFO] Installation completed successfully
+[2026-04-06 22:17:52] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:17:52] [INFO] Installation required, starting setup...
+[2026-04-06 22:17:57] [INFO] Installation completed successfully
+[2026-04-06 22:18:01] [ERROR] Failed to create main window
+[2026-04-06 22:34:58] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:34:58] [INFO] Installation required, starting setup...
+[2026-04-06 22:35:03] [INFO] Installation completed successfully
+[2026-04-06 22:35:04] [INFO] Main window launched successfully
+[2026-04-06 22:36:50] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:36:51] [INFO] Installation required, starting setup...
+[2026-04-06 22:36:55] [INFO] Installation completed successfully
+[2026-04-06 22:36:56] [INFO] Main window launched successfully
+[2026-04-06 22:48:29] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:48:29] [INFO] Installation required, starting setup...
+[2026-04-06 22:48:34] [INFO] Installation completed successfully
+[2026-04-06 22:48:35] [INFO] Main window launched successfully
+[2026-04-06 22:49:26] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:49:26] [INFO] Installation required, starting setup...
+[2026-04-06 22:49:31] [INFO] Installation completed successfully
+[2026-04-06 22:49:32] [INFO] Main window launched successfully
+[2026-04-06 22:58:08] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:58:08] [INFO] Installation required, starting setup...
+[2026-04-06 22:58:10] [INFO] Installation completed successfully
+[2026-04-06 22:58:11] [INFO] Main window launched successfully
+[2026-04-06 22:59:53] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 22:59:53] [INFO] Installation required, starting setup...
+[2026-04-06 22:59:55] [INFO] Installation completed successfully
+[2026-04-06 22:59:56] [INFO] Main window launched successfully
+[2026-04-06 23:01:48] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:01:48] [INFO] Installation required, starting setup...
+[2026-04-06 23:01:50] [INFO] Installation completed successfully
+[2026-04-06 23:01:51] [INFO] Main window launched successfully
+[2026-04-06 23:09:20] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:09:20] [INFO] Installation required, starting setup...
+[2026-04-06 23:09:22] [INFO] Installation completed successfully
+[2026-04-06 23:09:23] [INFO] Main window launched successfully
+[2026-04-06 23:10:14] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:10:14] [INFO] Installation required, starting setup...
+[2026-04-06 23:10:17] [INFO] Installation completed successfully
+[2026-04-06 23:10:18] [INFO] Main window launched successfully
+[2026-04-06 23:11:35] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:11:35] [INFO] Installation required, starting setup...
+[2026-04-06 23:11:37] [INFO] Installation completed successfully
+[2026-04-06 23:11:38] [INFO] Main window launched successfully
+[2026-04-06 23:17:54] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:17:54] [INFO] Installation required, starting setup...
+[2026-04-06 23:17:57] [INFO] Installation completed successfully
+[2026-04-06 23:17:57] [INFO] Main window launched successfully
+[2026-04-06 23:20:20] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:20:20] [INFO] Installation required, starting setup...
+[2026-04-06 23:20:23] [INFO] Installation completed successfully
+[2026-04-06 23:20:24] [INFO] Main window launched successfully
+[2026-04-06 23:33:14] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-06 23:33:14] [INFO] Installation required, starting setup...
+[2026-04-07 17:47:48] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 17:47:48] [INFO] Installation required, starting setup...
+[2026-04-07 17:47:50] [INFO] Installation completed successfully
+[2026-04-07 17:47:51] [INFO] Main window entering UI loop
+[2026-04-07 17:47:52] [ERROR] Failed to show main window
+[2026-04-07 17:47:52] [ERROR] Main window failed to launch after installation
+[2026-04-07 17:57:03] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 17:57:03] [INFO] Installation required, starting setup...
+[2026-04-07 17:57:05] [INFO] Installation completed successfully
+[2026-04-07 17:57:06] [INFO] Main window entering UI loop
+[2026-04-07 17:57:06] [ERROR] Failed to show main window
+[2026-04-07 17:57:07] [ERROR] Main window failed to launch after installation
+[2026-04-07 18:02:56] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 18:02:56] [INFO] Installation required, starting setup...
+[2026-04-07 18:02:58] [INFO] Installation completed successfully
+[2026-04-07 18:02:59] [INFO] Main window entering UI loop
+[2026-04-07 18:02:59] [ERROR] Failed to show main window
+[2026-04-07 18:03:00] [ERROR] Main window failed to launch after installation
+[2026-04-07 18:08:08] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 18:08:08] [INFO] Installation required, starting setup...
+[2026-04-07 18:08:10] [INFO] Installation completed successfully
+[2026-04-07 18:08:11] [INFO] Main window entering UI loop
+[2026-04-07 18:08:12] [ERROR] Failed to show main window
+[2026-04-07 18:08:12] [ERROR] Main window failed to launch after installation
+[2026-04-07 18:23:40] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 18:23:41] [INFO] Backend state - config: false, global: true, needs_install: false
+[2026-04-07 18:23:41] [INFO] Global backend detected - marking local config as installed
+[2026-04-07 18:23:42] [INFO] Main window entering UI loop
+[2026-04-07 18:24:13] [INFO] Main window closed
+[2026-04-07 18:24:26] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 18:24:26] [INFO] Backend state - config: false, global: true, needs_install: false
+[2026-04-07 18:24:26] [INFO] Global backend detected - marking local config as installed
+[2026-04-07 18:24:27] [INFO] Main window entering UI loop
+[2026-04-07 18:25:28] [INFO] Main window closed
+[2026-04-07 19:32:08] [INFO] RoughCut: Startup - launcher handoff received
+[2026-04-07 19:32:08] [INFO] RoughCut: Startup - Fusion UI manager acquired
+[2026-04-07 19:32:08] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 19:32:09] [INFO] Backend state - config: false, global: true, needs_install: false
+[2026-04-07 19:32:09] [INFO] RoughCut: Startup - global backend detected, syncing local config
+[2026-04-07 19:32:09] [INFO] Global backend detected - marking local config as installed
+[2026-04-07 19:32:10] [INFO] RoughCut: Startup - backend ready, skipping install UI
+[2026-04-07 19:32:10] [INFO] RoughCut: Startup - preparing home screen
+[2026-04-07 19:32:10] [INFO] RoughCut: Startup - home window created
+[2026-04-07 19:32:10] [ERROR] Failed to bind navigation to main window
+[2026-04-07 19:58:11] [INFO] RoughCut: Startup - launcher handoff received
+[2026-04-07 19:58:11] [INFO] RoughCut: Startup - Fusion UI manager acquired
+[2026-04-07 19:58:11] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 19:58:12] [INFO] Backend state - config: false, global: true, needs_install: false
+[2026-04-07 19:58:12] [INFO] RoughCut: Startup - global backend detected, syncing local config
+[2026-04-07 19:58:12] [INFO] Global backend detected - marking local config as installed
+[2026-04-07 19:58:13] [INFO] RoughCut: Startup - backend ready, skipping install UI
+[2026-04-07 19:58:13] [INFO] RoughCut: Startup - creating shared navigation runtime
+[2026-04-07 19:58:13] [INFO] RoughCut: Startup - shared navigation runtime created
+[2026-04-07 19:58:13] [INFO] RoughCut: Startup - preparing home screen
+[2026-04-07 19:58:14] [INFO] RoughCut: Startup - home window created
+[2026-04-07 19:58:14] [INFO] RoughCut: Navigation - home buttons bound
+[2026-04-07 19:58:14] [INFO] RoughCut: Startup - home screen bound
+[2026-04-07 19:58:15] [INFO] RoughCut: Startup - entering main window RunLoop
+[2026-04-07 19:58:15] [INFO] Main window entering UI loop
+[2026-04-07 19:58:28] [INFO] RoughCut: Navigation - opening Manage Media
+[2026-04-07 19:58:28] [INFO] RoughCut: Media Management - Route ready. Choose an action or go back to the main menu.
+[2026-04-07 19:58:28] [INFO] RoughCut: Media Management - Manage Media opened.
+[2026-04-07 19:58:28] [INFO] RoughCut: Navigation - route active: media_management
+[2026-04-07 19:58:35] [INFO] RoughCut: Media Management - Music folder picker is temporarily gated while the media-management actions are migrated to dispatcher-safe UI.
+[2026-04-07 19:58:48] [INFO] RoughCut: Media Management - Music folder picker is temporarily gated while the media-management actions are migrated to dispatcher-safe UI.
+[2026-04-07 19:58:58] [INFO] RoughCut: Media Management - SFX folder picker is temporarily gated while the media-management actions are migrated to dispatcher-safe UI.
+[2026-04-07 19:59:03] [INFO] RoughCut: Media Management - VFX folder picker is temporarily gated while the media-management actions are migrated to dispatcher-safe UI.
+[2026-04-07 19:59:10] [INFO] RoughCut: Media Management - Cleared the local shell state. Backend clear is still gated in the dispatcher-safe build.
+[2026-04-07 19:59:14] [INFO] RoughCut: Navigation - returned from Manage Media
+[2026-04-07 19:59:20] [INFO] RoughCut: Navigation - opening Manage Formats
+[2026-04-07 19:59:20] [INFO] RoughCut: Format Management - Route ready. Browse templates or return to the main menu.
+[2026-04-07 19:59:20] [INFO] RoughCut: Format Management - Manage Formats opened.
+[2026-04-07 19:59:21] [INFO] RoughCut: Navigation - route active: format_management
+[2026-04-07 19:59:35] [INFO] RoughCut: Format Management - Showing template 2 of 3.
+[2026-04-07 19:59:37] [INFO] RoughCut: Format Management - Showing template 3 of 3.
+[2026-04-07 19:59:40] [INFO] RoughCut: Format Management - Showing template 2 of 3.
+[2026-04-07 19:59:42] [INFO] RoughCut: Format Management - Showing template 1 of 3.
+[2026-04-07 19:59:46] [INFO] RoughCut: Navigation - returned from Manage Formats
+[2026-04-07 19:59:49] [INFO] RoughCut: Navigation - destroying navigation state
+[2026-04-07 19:59:49] [INFO] RoughCut: Navigation - returned from Manage Media
+[2026-04-07 19:59:49] [INFO] RoughCut: Navigation - returned from Manage Formats
+[2026-04-07 19:59:49] [INFO] RoughCut: Startup - main window closed
+[2026-04-07 20:08:12] [INFO] RoughCut: Startup - launcher handoff received
+[2026-04-07 20:08:12] [INFO] RoughCut: Startup - Fusion UI manager acquired
+[2026-04-07 20:08:12] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 20:08:13] [INFO] Backend state - config: false, global: true, needs_install: false
+[2026-04-07 20:08:13] [INFO] RoughCut: Startup - global backend detected, syncing local config
+[2026-04-07 20:08:13] [INFO] Global backend detected - marking local config as installed
+[2026-04-07 20:08:14] [INFO] RoughCut: Startup - backend ready, skipping install UI
+[2026-04-07 20:08:14] [INFO] RoughCut: Startup - creating shared navigation runtime
+[2026-04-07 20:08:14] [INFO] RoughCut: Startup - shared navigation runtime created
+[2026-04-07 20:08:14] [INFO] RoughCut: Startup - preparing home screen
+[2026-04-07 20:08:15] [INFO] RoughCut: Startup - home window created
+[2026-04-07 20:08:15] [INFO] RoughCut: Navigation - home buttons bound
+[2026-04-07 20:08:15] [INFO] RoughCut: Startup - home screen bound
+[2026-04-07 20:08:16] [INFO] RoughCut: Startup - entering main window RunLoop
+[2026-04-07 20:08:16] [INFO] Main window entering UI loop
+[2026-04-07 20:08:19] [INFO] RoughCut: Navigation - opening Manage Media
+[2026-04-07 20:08:19] [INFO] RoughCut: Media Management - Route ready. Choose an action or go back to the main menu.
+[2026-04-07 20:08:19] [INFO] RoughCut: Media Management - Loading folder configuration...
+[2026-04-07 20:08:19] [INFO] RoughCut: Media Management - Manage Media opened.
+[2026-04-07 20:08:20] [INFO] RoughCut: Navigation - route active: media_management
+[2026-04-07 20:08:21] [INFO] RoughCut: Media Management - Opening folder picker for music
+[2026-04-07 20:08:21] [INFO] RoughCut: Media Management - music folder selection cancelled
+[2026-04-07 20:08:22] [INFO] RoughCut: Media Management - music folder selection cancelled or failed: ...ion/Scripts/Utility/roughcut/lua/ui\media_management.lua:425: attempt to call method 'RequestDir' (a table value)
+[2026-04-07 20:08:32] [INFO] RoughCut: Media Management - Opening folder picker for music
+[2026-04-07 20:08:32] [INFO] RoughCut: Media Management - music folder selection cancelled
+[2026-04-07 20:08:32] [INFO] RoughCut: Media Management - music folder selection cancelled or failed: ...ion/Scripts/Utility/roughcut/lua/ui\media_management.lua:425: attempt to call method 'RequestDir' (a table value)
+[2026-04-07 20:08:36] [INFO] RoughCut: Media Management - Opening folder picker for music
+[2026-04-07 20:08:36] [INFO] RoughCut: Media Management - music folder selection cancelled
+[2026-04-07 20:08:36] [INFO] RoughCut: Media Management - music folder selection cancelled or failed: ...ion/Scripts/Utility/roughcut/lua/ui\media_management.lua:425: attempt to call method 'RequestDir' (a table value)
+[2026-04-07 20:09:55] [INFO] RoughCut: Navigation - returned from Manage Media
+[2026-04-07 20:09:57] [INFO] RoughCut: Navigation - destroying navigation state
+[2026-04-07 20:09:57] [INFO] RoughCut: Navigation - returned from Manage Media
+[2026-04-07 20:09:57] [INFO] RoughCut: Startup - main window closed
+[2026-04-07 20:15:01] [INFO] RoughCut: Startup - launcher handoff received
+[2026-04-07 20:15:02] [INFO] RoughCut: Startup - Fusion UI manager acquired
+[2026-04-07 20:15:02] [INFO] Project path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
+[2026-04-07 20:15:02] [INFO] Backend state - config: false, global: true, needs_install: false
+[2026-04-07 20:15:03] [INFO] RoughCut: Startup - global backend detected, syncing local config
+[2026-04-07 20:15:03] [INFO] Global backend detected - marking local config as installed
+[2026-04-07 20:15:03] [INFO] RoughCut: Startup - backend ready, skipping install UI
+[2026-04-07 20:15:04] [INFO] RoughCut: Startup - creating shared navigation runtime
+[2026-04-07 20:15:04] [INFO] RoughCut: Startup - shared navigation runtime created
+[2026-04-07 20:15:04] [INFO] RoughCut: Startup - preparing home screen
+[2026-04-07 20:15:04] [INFO] RoughCut: Startup - home window created
+[2026-04-07 20:15:05] [INFO] RoughCut: Navigation - home buttons bound
+[2026-04-07 20:15:05] [INFO] RoughCut: Startup - home screen bound
+[2026-04-07 20:15:05] [INFO] RoughCut: Startup - entering main window RunLoop
+[2026-04-07 20:15:06] [INFO] Main window entering UI loop
+[2026-04-07 20:15:10] [INFO] RoughCut: Navigation - opening Manage Media
+[2026-04-07 20:15:10] [INFO] RoughCut: Media Management - Route ready. Choose an action or go back to the main menu.
+[2026-04-07 20:15:10] [INFO] RoughCut: Media Management - Loading folder configuration...
+[2026-04-07 20:15:10] [INFO] RoughCut: Media Management - Manage Media opened.
+[2026-04-07 20:15:11] [INFO] RoughCut: Navigation - route active: media_management
+[2026-04-07 20:15:14] [INFO] RoughCut: Media Management - Opening folder picker for music
+[2026-04-07 20:15:14] [INFO] RoughCut: Media Management - Calling fu.UIManager:RequestDir...
+[2026-04-07 20:15:14] [INFO] RoughCut: Media Management - RequestDir pcall ok: false, result type: string, value: ...ion/Scripts/Utility/roughcut/lua/ui\media_management.lua:432: attempt to call method 'RequestDir' (a nil value)
+[2026-04-07 20:15:15] [INFO] RoughCut: Media Management - Error selecting folder: ...ion/Scripts/Utility/roughcut/lua/ui\media_management.lua:432: attempt to call method 'RequestDir' (a nil value)
+[2026-04-07 20:15:15] [INFO] RoughCut: Media Management - ERROR in RequestDir: ...ion/Scripts/Utility/roughcut/lua/ui\media_management.lua:432: attempt to call method 'RequestDir' (a nil value)
