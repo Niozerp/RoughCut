@@ -17,6 +17,10 @@ class TestStory1_2UIComponents(unittest.TestCase):
         cls.lua_ui_dir = cls.project_root / "lua" / "ui"
         cls.main_window_lua = cls.lua_ui_dir / "main_window.lua"
         cls.navigation_lua = cls.lua_ui_dir / "navigation.lua"
+        cls.runtime_lua = cls.lua_ui_dir / "runtime.lua"
+        cls.media_management_lua = cls.lua_ui_dir / "media_management.lua"
+        cls.formats_manager_lua = cls.lua_ui_dir / "formats_manager.lua"
+        cls.rough_cut_workflow_lua = cls.lua_ui_dir / "rough_cut_workflow.lua"
         cls.install_dialog_lua = cls.lua_ui_dir / "install_dialog.lua"
         cls.install_orchestrator_lua = cls.project_root / "lua" / "install_orchestrator.lua"
 
@@ -31,6 +35,7 @@ class TestStory1_2UIComponents(unittest.TestCase):
             self.main_module_lua,
             self.main_window_lua,
             self.navigation_lua,
+            self.runtime_lua,
             self.install_dialog_lua,
         ):
             with self.subTest(path=path.name):
@@ -44,6 +49,8 @@ class TestStory1_2UIComponents(unittest.TestCase):
     def test_main_module_imports_current_components(self) -> None:
         content = self.main_module_lua.read_text(encoding="utf-8")
         self.assertIn('require("ui.main_window")', content)
+        self.assertIn('require("ui.navigation")', content)
+        self.assertIn('require("ui.runtime")', content)
         self.assertIn('require("install_orchestrator")', content)
         self.assertIn("launchMainWindow", content)
 
@@ -65,6 +72,7 @@ class TestStory1_2UIComponents(unittest.TestCase):
         content = self.main_window_lua.read_text(encoding="utf-8")
         for func in (
             "function mainWindow.create",
+            "function mainWindow.setOnClose",
             "function mainWindow.show",
             "function mainWindow.hide",
             "function mainWindow.close",
@@ -75,6 +83,7 @@ class TestStory1_2UIComponents(unittest.TestCase):
     def test_navigation_has_required_functions(self) -> None:
         content = self.navigation_lua.read_text(encoding="utf-8")
         for func in (
+            "function navigation.bind",
             "function navigation.create",
             "function navigation.handleNavigation",
             "function navigation.returnToMain",
@@ -85,13 +94,13 @@ class TestStory1_2UIComponents(unittest.TestCase):
                 self.assertIn(func, content)
 
     def test_navigation_defines_three_buttons(self) -> None:
-        content = self.navigation_lua.read_text(encoding="utf-8")
+        content = self.main_window_lua.read_text(encoding="utf-8")
         for button_id in ("btnManageMedia", "btnManageFormats", "btnCreateRoughCut"):
             with self.subTest(button_id=button_id):
                 self.assertIn(button_id, content)
 
     def test_navigation_has_descriptive_labels(self) -> None:
-        content = self.navigation_lua.read_text(encoding="utf-8")
+        content = self.main_window_lua.read_text(encoding="utf-8")
         for description in (
             "Set up your Music, SFX, and VFX folders",
             "Define rough cut templates for your projects",
@@ -104,8 +113,61 @@ class TestStory1_2UIComponents(unittest.TestCase):
         content = self.main_window_lua.read_text(encoding="utf-8")
         self.assertIn("function win.On.RoughCutMainWindow.Close", content)
         self.assertIn("function win.On.CloseButton.Clicked", content)
+        self.assertIn("dispRef = uiRuntime.disp", content)
         self.assertIn("RunLoop", content)
+        self.assertIn("Choose an action to get started.", content)
+        self.assertNotIn("Navigation temporarily disabled for UI update", content)
         self.assertNotIn("win.CloseRequested =", content)
+        self.assertNotIn("bmd.UIDispatcher(uiManager)", content)
+
+    def test_navigation_uses_dispatcher_bindings_only(self) -> None:
+        content = self.navigation_lua.read_text(encoding="utf-8")
+        self.assertIn("window.On[buttonConfig.id].Clicked", content)
+        self.assertIn("function navigation.bind(window, uiRuntime)", content)
+        self.assertIn("return buttonConfig.module.create(runtimeRef, mainWindowRef)", content)
+        self.assertNotIn("window:Add(", content)
+        self.assertNotIn("button.Clicked =", content)
+        self.assertNotIn("Invalid UI Manager (missing Add method)", content)
+
+    def test_main_module_binds_navigation_before_show(self) -> None:
+        content = self.main_module_lua.read_text(encoding="utf-8")
+        reset_index = content.find("navigation.reset()")
+        runtime_index = content.find("local runtimeContext = uiRuntime.create(uiManager)")
+        create_index = content.find("local window = mainWindow.create(runtimeContext)")
+        bind_index = content.find("local navBound = navigation.bind(window, runtimeContext)")
+        last_run_index = content.find("config.updateLastRun()")
+        show_index = content.find("local showSuccess = mainWindow.show(window)")
+
+        self.assertTrue(0 <= reset_index < runtime_index < create_index < bind_index < last_run_index < show_index)
+
+    def test_main_module_logs_startup_branches(self) -> None:
+        content = self.main_module_lua.read_text(encoding="utf-8")
+        self.assertIn('logStartupPhase("launcher handoff received")', content)
+        self.assertIn('logStartupPhase("backend ready, skipping install UI")', content)
+        self.assertIn('logStartupPhase("backend missing, starting install flow")', content)
+        self.assertIn('logStartupPhase("creating shared navigation runtime")', content)
+        self.assertIn('logStartupPhase("shared navigation runtime created")', content)
+        self.assertIn('logStartupPhase("home screen bound")', content)
+        self.assertIn('logStartupPhase("entering main window RunLoop")', content)
+
+    def test_shared_runtime_module_exists(self) -> None:
+        content = self.runtime_lua.read_text(encoding="utf-8")
+        self.assertIn("function runtime.create(uiManager)", content)
+        self.assertIn("function runtime.isValid(context)", content)
+        self.assertIn("bmd.UIDispatcher(uiManager)", content)
+
+    def test_reachable_child_windows_use_dispatcher_only(self) -> None:
+        for path in (
+            self.media_management_lua,
+            self.formats_manager_lua,
+            self.rough_cut_workflow_lua,
+        ):
+            content = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertIn("disp:AddWindow({", content)
+                self.assertNotIn("uiManager:Add(", content)
+                self.assertNotIn("window:Add(", content)
+                self.assertNotIn("Clicked =", content)
 
     def test_install_dialog_tracks_loop_state(self) -> None:
         content = self.install_dialog_lua.read_text(encoding="utf-8")
@@ -125,6 +187,14 @@ class TestStory1_2UIComponents(unittest.TestCase):
         self.assertIn("return buildResult(true, nil, { skipped_install = true })", content)
         self.assertIn('finalize(false, "Installation cancelled", { cancelled = true })', content)
         self.assertIn("return finalResult", content)
+
+    def test_readme_documents_reachable_startup_flow(self) -> None:
+        content = (self.project_root / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Launcher Handoff", content)
+        self.assertIn("If the backend is already available, RoughCut skips the install dialog", content)
+        self.assertIn("Manage Media", content)
+        self.assertIn("Manage Formats", content)
+        self.assertIn("Create Rough Cut", content)
 
 
 if __name__ == "__main__":

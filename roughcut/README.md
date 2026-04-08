@@ -72,23 +72,30 @@ After installation:
 ### First Launch
 
 When you first run RoughCut:
-1. **Installation Check**: RoughCut checks if Python backend is installed
-2. **Auto-Install**: If needed, it automatically installs Python dependencies (takes 2-5 minutes)
-3. **Main Window**: Opens the RoughCut UI after installation completes
+1. **Launcher Handoff**: `RoughCut.lua` finds `roughcut/lua/roughcut_main.lua`, connects to Resolve, and hands control to the packaged app
+2. **Backend Check**: RoughCut checks local config state and whether the `roughcut` Python package is already importable globally
+3. **Install Branch**:
+   - If the backend is already available, RoughCut skips the install dialog and goes straight to the home screen
+   - If the backend is missing, RoughCut shows the install dialog, installs the backend, and then opens the same home screen
+4. **Home Screen**: The first reachable UI is the main RoughCut window with three options:
+   - `Manage Media`
+   - `Manage Formats`
+   - `Create Rough Cut`
 
 ### Using RoughCut
 
-1. **Configure Media Folders** (one-time setup):
-   - Click "Manage Media"
-   - Add folders containing your Music, SFX, and VFX assets
-   - RoughCut will index them automatically
+The current Resolve-facing UI is stabilized around dispatcher-safe route shells:
+1. **Manage Media**
+   - Opens a stable window on the shared dispatcher runtime
+   - Folder selection, save, and re-index actions now report explicit gated status instead of failing silently
 
-2. **Create a Rough Cut**:
-   - Click "Create Rough Cut"
-   - Select source video from media pool
-   - Choose a format template
-   - Let AI suggest music, SFX, and cuts
-   - Review and apply to timeline
+2. **Manage Formats**
+   - Opens a stable template-browser shell on the shared dispatcher runtime
+   - Template browsing works inside the shell; deeper backend preview/application work is still being migrated
+
+3. **Create Rough Cut**
+   - Opens a stable workflow shell on the shared dispatcher runtime
+   - Media-browser and generation actions report explicit gated status while the remaining legacy windows are being migrated
 
 ### Troubleshooting
 
@@ -96,6 +103,23 @@ When you first run RoughCut:
 - Check Resolve console: Workspace > Console
 - Verify `roughcut/` folder is next to `RoughCut.lua`
 - Check INSTALL.txt for correct folder structure
+- Expected startup milestones in the console:
+  - `RoughCut: Startup - launcher handoff received`
+  - `RoughCut: Startup - Fusion UI manager acquired`
+  - `RoughCut: Startup - backend ready, skipping install UI`
+    or `RoughCut: Startup - backend missing, starting install flow`
+  - `RoughCut: Startup - home screen bound`
+  - `RoughCut: Startup - entering main window RunLoop`
+
+**The window opens but seems stuck**
+- The expected first screen is the home hub with `Manage Media`, `Manage Formats`, and `Create Rough Cut`
+- If you do not see those buttons, the deployed Lua files are out of sync with the repo
+- Re-run the deploy helper and relaunch RoughCut
+
+**The route opens, but actions only update status text**
+- That is expected in the dispatcher-stabilization build
+- The startup path and first-hop windows are now dispatcher-safe
+- Any deeper action that still depends on a legacy non-dispatcher window is intentionally gated instead of failing silently
 
 **I see too many menu items (main_window, navigation, etc.)**
 - You've copied individual .lua files to the Scripts folder
@@ -106,6 +130,7 @@ When you first run RoughCut:
 - First-time Python backend installation can take 3-7 minutes
 - Check the progress dialog for status
 - You can cancel and retry if needed
+- If the backend is already installed globally, RoughCut should skip the install dialog entirely
 
 ## Project Structure
 

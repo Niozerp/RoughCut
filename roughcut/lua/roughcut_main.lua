@@ -5,49 +5,45 @@
 
 print("[RoughCut] roughcut_main.lua loaded - version 0.3.1")
 
--- Import UI modules - paths are already set up by the launcher
 local mainWindow = require("ui.main_window")
+local navigation = require("ui.navigation")
+local uiRuntime = require("ui.runtime")
 local installOrchestrator = require("install_orchestrator")
 local config = require("utils.config")
 local logger = require("utils.logger")
 
--- Initialize config and logging
 config.init()
 logger.init()
 
--- State tracking
 local installationInProgress = false
 
--- Determine project path from module location
 local function getProjectPath()
-    -- Get the directory of this module
     local moduleInfo = debug.getinfo(1, "S")
     if not moduleInfo or not moduleInfo.source then
         return nil
     end
-    
+
     local source = moduleInfo.source
     if source:sub(1, 1) == "@" then
         source = source:sub(2)
     end
-    
-    -- Normalize path
+
     source = source:gsub("\\", "/")
-    
-    -- Get directory containing this file (should be .../roughcut/lua/)
+
     local dir = source:match("^(.*)/") or "."
-    
-    -- Go up one level to get the project root (parent of lua/)
     local projectRoot = dir:gsub("/[^/]+$", "")
-    
+
     return projectRoot
 end
 
 local projectPath = getProjectPath()
 
--- Determine whether RoughCut's Python backend is already available.
--- Config state is advisory; the orchestrator's backend probe is the source of
--- truth because the package may already be installed globally.
+local function logStartupPhase(message)
+    local formatted = "RoughCut: Startup - " .. tostring(message)
+    print(formatted)
+    logger.info(formatted)
+end
+
 local function getBackendState()
     local cfg = config.read()
     local orchestratorState = installOrchestrator.getBackendState(projectPath)
@@ -63,70 +59,87 @@ local function getBackendState()
     }
 end
 
--- Launch main window (separate from install flow)
 local function launchMainWindow(uiManager)
-    -- Step 1: Create main window
-    local window = mainWindow.create(uiManager)
-    
+    navigation.reset()
+    logStartupPhase("creating shared navigation runtime")
+
+    local runtimeContext = uiRuntime.create(uiManager)
+    if not runtimeContext then
+        print("RoughCut: Error - Failed to create shared navigation runtime")
+        logger.error("Failed to create shared navigation runtime")
+        return false
+    end
+
+    logStartupPhase("shared navigation runtime created")
+    logStartupPhase("preparing home screen")
+
+    local window = mainWindow.create(runtimeContext)
     if not window then
         print("RoughCut: Error - Failed to create main window")
         logger.error("Failed to create main window")
         return false
     end
-    
-    -- NOTE: Navigation temporarily disabled - will be restored in future update
-    -- Future Step 2: Set UI Manager for navigation
-    -- Future Step 3: Add navigation buttons
-    
-    -- Step 2: Show the window
-    -- Record launch time before entering the UI loop, since show() now blocks
-    -- until the user closes the main window.
+
+    logStartupPhase("home window created")
+
+    local navBound = navigation.bind(window, runtimeContext)
+    if not navBound then
+        print("RoughCut: Error - Failed to bind navigation")
+        logger.error("Failed to bind navigation to main window")
+        mainWindow.close(window)
+        return false
+    end
+
+    mainWindow.setOnClose(function()
+        navigation.destroy()
+    end)
+
+    logStartupPhase("home screen bound")
+
     config.updateLastRun()
+    logStartupPhase("entering main window RunLoop")
     logger.info("Main window entering UI loop")
 
     local showSuccess = mainWindow.show(window)
-    
     if not showSuccess then
         print("RoughCut: Error - Failed to show main window")
         logger.error("Failed to show main window")
         return false
     end
 
-    logger.info("Main window closed")
+    logStartupPhase("main window closed")
     print("[RoughCut] Main window closed")
     return true
 end
 
--- Launch RoughCut main interface
--- Creates window, adds navigation, and displays to user
--- @param resolve The Resolve API object (passed from launcher)
 local function launchRoughCut(resolve)
     print("[RoughCut] launchRoughCut() called")
-    
-    -- Step 1: Validate Resolve API was passed
+    logStartupPhase("launcher handoff received")
+
     if not resolve then
         print("[RoughCut Error] Resolve object not provided")
         logger.error("Resolve object not provided to launch function")
         return false
     end
-    
-    -- Step 2: Get UI Manager from global fu object
+
     if not fu then
         print("[RoughCut Error] Fusion global object 'fu' not available")
         logger.error("Fusion global object 'fu' not available - cannot access UI Manager")
         return false
     end
-    
-    local ok_ui, uiManager = pcall(function() return fu.UIManager end)
-    
-    if not ok_ui or not uiManager then
+
+    local okUi, uiManager = pcall(function()
+        return fu.UIManager
+    end)
+
+    if not okUi or not uiManager then
         print("[RoughCut Error] Could not access UI Manager via fu.UIManager")
         logger.error("Could not access UI Manager - fu.UIManager unavailable or nil")
         return false
     end
-    
-    -- Step 3: Check installation
-    logger.info("Project path: " .. projectPath)
+
+    logStartupPhase("Fusion UI manager acquired")
+    logger.info("Project path: " .. tostring(projectPath))
 
     local backendState = getBackendState()
     logger.info(
@@ -136,6 +149,7 @@ local function launchRoughCut(resolve)
     )
 
     if backendState.global_installed and not backendState.config_installed then
+        logStartupPhase("global backend detected, syncing local config")
         logger.info("Global backend detected - marking local config as installed")
         config.markInstalled()
         backendState.config_installed = true
@@ -144,17 +158,17 @@ local function launchRoughCut(resolve)
     end
 
     if not backendState.needs_install then
-        -- No installation needed, launch main window directly
+        logStartupPhase("backend ready, skipping install UI")
         return launchMainWindow(uiManager)
     end
 
-    -- Guard against concurrent installation attempts
     if installationInProgress then
         logger.warning("Installation already in progress, not starting another")
         return false
     end
 
     installationInProgress = true
+    logStartupPhase("backend missing, starting install flow")
     logger.info("Installation required, starting setup...")
 
     local installResult = installOrchestrator.startInstallation(uiManager, projectPath)
@@ -167,6 +181,7 @@ local function launchRoughCut(resolve)
             return false
         end
 
+        logStartupPhase("install flow failed")
         logger.error("Installation failed: " .. tostring(installResult.error))
         pcall(function()
             uiManager:ShowMessageBox(
@@ -178,6 +193,7 @@ local function launchRoughCut(resolve)
         return false
     end
 
+    logStartupPhase("install flow completed, launching home screen")
     logger.info("Installation completed successfully")
     config.markInstalled()
 
@@ -196,8 +212,6 @@ local function launchRoughCut(resolve)
     return launched
 end
 
--- Export the launch function for the launcher to call
--- The launcher handles Resolve API access, we just need to be called
 return {
     launch = launchRoughCut
 }

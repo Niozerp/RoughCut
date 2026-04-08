@@ -1,1474 +1,340 @@
 -- RoughCut Rough Cut Workflow Window
--- Multi-step wizard workflow for creating rough cuts
--- Step 3: Format Template Selection (Story 3.3)
--- Compatible with DaVinci Resolve's Lua scripting environment
--- Version: 1.0.0
+-- Dispatcher-safe shell for the rough-cut workflow route.
 
 local roughCutWorkflow = {}
 
--- Import dependencies with safe require
-local protocol = nil
-local logger = nil
-
--- Safely require protocol module
-local ok, mod = pcall(require, "utils.protocol")
-if ok then
-    protocol = mod
-else
-    ok, mod = pcall(require, "roughcut.protocol")
-    if ok then
-        protocol = mod
-    else
-        -- Stub protocol for standalone testing
-        protocol = {
-            request = function(req)
-                print("[STUB] Protocol request: " .. tostring(req.method))
-                return { result = {}, error = nil }
-            end
-        }
-    end
-end
-
--- Safely require logger module
-ok, mod = pcall(require, "utils.logger")
-if ok then
-    logger = mod
-else
+local okLogger, loggerModule = pcall(require, "utils.logger")
+local logger = loggerModule
+if not okLogger or not logger then
     logger = {
-        error = function(msg) print("[ERROR] " .. tostring(msg)) end,
-        warn = function(msg) print("[WARN] " .. tostring(msg)) end,
-        info = function(msg) print("[INFO] " .. tostring(msg)) end,
-        debug = function(msg) end
+        info = function(message) print("RoughCut: " .. tostring(message)) end,
+        error = function(message) print("RoughCut: " .. tostring(message)) end
     }
 end
 
--- Window configuration
+local runtime = require("ui.runtime")
+
 local WINDOW_CONFIG = {
     id = "RoughCutWorkflow",
     title = "RoughCut - Create Rough Cut",
-    width = 700,
-    height = 600
+    geometry = {180, 180, 700, 560}
 }
 
--- Workflow step constants
-local STEPS = {
-    MEDIA = "media",
-    TRANSCRIPTION = "transcription",
-    FORMAT = "format",
-    GENERATE = "generate"
+local FORMAT_OPTIONS = {
+    "9:16 Social Vertical",
+    "16:9 Story Cut",
+    "1:1 Highlight"
 }
 
--- State tracking
+local runtimeRef = nil
 local parentWindowRef = nil
 local currentWindowRef = nil
-local currentStep = STEPS.MEDIA
-local sessionId = nil
-local formatsList = {}
-local selectedFormatSlug = nil
-local isLoading = false
+local itemsRef = nil
+local onReturnToMain = nil
+local isDestroying = false
 
--- Create the rough cut workflow window
--- @param uiManager Resolve UI Manager instance
--- @param parentWindow Reference to main window for navigation back
--- @return window table or nil on error
-function roughCutWorkflow.create(uiManager, parentWindow)
-    if not uiManager then
-        logger.error("UI Manager required for rough cut workflow window")
+local workflowState = {
+    sessionId = nil,
+    selectedFormatIndex = 1,
+    mediaSelection = "Media Pool browser gated until its legacy dialog is migrated."
+}
+
+local function logInfo(message)
+    logger.info("RoughCut: Rough Cut Workflow - " .. tostring(message))
+end
+
+local function updateText(itemId, value)
+    if itemsRef and itemsRef[itemId] then
+        pcall(function()
+            itemsRef[itemId].Text = value
+        end)
+    end
+end
+
+local function setStatus(message)
+    updateText("StatusLabel", tostring(message))
+    logInfo(message)
+end
+
+local function updateWorkflowView()
+    local currentFormat = FORMAT_OPTIONS[workflowState.selectedFormatIndex]
+    updateText("SessionLabel", "Session: " .. tostring(workflowState.sessionId or "not started"))
+    updateText("SelectedMediaLabel", "Media: " .. workflowState.mediaSelection)
+    updateText("SelectedFormatLabel", "Format: " .. currentFormat)
+end
+
+local function showParentWindow()
+    if parentWindowRef then
+        pcall(function()
+            parentWindowRef:Show()
+            parentWindowRef:Raise()
+        end)
+    end
+end
+
+local function returnToMain()
+    if isDestroying then
+        return
+    end
+
+    if currentWindowRef then
+        pcall(function()
+            currentWindowRef:Hide()
+        end)
+    end
+
+    showParentWindow()
+
+    if onReturnToMain then
+        pcall(onReturnToMain)
+    end
+end
+
+local function initializeSession()
+    workflowState.sessionId = "dispatcher-shell-" .. tostring(os.time())
+    workflowState.selectedFormatIndex = 1
+    workflowState.mediaSelection = "Media Pool browser gated until its legacy dialog is migrated."
+end
+
+function roughCutWorkflow.create(uiRuntime, parentWindow)
+    if currentWindowRef then
+        return currentWindowRef
+    end
+
+    if not runtime.isValid(uiRuntime) then
+        print("RoughCut: Error - Shared UI runtime required for rough cut workflow window")
         return nil
     end
-    
+
+    runtimeRef = uiRuntime
     parentWindowRef = parentWindow
-    
-    -- Create window
-    local ok_create, window = pcall(function()
-        return uiManager:Add({
-            type = "Window",
-            id = WINDOW_CONFIG.id,
-            title = WINDOW_CONFIG.title,
-            width = WINDOW_CONFIG.width,
-            height = WINDOW_CONFIG.height,
-            spacing = 15,
-            padding = 20
+    isDestroying = false
+    initializeSession()
+
+    local ui = uiRuntime.ui
+    local disp = uiRuntime.disp
+
+    local ok, window = pcall(function()
+        return disp:AddWindow({
+            ID = WINDOW_CONFIG.id,
+            WindowTitle = WINDOW_CONFIG.title,
+            Geometry = WINDOW_CONFIG.geometry,
+
+            ui:VGroup{
+                ID = "WorkflowLayout",
+                Spacing = 12,
+                Weight = 1.0,
+
+                ui:Label{
+                    ID = "HeaderLabel",
+                    Text = "Create Rough Cut",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 22px; font-weight: bold;"
+                },
+
+                ui:Label{
+                    ID = "SubtitleLabel",
+                    Text = "Stable workflow shell while the media browser and generator are migrated to dispatcher-safe UI.",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+                    StyleSheet = "font-size: 11px;"
+                },
+
+                ui:Label{
+                    ID = "SessionLabel",
+                    Text = "",
+                    Weight = 0.0,
+                    StyleSheet = "font-size: 11px; font-style: italic;"
+                },
+
+                ui:Label{
+                    ID = "StepOneLabel",
+                    Text = "Step 1: Source Media",
+                    Weight = 0.0,
+                    StyleSheet = "font-size: 13px; font-weight: bold;"
+                },
+                ui:Label{
+                    ID = "SelectedMediaLabel",
+                    Text = "",
+                    Weight = 0.0,
+                    StyleSheet = "font-size: 11px;"
+                },
+                ui:Button{
+                    ID = "BrowseMediaButton",
+                    Text = "Browse Media Pool",
+                    Weight = 0.0,
+                    MinimumSize = {220, 36}
+                },
+
+                ui:Label{
+                    ID = "StepTwoLabel",
+                    Text = "Step 2: Format Template",
+                    Weight = 0.0,
+                    StyleSheet = "font-size: 13px; font-weight: bold;"
+                },
+                ui:Label{
+                    ID = "SelectedFormatLabel",
+                    Text = "",
+                    Weight = 0.0,
+                    StyleSheet = "font-size: 11px;"
+                },
+                ui:HGroup{
+                    ID = "FormatRow",
+                    Weight = 0.0,
+                    Spacing = 10,
+                    ui:Button{
+                        ID = "CycleFormatButton",
+                        Text = "Next Format",
+                        Weight = 0.0,
+                        MinimumSize = {150, 34}
+                    },
+                    ui:Button{
+                        ID = "PreviewSelectionButton",
+                        Text = "Preview Selection",
+                        Weight = 0.0,
+                        MinimumSize = {170, 34}
+                    }
+                },
+
+                ui:Label{
+                    ID = "StepThreeLabel",
+                    Text = "Step 3: Generate",
+                    Weight = 0.0,
+                    StyleSheet = "font-size: 13px; font-weight: bold;"
+                },
+                ui:Button{
+                    ID = "GenerateRoughCutButton",
+                    Text = "Generate Rough Cut",
+                    Weight = 0.0,
+                    MinimumSize = {220, 36}
+                },
+
+                ui:Label{
+                    ID = "StatusLabel",
+                    Text = "Route ready. Work through the shell or return to the main menu.",
+                    Weight = 1.0,
+                    Alignment = {AlignHCenter = true, AlignVCenter = true},
+                    StyleSheet = "font-size: 11px;"
+                },
+
+                ui:Button{
+                    ID = "BackButton",
+                    Text = "Back to Main Menu",
+                    Weight = 0.0,
+                    MinimumSize = {180, 34}
+                }
+            }
         })
     end)
-    
-    if not ok_create or not window then
-        logger.error("Failed to create rough cut workflow window: " .. tostring(window))
+
+    if not ok or not window then
+        print("RoughCut: Error - Failed to create rough cut workflow window: " .. tostring(window))
         return nil
     end
-    
+
     currentWindowRef = window
-    currentStep = STEPS.MEDIA
-    
-    -- Create new session via protocol
-    _createSessionAsync()
-    
+
+    local okItems, items = pcall(function()
+        return window:GetItems()
+    end)
+    if okItems then
+        itemsRef = items
+    end
+
+    function window.On.RoughCutWorkflow.Close(ev)
+        returnToMain()
+    end
+
+    function window.On.BrowseMediaButton.Clicked(ev)
+        setStatus("Media Browser is intentionally gated because it still relies on a legacy non-dispatcher dialog.")
+    end
+
+    function window.On.CycleFormatButton.Clicked(ev)
+        workflowState.selectedFormatIndex = workflowState.selectedFormatIndex + 1
+        if workflowState.selectedFormatIndex > #FORMAT_OPTIONS then
+            workflowState.selectedFormatIndex = 1
+        end
+        updateWorkflowView()
+        setStatus("Selected format shell: " .. FORMAT_OPTIONS[workflowState.selectedFormatIndex] .. ".")
+    end
+
+    function window.On.PreviewSelectionButton.Clicked(ev)
+        updateWorkflowView()
+        setStatus("Preview shell ready. Detailed backend preview is still gated while the workflow route is migrated.")
+    end
+
+    function window.On.GenerateRoughCutButton.Clicked(ev)
+        setStatus("Rough cut generation is intentionally gated until the backend action layer is migrated to dispatcher-safe UI.")
+    end
+
+    function window.On.BackButton.Clicked(ev)
+        returnToMain()
+    end
+
+    updateWorkflowView()
+    setStatus("Route ready. Work through the shell or return to the main menu.")
     return window
 end
 
--- Create a new rough cut session asynchronously
-function _createSessionAsync()
-    isLoading = true
-    
-    -- Use timer for async simulation if available, otherwise sync
-    local ok_timer = pcall(function()
-        -- Try to use timer for async (Resolve API dependent)
-        if type(SetTimer) == "function" then
-            SetTimer(100, function()
-                _createSessionInternal()
-                return false -- One-shot timer
-            end)
-        else
-            -- Fallback to sync
-            _createSessionInternal()
-        end
-    end)
-    
-    if not ok_timer then
-        _createSessionInternal()
-    end
-end
-
--- Internal function to create session
-function _createSessionInternal()
-    local result = protocol.request({
-        method = "create_rough_cut_session"
-    })
-    
-    isLoading = false
-    
-    if result.error then
-        logger.error("Failed to create session: " .. tostring(result.error.message))
-        _showError("Failed to start workflow: " .. tostring(result.error.message))
-        return
-    end
-    
-    if result.result then
-        sessionId = result.result.session_id
-        logger.info("Created rough cut session: " .. tostring(sessionId))
-        
-        -- Show media selection step
-        _showMediaSelectionStep()
-    end
-end
-
--- Show media selection step
-function _showMediaSelectionStep()
-    currentStep = STEPS.MEDIA
-    _clearWindow(currentWindowRef)
-    
-    -- Build step indicator
-    _buildStepIndicator(currentWindowRef, STEPS.MEDIA)
-    
-    -- Header
-    local ok = pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Select Media",
-            font = { size = 22, bold = true },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Choose a video clip from the Media Pool",
-            font = { size = 11 },
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    if not ok then
-        logger.warn("Failed to add media step header")
-    end
-    
-    -- Spacer
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-    end)
-    
-    -- Launch Media Browser button
-    ok = pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Step 1: Select your source media",
-            font = { size = 14, bold = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Browse your Resolve Media Pool and select the video clip you want to use for the rough cut.",
-            font = { size = 11, italic = true },
-            wordWrap = true
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 15
-        })
-        
-        -- Launch Media Browser button
-        local launchBtn = currentWindowRef:Add({
-            type = "Button",
-            id = "btnLaunchMediaBrowser",
-            text = "Browse Media Pool...",
-            height = 45,
-            width = 200,
-            alignment = { alignHCenter = true },
-            font = { size = 12, bold = true }
-        })
-        
-        if launchBtn then
-            launchBtn.Clicked = function()
-                _launchMediaBrowser()
-            end
-        end
-        
-        -- Selected clip display (initially empty)
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        local selectedLabel = currentWindowRef:Add({
-            type = "Label",
-            id = "lblSelectedClip",
-            text = "No clip selected",
-            font = { size = 11, italic = true },
-            alignment = { alignHCenter = true },
-            color = { 0.5, 0.5, 0.5 }
-        })
-        
-        -- Store reference for updating
-        if selectedLabel then
-            currentWindowRef.lblSelectedClip = selectedLabel
-        end
-    end)
-    
-    if not ok then
-        logger.warn("Failed to add media selection UI")
-    end
-    
-    -- Navigation buttons
-    _buildNavigationButtons(currentWindowRef, false, false)
-end
-
--- Launch the Media Browser dialog
-function _launchMediaBrowser()
-    logger.info("Launching Media Browser")
-    
-    -- Import MediaBrowser module
-    local MediaBrowser = require("media_browser")
-    
-    -- Set callback for when selection is confirmed
-    MediaBrowser.setOnSelectionConfirmed(function(clipData)
-        logger.info("Media selected: " .. tostring(clipData.name))
-        
-        -- Update UI with selected clip
-        _updateSelectedClipDisplay(clipData)
-        
-        -- Send to protocol to store for Epic 4.2
-        local result = protocol.request({
-            method = "select_clip",
-            params = {
-                clip_id = clipData.id,
-                file_path = clipData.path,
-                clip_name = clipData.name
-            }
-        })
-        
-        if result.error then
-            _showError("Failed to store clip selection: " .. tostring(result.error.message))
-            return
-        end
-        
-        -- Enable Next button
-        _enableNextButton(true)
-    end)
-    
-    -- Show the media browser
-    MediaBrowser.show()
-end
-
--- Update the selected clip display
-function _updateSelectedClipDisplay(clipData)
-    pcall(function()
-        if currentWindowRef and currentWindowRef.lblSelectedClip then
-            local duration = ""
-            if clipData.duration then
-                local mins = math.floor(clipData.duration / 60)
-                local secs = math.floor(clipData.duration % 60)
-                duration = string.format(" (%d:%02d)", mins, secs)
-            end
-            
-            currentWindowRef.lblSelectedClip.Text = 
-                "Selected: " .. tostring(clipData.name) .. duration
-            currentWindowRef.lblSelectedClip.Color = { 0, 0.6, 0 } -- Green
-            currentWindowRef.lblSelectedClip.Font = { size = 11, bold = true }
-        end
-    end)
-end
-
--- Simulate selecting mock media (deprecated - replaced by MediaBrowser)
--- Kept for backwards compatibility but no longer used
-function _selectMockMedia()
-    logger.warn("_selectMockMedia is deprecated, use MediaBrowser instead")
-    _launchMediaBrowser()
-end
-
--- Simulate transcription review step
-function _simulateTranscriptionReview()
-    if not sessionId then
-        _showError("No active session")
-        return
-    end
-    
-    -- Call protocol to review transcription
-    local result = protocol.request({
-        method = "review_transcription_for_session",
-        params = {
-            session_id = sessionId,
-            transcription_data = {
-                text = "This is a test transcription for format template selection...",
-                segments = {},
-                quality = "good"
-            }
-        }
-    })
-    
-    if result.error then
-        _showError("Failed to review transcription: " .. tostring(result.error.message))
-        return
-    end
-    
-    -- Proceed to format selection step (THIS STORY)
-    _showFormatSelectionStep()
-end
-
--- Show format selection step (STORY 3.3)
-function _showFormatSelectionStep()
-    currentStep = STEPS.FORMAT
-    _clearWindow(currentWindowRef)
-    
-    -- Build step indicator
-    _buildStepIndicator(currentWindowRef, STEPS.FORMAT)
-    
-    -- Header
-    local ok = pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Select Format Template",
-            font = { size = 22, bold = true },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Choose a format template for your rough cut",
-            font = { size = 11 },
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    if not ok then
-        logger.warn("Failed to add format step header")
-    end
-    
-    -- Spacer
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 10
-        })
-    end)
-    
-    -- Loading indicator
-    ok = pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            id = "lblFormatLoading",
-            text = "Loading format templates...",
-            font = { size = 12, italic = true },
-            alignment = { alignHCenter = true },
-            height = 30
-        })
-    end)
-    
-    -- Load formats asynchronously
-    _loadFormatsAsync()
-    
-    -- Navigation buttons (Next disabled until format selected)
-    _buildNavigationButtons(currentWindowRef, false, true)
-end
-
--- Build step indicator UI
-function _buildStepIndicator(window, activeStep)
-    local ok = pcall(function()
-        -- Step indicator container
-        window:Add({
-            type = "Label",
-            text = "",
-            height = 5
-        })
-        
-        -- Step text
-        local steps = {
-            { id = STEPS.MEDIA, label = "Media", done = true },
-            { id = STEPS.TRANSCRIPTION, label = "Transcription", done = true },
-            { id = STEPS.FORMAT, label = "Format", done = false, current = activeStep == STEPS.FORMAT },
-            { id = STEPS.GENERATE, label = "Generate", done = false }
-        }
-        
-        local stepText = ""
-        for i, step in ipairs(steps) do
-            if i > 1 then
-                stepText = stepText .. " → "
-            end
-            
-            if step.done then
-                stepText = stepText .. "[✓ " .. step.label .. "]"
-            elseif step.current then
-                stepText = stepText .. "[● " .. step.label .. "]"
-            else
-                stepText = stepText .. "[○ " .. step.label .. "]"
-            end
-        end
-        
-        window:Add({
-            type = "Label",
-            text = stepText,
-            font = { size = 10 },
-            alignment = { alignHCenter = true }
-        })
-        
-        window:Add({
-            type = "Label",
-            text = "",
-            height = 10
-        })
-    end)
-    
-    if not ok then
-        logger.warn("Failed to build step indicator")
-    end
-end
-
--- Load format templates asynchronously
-function _loadFormatsAsync()
-    isLoading = true
-    
-    local ok_timer = pcall(function()
-        if type(SetTimer) == "function" then
-            SetTimer(100, function()
-                _loadFormatsInternal()
-                return false
-            end)
-        else
-            _loadFormatsInternal()
-        end
-    end)
-    
-    if not ok_timer then
-        _loadFormatsInternal()
-    end
-end
-
--- Internal function to load formats
-function _loadFormatsInternal()
-    local result = protocol.request({
-        method = "get_available_formats"
-    })
-    
-    isLoading = false
-    
-    if result.error then
-        logger.error("Failed to load formats: " .. tostring(result.error.message))
-        _showFormatsError(result.error.message)
-        return
-    end
-    
-    if result.result and result.result.formats then
-        formatsList = result.result.formats
-        logger.info("Loaded " .. tostring(#formatsList) .. " format templates")
-        _populateFormatsList()
-    else
-        formatsList = {}
-        _populateFormatsList()
-    end
-end
-
--- Populate the formats list UI
-function _populateFormatsList()
-    if not currentWindowRef then
-        return
-    end
-    
-    -- Hide loading label
-    pcall(function()
-        local lbl = currentWindowRef:FindById("lblFormatLoading")
-        if lbl then
-            lbl.Height = 0
-        end
-    end)
-    
-    if #formatsList == 0 then
-        -- Show empty state
-        pcall(function()
-            currentWindowRef:Add({
-                type = "Label",
-                text = "No format templates found.",
-                font = { size = 12, italic = true },
-                alignment = { alignHCenter = true }
-            })
-            
-            currentWindowRef:Add({
-                type = "Label",
-                text = "Add .md files to templates/formats/ directory",
-                font = { size = 10 },
-                alignment = { alignHCenter = true }
-            })
-        end)
-        return
-    end
-    
-    -- Create scrollable list container
-    local ok = pcall(function()
-        local listContainer = currentWindowRef:Add({
-            type = "VGroup",
-            id = "grpFormatsList",
-            spacing = 8
-        })
-        
-        -- Add each format as a selectable item
-        for _, format in ipairs(formatsList) do
-            _addFormatItem(listContainer, format)
-        end
-    end)
-    
-    if not ok then
-        logger.warn("Failed to populate formats list")
-    end
-end
-
--- Add a single format item to the list
-function _addFormatItem(container, format)
-    local ok = pcall(function()
-        -- Format item container (horizontal group for selection indicator + content)
-        local itemGroup = container:Add({
-            type = "HGroup",
-            id = "grpFormatItem_" .. tostring(format.slug),
-            spacing = 10
-        })
-        
-        -- Selection indicator
-        local lblIndicator = itemGroup:Add({
-            type = "Label",
-            id = "lblIndicator_" .. tostring(format.slug),
-            text = "  ",  -- Empty initially, filled when selected
-            font = { size = 14, bold = true },
-            width = 20
-        })
-        
-        -- Content container
-        local contentGroup = itemGroup:Add({
-            type = "VGroup",
-            spacing = 2
-        })
-        
-        -- Format name
-        local lblName = contentGroup:Add({
-            type = "Label",
-            text = tostring(format.name),
-            font = { size = 13, bold = true }
-        })
-        
-        -- Format description
-        local desc = format.description or ""
-        if #desc > 80 then
-            desc = string.sub(desc, 1, 77) .. "..."
-        end
-        
-        contentGroup:Add({
-            type = "Label",
-            text = desc,
-            font = { size = 10 },
-            color = { 0.5, 0.5, 0.5 }
-        })
-        
-        -- Buttons group
-        local btnGroup = contentGroup:Add({
-            type = "HGroup",
-            spacing = 5
-        })
-        
-        -- Preview button
-        local btnPreview = btnGroup:Add({
-            type = "Button",
-            id = "btnPreview_" .. tostring(format.slug),
-            text = "Preview",
-            width = 70,
-            height = 25,
-            font = { size = 9 }
-        })
-        
-        if btnPreview then
-            btnPreview.Clicked = function()
-                _showFormatPreview(format.slug)
-            end
-        end
-        
-        -- Select button
-        local btnSelect = btnGroup:Add({
-            type = "Button",
-            id = "btnSelect_" .. tostring(format.slug),
-            text = "Select",
-            width = 70,
-            height = 25,
-            font = { size = 9 }
-        })
-        
-        if btnSelect then
-            btnSelect.Clicked = function()
-                _selectFormat(format.slug)
-            end
-        end
-        
-        -- Make the whole item clickable for selection
-        -- (In a full implementation, we'd add click handlers to the group)
-    end)
-    
-    if not ok then
-        logger.warn("Failed to add format item: " .. tostring(format.slug))
-    end
-end
-
--- Show format preview dialog
-function _showFormatPreview(slug)
-    local result = protocol.request({
-        method = "get_template_preview",
-        params = { template_id = slug }
-    })
-    
-    if result.error then
-        _showError("Failed to load preview: " .. tostring(result.error.message))
-        return
-    end
-    
-    if result.result and result.result.preview then
-        local preview = result.result.preview
-        local previewText = _formatPreviewText(preview)
-        
-        -- Show preview in a dialog (simplified - could be a separate window)
-        pcall(function()
-            local dlg = currentWindowRef:Add({
-                type = "Window",
-                id = "dlgPreview",
-                title = "Template Preview: " .. tostring(preview.name),
-                width = 500,
-                height = 400,
-                modal = true
-            })
-            
-            if dlg then
-                dlg:Add({
-                    type = "Label",
-                    text = previewText,
-                    font = { size = 11 },
-                    wordWrap = true
-                })
-                
-                local btnClose = dlg:Add({
-                    type = "Button",
-                    text = "Close",
-                    alignment = { alignHCenter = true }
-                })
-                
-                if btnClose then
-                    btnClose.Clicked = function()
-                        dlg:Close()
-                    end
-                end
-                
-                dlg:Show()
-            end
-        end)
-    end
-end
-
--- Format preview data into readable text
-function _formatPreviewText(preview)
-    local lines = {}
-    
-    table.insert(lines, "Name: " .. tostring(preview.name))
-    table.insert(lines, "Description: " .. tostring(preview.description))
-    table.insert(lines, "")
-    
-    if preview.segments and #preview.segments > 0 then
-        table.insert(lines, "=== TIMING SEGMENTS ===")
-        for _, seg in ipairs(preview.segments) do
-            table.insert(lines, string.format(
-                "%s: %s-%s (%s)",
-                seg.name or "Segment",
-                seg.start_time or "0:00",
-                seg.end_time or "0:00",
-                seg.duration or "unknown"
-            ))
-        end
-        table.insert(lines, "")
-    end
-    
-    if preview.asset_groups and #preview.asset_groups > 0 then
-        table.insert(lines, "=== ASSET GROUPS ===")
-        for _, ag in ipairs(preview.asset_groups) do
-            table.insert(lines, string.format(
-                "%s: %s - %s",
-                ag.category or "Asset",
-                ag.name or "unnamed",
-                ag.description or ""
-            ))
-        end
-    end
-    
-    return table.concat(lines, "\n")
-end
-
--- Select a format template
-function _selectFormat(slug)
-    if not sessionId then
-        _showError("No active session")
-        return
-    end
-    
-    logger.info("Selecting format template: " .. tostring(slug))
-    
-    local result = protocol.request({
-        method = "select_format_template",
-        params = {
-            session_id = sessionId,
-            template_id = slug
-        }
-    })
-    
-    if result.error then
-        _showError("Failed to select format: " .. tostring(result.error.message))
-        return
-    end
-    
-    if result.result then
-        selectedFormatSlug = slug
-        
-        -- Update UI to show selection
-        _updateFormatSelectionUI(slug)
-        
-        -- Enable Next button
-        _enableNextButton(true)
-        
-        logger.info("Selected format: " .. tostring(result.result.template_name))
-    end
-end
-
--- Update UI to show which format is selected
-function _updateFormatSelectionUI(selectedSlug)
-    pcall(function()
-        for _, format in ipairs(formatsList) do
-            local indicator = currentWindowRef:FindById("lblIndicator_" .. tostring(format.slug))
-            if indicator then
-                if format.slug == selectedSlug then
-                    indicator.Text = "▶"
-                else
-                    indicator.Text = "  "
-                end
-            end
-        end
-    end)
-end
-
--- Show formats error message
-function _showFormatsError(message)
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Error loading formats: " .. tostring(message),
-            font = { size = 11, italic = true },
-            color = { 1, 0, 0 },
-            alignment = { alignHCenter = true }
-        })
-    end)
-end
-
--- Build navigation buttons
-function _buildNavigationButtons(window, hasNext, hasBack)
-    pcall(function()
-        -- Spacer
-        window:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        -- Button container
-        local btnGroup = window:Add({
-            type = "HGroup",
-            spacing = 20,
-            alignment = { alignHCenter = true }
-        })
-        
-        -- Back button
-        if hasBack then
-            local btnBack = btnGroup:Add({
-                type = "Button",
-                id = "btnBack",
-                text = "← Back",
-                width = 100,
-                height = 35
-            })
-            
-            if btnBack then
-                btnBack.Clicked = function()
-                    _onBackButton()
-                end
-            end
-        end
-        
-        -- Cancel button
-        local btnCancel = btnGroup:Add({
-            type = "Button",
-            id = "btnCancel",
-            text = "Cancel",
-            width = 100,
-            height = 35
-        })
-        
-        if btnCancel then
-            btnCancel.Clicked = function()
-                roughCutWorkflow.close()
-            end
-        end
-        
-        -- Next/Generate button
-        if hasNext then
-            local btnNext = btnGroup:Add({
-                type = "Button",
-                id = "btnNext",
-                text = "Next →",
-                width = 100,
-                height = 35
-            })
-            
-            if btnNext then
-                btnNext.Clicked = function()
-                    _onNextButton()
-                end
-            end
-            
-            -- Store reference for enabling/disabling
-            window.btnNext = btnNext
-            _enableNextButton(false) -- Disabled until format selected
-        end
-    end)
-end
-
--- Enable/disable next button
-function _enableNextButton(enabled)
-    pcall(function()
-        if currentWindowRef and currentWindowRef.btnNext then
-            currentWindowRef.btnNext.Enabled = enabled
-        end
-    end)
-end
-
--- Handle back button click
-function _onBackButton()
-    if currentStep == STEPS.FORMAT then
-        -- Go back to transcription (simulated)
-        _showMediaSelectionStep()
-    end
-end
-
--- Handle next button click
-function _onNextButton()
-    if currentStep == STEPS.FORMAT then
-        -- Prepare for generation (Story 3.3 AC #3)
-        _prepareForGeneration()
-    end
-end
-
--- Prepare rough cut data for generation
-function _prepareForGeneration()
-    if not sessionId then
-        _showError("No active session")
-        return
-    end
-    
-    logger.info("Preparing rough cut data for generation")
-    
-    local result = protocol.request({
-        method = "prepare_rough_cut_for_generation",
-        params = {
-            session_id = sessionId
-        }
-    })
-    
-    if result.error then
-        _showError("Failed to prepare: " .. tostring(result.error.message))
-        return
-    end
-    
-    if result.result then
-        logger.info("Prepared data for generation successfully")
-        _showGenerateStep(result.result.data)
-    end
-end
-
--- Show generate step
-function _showGenerateStep(data)
-    currentStep = STEPS.GENERATE
-    _clearWindow(currentWindowRef)
-    
-    -- Build step indicator
-    _buildStepIndicator(currentWindowRef, STEPS.GENERATE)
-    
-    -- Header
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Generate Rough Cut",
-            font = { size = 22, bold = true },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Ready to generate AI-powered rough cut",
-            font = { size = 11 },
-            alignment = { alignHCenter = true }
-        })
-    end)
-    
-    -- Show summary
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Session Summary:",
-            font = { size = 14, bold = true }
-        })
-        
-        if data and data.media then
-            currentWindowRef:Add({
-                type = "Label",
-                text = "Media: " .. tostring(data.media.clip_name)
-            })
-        end
-        
-        if data and data.format then
-            currentWindowRef:Add({
-                type = "Label",
-                text = "Format: " .. tostring(data.format.name)
-            })
-            
-            currentWindowRef:Add({
-                type = "Label",
-                text = "Segments: " .. tostring(#(data.format.segments or {}))
-            })
-            
-            currentWindowRef:Add({
-                type = "Label",
-                text = "Asset Groups: " .. tostring(#(data.format.asset_groups or {}))
-            })
-        end
-    end)
-    
-    -- Generate button
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 30
-        })
-        
-        local btnGenerate = currentWindowRef:Add({
-            type = "Button",
-            id = "btnGenerate",
-            text = "Generate Rough Cut",
-            width = 180,
-            height = 45,
-            font = { size = 12, bold = true },
-            alignment = { alignHCenter = true }
-        })
-        
-        if btnGenerate then
-            btnGenerate.Clicked = function()
-                _showGeneratingState()
-            end
-        end
-    end)
-    
-    -- Cancel button
-    pcall(function()
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 10
-        })
-        
-        local btnCancel = currentWindowRef:Add({
-            type = "Button",
-            text = "Cancel",
-            width = 100,
-            height = 35,
-            alignment = { alignHCenter = true }
-        })
-        
-        if btnCancel then
-            btnCancel.Clicked = function()
-                roughCutWorkflow.close()
-            end
-        end
-    end)
-end
-
--- Show generating state with progress dialog (Story 5.1)
-function _showGeneratingState()
-    logger.info("Starting rough cut generation...")
-    
-    -- Clear window and show generating UI
-    pcall(function()
-        _clearWindow(currentWindowRef)
-        
-        -- Header
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Generating Rough Cut",
-            font = { size = 22, bold = true },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        -- Progress indicator
-        currentWindowRef:Add({
-            type = "Label",
-            id = "lblProgressStatus",
-            text = "Initializing AI processing...",
-            font = { size = 12, italic = true },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 15
-        })
-        
-        -- Progress bar (simulated with label)
-        local progressGroup = currentWindowRef:Add({
-            type = "HGroup",
-            id = "grpProgress",
-            spacing = 5,
-            alignment = { alignHCenter = true }
-        })
-        
-        if progressGroup then
-            progressGroup:Add({
-                type = "Label",
-                id = "lblProgressBar",
-                text = "[                    ]",
-                font = { size = 14, family = "Courier" },
-                alignment = { alignHCenter = true }
-            })
-        end
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 10
-        })
-        
-        -- Progress details
-        currentWindowRef:Add({
-            type = "Label",
-            id = "lblProgressDetails",
-            text = "Step 1 of 5: Preparing data...",
-            font = { size = 10 },
-            color = { 0.5, 0.5, 0.5 },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        -- Cancel button (always enabled during generation)
-        local btnCancel = currentWindowRef:Add({
-            type = "Button",
-            id = "btnCancelGeneration",
-            text = "Cancel",
-            width = 100,
-            height = 35,
-            alignment = { alignHCenter = true }
-        })
-        
-        if btnCancel then
-            btnCancel.Clicked = function()
-                logger.info("User cancelled generation")
-                -- TODO: Implement cancellation logic in Story 5.2+
-                roughCutWorkflow.close()
-            end
-        end
-    end)
-    
-    -- Initiate rough cut generation via protocol
-    _initiateRoughCutGeneration()
-end
-
--- Initiate rough cut generation via JSON-RPC protocol
-function _initiateRoughCutGeneration()
-    if not sessionId then
-        _showError("No active session")
-        return
-    end
-    
-    logger.info("Calling initiate_rough_cut via protocol")
-    
-    -- First prepare the rough cut data
-    local prepareResult = protocol.request({
-        method = "prepare_rough_cut_for_generation",
-        params = {
-            session_id = sessionId
-        }
-    })
-    
-    if prepareResult.error then
-        _showError("Failed to prepare data: " .. tostring(prepareResult.error.message))
-        return
-    end
-    
-    -- Now initiate the rough cut generation
-    local result = protocol.request({
-        method = "initiate_rough_cut",
-        params = {
-            session_id = sessionId,
-            rough_cut_data = prepareResult.result and prepareResult.result.data or {}
-        }
-    })
-    
-    if result.error then
-        _updateProgressError(result.error)
-        return
-    end
-    
-    if result.result then
-        logger.info("Rough cut initiated: " .. tostring(result.result.rough_cut_id))
-        
-        -- Simulate progress updates (in production, these come from Python backend)
-        _simulateProgressUpdates()
-    end
-end
-
--- Update progress UI with error
-function _updateProgressError(error)
-    logger.error("Generation error: " .. tostring(error.message))
-    
-    pcall(function()
-        local statusLabel = currentWindowRef:FindById("lblProgressStatus")
-        if statusLabel then
-            statusLabel.Text = "Error: " .. tostring(error.message)
-            statusLabel.Color = { 1, 0, 0 }
-        end
-        
-        local detailsLabel = currentWindowRef:FindById("lblProgressDetails")
-        if detailsLabel then
-            detailsLabel.Text = tostring(error.suggestion or "Please try again")
-        end
-        
-        -- Show retry button
-        local btnRetry = currentWindowRef:Add({
-            type = "Button",
-            id = "btnRetry",
-            text = "Retry",
-            width = 100,
-            height = 35,
-            alignment = { alignHCenter = true }
-        })
-        
-        if btnRetry then
-            btnRetry.Clicked = function()
-                _showGeneratingState()
-            end
-        end
-    end)
-end
-
--- Simulate progress updates (placeholder for streaming updates in Story 5.2+)
-function _simulateProgressUpdates()
-    local progressSteps = {
-        { step = 1, total = 5, message = "Initializing AI processing...", bar = "[■                   ]" },
-        { step = 2, total = 5, message = "Preparing data for AI...", bar = "[■■                  ]" },
-        { step = 3, total = 5, message = "Analyzing transcript and matching assets...", bar = "[■■■■                ]" },
-        { step = 4, total = 5, message = "Processing format rules...", bar = "[■■■■■■■             ]" },
-        { step = 5, total = 5, message = "Generation initiated successfully!", bar = "[■■■■■■■■■■]" }
-    }
-    
-    -- Guard against empty or nil progressSteps
-    if not progressSteps or #progressSteps == 0 then
-        logger.warn("No progress steps defined, skipping progress simulation")
-        _showGenerationComplete()
-        return
-    end
-    
-    local currentStepIndex = 1
-    
-    local function updateStep()
-        if currentStepIndex > #progressSteps then
-            -- Show completion
-            _showGenerationComplete()
-            return
-        end
-        
-        local step = progressSteps[currentStepIndex]
-        
-        pcall(function()
-            local statusLabel = currentWindowRef:FindById("lblProgressStatus")
-            if statusLabel then
-                statusLabel.Text = step.message
-            end
-            
-            local barLabel = currentWindowRef:FindById("lblProgressBar")
-            if barLabel then
-                barLabel.Text = step.bar
-            end
-            
-            local detailsLabel = currentWindowRef:FindById("lblProgressDetails")
-            if detailsLabel then
-                detailsLabel.Text = "Step " .. step.step .. " of " .. step.total .. ": " .. step.message
-            end
-        end)
-        
-        currentStepIndex = currentStepIndex + 1
-        
-        -- Schedule next update
-        local ok_timer = pcall(function()
-            if type(SetTimer) == "function" then
-                SetTimer(800, function()
-                    updateStep()
-                    return false
-                end)
-            else
-                -- Fallback: just do all updates immediately
-                updateStep()
-            end
-        end)
-        
-        if not ok_timer then
-            -- If timer fails, just move to completion
-            _showGenerationComplete()
-        end
-    end
-    
-    -- Start progress updates
-    updateStep()
-end
-
--- Show generation complete UI
-function _showGenerationComplete()
-    pcall(function()
-        _clearWindow(currentWindowRef)
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Generation Initiated!",
-            font = { size = 22, bold = true },
-            alignment = { alignHCenter = true },
-            color = { 0, 0.6, 0 }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "Rough cut generation has been initiated successfully.",
-            font = { size = 12 },
-            alignment = { alignHCenter = true }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "The AI is now analyzing your transcript and matching assets.",
-            font = { size = 11, italic = true },
-            alignment = { alignHCenter = true },
-            color = { 0.5, 0.5, 0.5 }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "(Story 5.1 Complete - AI processing implementation continues in Story 5.2+)",
-            font = { size = 10, italic = true },
-            alignment = { alignHCenter = true },
-            color = { 0.4, 0.4, 0.4 }
-        })
-        
-        currentWindowRef:Add({
-            type = "Label",
-            text = "",
-            height = 20
-        })
-        
-        -- Done button
-        local btnDone = currentWindowRef:Add({
-            type = "Button",
-            text = "Done",
-            width = 100,
-            height = 35,
-            alignment = { alignHCenter = true }
-        })
-        
-        if btnDone then
-            btnDone.Clicked = function()
-                roughCutWorkflow.close()
-            end
-        end
-    end)
-end
-
--- Clear all items from window
-function _clearWindow(window)
-    if not window then
-        return
-    end
-    
-    pcall(function()
-        -- Resolve doesn't have a direct clear method
-        -- We hide the window and recreate it
-        window:Hide()
-        
-        -- Re-add the window with same config
-        -- Note: In a real implementation, we'd need to remove items individually
-        -- or recreate the window entirely
-    end)
-    
-    -- Alternative: Just create a new window
-    pcall(function()
-        if window.Items then
-            for i = #window.Items, 1, -1 do
-                pcall(function()
-                    window:Remove(window.Items[i])
-                end)
-            end
-        end
-    end)
-end
-
--- Show error message
-function _showError(message)
-    logger.error(message)
-    
-    pcall(function()
-        if currentWindowRef then
-            currentWindowRef:Add({
-                type = "Label",
-                text = "Error: " .. tostring(message),
-                font = { size = 11 },
-                color = { 1, 0, 0 },
-                alignment = { alignHCenter = true }
-            })
-        end
-    end)
-end
-
--- Show the workflow window
--- @return boolean success
 function roughCutWorkflow.show()
     if not currentWindowRef then
-        logger.error("No rough cut workflow window to show")
         return false
     end
-    
+
+    updateWorkflowView()
+    setStatus("Create Rough Cut opened.")
+
     local ok = pcall(function()
         currentWindowRef:Show()
+        currentWindowRef:Raise()
     end)
-    
-    if not ok then
-        logger.error("Failed to show workflow window")
-        return false
-    end
-    
-    return true
+
+    return ok
 end
 
--- Hide the workflow window
--- @return boolean success
 function roughCutWorkflow.hide()
     if not currentWindowRef then
         return false
     end
-    
+
     local ok = pcall(function()
         currentWindowRef:Hide()
     end)
-    
+
     return ok
 end
 
--- Close the workflow window and return to main
--- @return boolean success
 function roughCutWorkflow.close()
-    logger.info("Closing rough cut workflow window")
-    
-    local ok = pcall(function()
-        if currentWindowRef then
-            currentWindowRef:Hide()
-        end
-        
-        if parentWindowRef and parentWindowRef.Show then
-            parentWindowRef:Show()
-        end
-        
-        currentWindowRef = nil
-        sessionId = nil
-        selectedFormatSlug = nil
-    end)
-    
-    return ok
+    if not currentWindowRef then
+        return true
+    end
+
+    returnToMain()
+    return true
 end
 
--- Clean up resources
 function roughCutWorkflow.destroy()
-    if currentWindowRef then
-        pcall(function()
-            currentWindowRef:Close()
-        end)
-        currentWindowRef = nil
-    end
+    local window = currentWindowRef
+
+    isDestroying = true
+    currentWindowRef = nil
+    itemsRef = nil
+    runtimeRef = nil
     parentWindowRef = nil
-    sessionId = nil
+
+    if window then
+        pcall(function()
+            window:Hide()
+            window:Close()
+        end)
+    end
+
+    isDestroying = false
+end
+
+function roughCutWorkflow.setOnReturnToMain(callback)
+    onReturnToMain = callback
 end
 
 return roughCutWorkflow
