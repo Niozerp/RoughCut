@@ -1,5 +1,6 @@
--- RoughCut Launcher for DaVinci Resolve (Electron UI Only)
--- Version: 1.0.9 - Working PATH Fix
+-- RoughCut Launcher for DaVinci Resolve (Electron UI)
+-- Merged version - electron app is in same folder
+-- Version: 2.0.0
 
 print("[RoughCut] Starting...")
 
@@ -19,27 +20,28 @@ if not resolve then
     return
 end
 
--- Find electron app
+-- Find this script's directory
 local scriptPath = debug.getinfo(1, "S").source
 if scriptPath:sub(1, 1) == "@" then scriptPath = scriptPath:sub(2) end
 scriptPath = scriptPath:gsub("\\", "/")
-local scriptsDir = scriptPath:match("^(.*)/") or "."
 
-local electronPath = scriptsDir .. "/roughcut-electron"
-if not io.open(electronPath .. "/package.json", "r") then
-    electronPath = scriptsDir .. "/../roughcut-electron"
-end
+-- Remove filename to get directory
+local scriptsDir = scriptPath:match("^(.+)/[^/]+$") or "."
+print("[RoughCut] Scripts dir: " .. scriptsDir)
 
-if not io.open(electronPath .. "/package.json", "r") then
-    print("[RoughCut] ERROR: Cannot find roughcut-electron")
+-- Electron app is in roughcut/electron/ subfolder
+local electronPath = scriptsDir .. "/roughcut/electron"
+
+-- Check for package.json
+local f = io.open(electronPath .. "/package.json", "r")
+if not f then
+    print("[RoughCut] ERROR: Cannot find roughcut/electron/package.json")
+    print("[RoughCut] Looked in: " .. electronPath)
     return
 end
+f:close()
 
-print("[RoughCut] Found: " .. electronPath)
-
--- Convert path
-local winPath = electronPath:gsub("/", "\\")
-local tempDir = (os.getenv("TEMP") or "C:\\Windows\\Temp"):gsub("/", "\\")
+print("[RoughCut] Found electron app")
 
 -- Get project name
 local projectName = "Unknown"
@@ -48,31 +50,33 @@ pcall(function()
 end)
 print("[RoughCut] Project: " .. projectName)
 
--- Create batch with unique name (avoid stale files)
+-- Convert to Windows path
+local winPath = electronPath:gsub("/", "\\")
+local tempDir = (os.getenv("TEMP") or "C:\\Windows\\Temp"):gsub("/", "\\")
 local timestamp = tostring(os.time())
 local batchFile = tempDir .. "\\roughcut_" .. timestamp .. ".bat"
 
--- Delete any old roughcut_*.bat files (cleanup)
+-- Delete any old batch files
 os.execute('del "' .. tempDir .. '\\roughcut_*.bat" >nul 2>&1')
 
+-- Create batch
 local batchLines = {
     "@echo off",
-    "echo [RC] Starting...",
+    "echo [RC] Starting RoughCut...",
     "cd /d \"" .. winPath .. "\"",
-    "if errorlevel 1 (echo [RC] CD failed & pause & exit /b 1)",
-    "echo [RC] Dir: %cd%",
-    "if not exist node_modules\\.bin (",
-    "  echo [RC] First run - installing dependencies...",
+    "if errorlevel 1 (echo [RC] ERROR: Cannot cd & pause & exit /b 1)",
+    "echo [RC] In: %cd%",
+    "if not exist node_modules\\.bin\\electron.cmd (",
+    "  echo [RC] Installing deps...",
     "  call npm install",
-    "  if errorlevel 1 (echo [RC] npm install failed & pause & exit /b 1)",
+    "  if errorlevel 1 (echo [RC] Install failed & pause & exit /b 1)",
     ")",
     "set ROUGHCUT_RESOLVE=1",
     "set ROUGHCUT_PROJECT=" .. projectName,
-    "echo [RC] Adding node_modules\\.bin to PATH...",
     "set PATH=%cd%\\node_modules\\.bin;%PATH%",
-    "echo [RC] Running npm run dev...",
+    "echo [RC] Launching...",
     "call npm run dev",
-    "if errorlevel 1 (echo [RC] npm failed: %errorlevel% & pause)",
+    "if errorlevel 1 (echo [RC] Failed & pause)",
     "exit"
 }
 
@@ -86,12 +90,11 @@ for _, line in ipairs(batchLines) do
 end
 f:close()
 
-print("[RoughCut] Launching...")
+print("[RoughCut] Launching from: " .. batchFile)
 
--- Launch with start command
+-- Launch
 os.execute('start "RoughCut" cmd /c "' .. batchFile .. '"')
-
 print("[RoughCut] Window should appear")
 
--- Cleanup this batch file after delay
-os.execute('start /MIN cmd /c "ping -n 31 127.0.0.1 >nul & del \"' .. batchFile .. '\" 2>nul & del ' .. tempDir .. '\\roughcut_*.log 2>nul"')
+-- Cleanup
+os.execute('start /MIN cmd /c "ping -n 61 127.0.0.1 >nul & del \"' .. batchFile .. '\" 2>nul"')

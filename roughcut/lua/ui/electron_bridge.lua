@@ -127,7 +127,7 @@ local function areDepsInstalled()
         return false
     end
     
-    local nodeModulesPath = root .. "/roughcut-electron/node_modules"
+    local nodeModulesPath = root .. "/electron/node_modules"
     local f = io.open(nodeModulesPath .. "/.package-lock.json", "r")
     if f then
         f:close()
@@ -154,7 +154,7 @@ function electronBridge.isAvailable()
     end
     
     -- Check if package.json exists
-    local packageJsonPath = root .. "/roughcut-electron/package.json"
+    local packageJsonPath = root .. "/electron/package.json"
     local f = io.open(packageJsonPath, "r")
     if not f then
         logger.info("Electron not available: package.json not found at " .. packageJsonPath)
@@ -171,7 +171,7 @@ function electronBridge.isAvailable()
     end
     
     local npmPath = getNpmPath()
-    logger.info("Electron is available at: " .. root .. "/roughcut-electron")
+    logger.info("Electron is available at: " .. root .. "/electron")
     logger.info("  npm found at: " .. npmPath)
     return true
 end
@@ -207,7 +207,7 @@ function electronBridge.installDependencies(onProgress)
     logger.info("Installing Electron dependencies...")
     logger.info("This may take 2-3 minutes...")
     
-    local electronDir = root .. "/roughcut-electron"
+    local electronDir = root .. "/electron"
     local npmCmd = getNpmPath()
     
     logger.info("Using npm at: " .. npmCmd)
@@ -236,7 +236,7 @@ local function getElectronCommand()
         return { cmd = nil, workingDir = nil, error = "Could not determine project root" }
     end
     
-    local electronDir = root .. "/roughcut-electron"
+    local electronDir = root .. "/electron"
     
     -- Check for npm
     if not isNpmAvailable() then

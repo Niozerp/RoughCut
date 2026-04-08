@@ -136,7 +136,7 @@ local function areElectronDepsInstalled(projectDir)
         return false
     end
     
-    local nodeModulesPath = projectDir .. "/roughcut-electron/node_modules"
+    local nodeModulesPath = projectDir .. "/electron/node_modules"
     local f = io.open(nodeModulesPath .. "/.package-lock.json", "r")
     if f then
         f:close()
@@ -922,11 +922,11 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
                 return
             end
             
-            -- Check if roughcut-electron exists
-            local electronPackagePath = sourceDir .. "/roughcut-electron/package.json"
+            -- Check if electron exists
+            local electronPackagePath = sourceDir .. "/electron/package.json"
             local f = io.open(electronPackagePath, "r")
             if not f then
-                print("RoughCut: WARNING - roughcut-electron/package.json not found, skipping Electron UI")
+                print("RoughCut: WARNING - electron/package.json not found, skipping Electron UI")
                 doInstallStep(6)
                 return
             end
@@ -936,7 +936,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir)
             print("RoughCut: This may take 2-3 minutes...")
             
             local npmCmd = getNpmPath()
-            local electronDir = sourceDir .. "/roughcut-electron"
+            local electronDir = sourceDir .. "/electron"
             
             print("RoughCut: Using npm at: " .. npmCmd)
             print("RoughCut: Installing in: " .. electronDir)

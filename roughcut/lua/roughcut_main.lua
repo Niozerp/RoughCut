@@ -79,7 +79,7 @@ local function detectUIMode()
     else
         logger.info("✗ Electron not available, falling back to native Resolve UI")
         logger.info("  To use Electron UI:")
-        logger.info("  1. Ensure roughcut-electron/package.json exists")
+        logger.info("  1. Ensure electron/package.json exists")
         logger.info("  2. Ensure Node.js/npm is installed and in PATH")
         return "native"
     end

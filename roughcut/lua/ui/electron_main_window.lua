@@ -65,7 +65,7 @@ function electronMainWindow.create(uiRuntime)
         ", isRunning=" .. tostring(status.isRunning))
     
     if not status.available then
-        logger.error("Electron is not available - check that roughcut-electron/package.json exists and npm is in PATH")
+        logger.error("Electron is not available - check that electron/package.json exists and npm is in PATH")
         return nil
     end
     
