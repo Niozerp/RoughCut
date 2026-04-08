@@ -1,7 +1,7 @@
 -- RoughCut Electron Main Window
 -- Launches the Electron UI as a replacement for Resolve's built-in UIManager
 -- Compatible with DaVinci Resolve's Lua scripting environment
--- Version: 1.0.0
+-- Version: 1.1.0
 
 local electronMainWindow = {}
 
@@ -9,7 +9,7 @@ local electronBridge = require("ui.electron_bridge")
 local navigation = require("ui.navigation")
 local logger = require("utils.logger")
 
-local VERSION = "1.0.0-electron"
+local VERSION = "1.1.0-electron"
 local BUILD_DATE = "2026-04-08"
 
 local windowRef = nil
@@ -57,10 +57,27 @@ function electronMainWindow.create(uiRuntime)
     onCloseCallback = nil
     closeCallbackInvoked = false
     
+    -- Check if Electron is available
+    local status = electronBridge.getStatus()
+    logger.info("Electron status: " .. 
+        "available=" .. tostring(status.available) ..
+        ", depsInstalled=" .. tostring(status.depsInstalled) ..
+        ", isRunning=" .. tostring(status.isRunning))
+    
+    if not status.available then
+        logger.error("Electron is not available - check that roughcut-electron/package.json exists and npm is in PATH")
+        return nil
+    end
+    
+    -- If dependencies aren't installed, they will be auto-installed by the bridge
+    if not status.depsInstalled then
+        logger.info("Electron dependencies need installation - this will happen on launch")
+    end
+    
     -- Launch Electron
     local success = electronBridge.launch()
     if not success then
-        logger.error("Failed to launch Electron window")
+        logger.error("Failed to launch Electron window - check Resolve console for details")
         return nil
     end
     
@@ -75,7 +92,9 @@ function electronMainWindow.create(uiRuntime)
         Close = function() closeMainWindow() end,
     }
     
-    logger.info("Electron main window created successfully")
+    logger.info("Electron main window created successfully - Electron is launching")
+    logger.info("Note: Electron window opens independently of Resolve")
+    
     return windowRef
 end
 
@@ -102,6 +121,7 @@ end
 -- @param window window reference
 function electronMainWindow.show(window)
     -- Electron is already visible
+    -- In a future version, we could use IPC to bring window to front
 end
 
 --- Get window configuration
@@ -121,7 +141,13 @@ end
 --- Check if Electron mode is available
 -- @return boolean
 function electronMainWindow.isAvailable()
-    return electronBridge.getProjectRoot() ~= nil
+    return electronBridge.isAvailable()
+end
+
+--- Get detailed status
+-- @return table with status info
+function electronMainWindow.getStatus()
+    return electronBridge.getStatus()
 end
 
 return electronMainWindow

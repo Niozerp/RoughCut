@@ -66,12 +66,21 @@ end
 --- Detect which UI mode to use
 -- @return string "electron" or "native"
 local function detectUIMode()
+    logger.info("Detecting UI mode...")
+    
     -- Check if Electron is available
+    local status = electronMainWindow.getStatus()
+    logger.info("UI detection - Electron available: " .. tostring(status.available) .. 
+                ", deps installed: " .. tostring(status.depsInstalled))
+    
     if electronMainWindow.isAvailable() then
-        logger.info("Electron UI is available")
+        logger.info("✓ Electron UI is available - will use Electron")
         return "electron"
     else
-        logger.info("Electron not available, falling back to native Resolve UI")
+        logger.info("✗ Electron not available, falling back to native Resolve UI")
+        logger.info("  To use Electron UI:")
+        logger.info("  1. Ensure roughcut-electron/package.json exists")
+        logger.info("  2. Ensure Node.js/npm is installed and in PATH")
         return "native"
     end
 end
@@ -97,16 +106,42 @@ local function launchMainWindow(uiManager)
     local window = nil
     
     if mode == "electron" then
+        -- Show installing dialog if dependencies need installation
+        local status = electronMainWindow.getStatus()
+        if status.available and not status.depsInstalled then
+            logger.info("Electron dependencies need installation - showing dialog")
+            local installMsg = "RoughCut Electron UI\n\n" ..
+                              "Installing Electron dependencies for the first time.\n" ..
+                              "This may take 2-3 minutes...\n\n" ..
+                              "Please wait..."
+            
+            -- Show non-blocking message (we'll run install in background)
+            pcall(function()
+                uiManager:ShowMessageBox(installMsg, "RoughCut - Installing", "OK")
+            end)
+        end
+        
         -- Launch Electron UI
         window = electronMainWindow.create(runtimeContext)
         if not window then
             print("RoughCut: Error - Failed to create Electron window, falling back to native")
             logger.error("Failed to create Electron window, falling back to native UI")
+            -- Show error to user
+            pcall(function()
+                uiManager:ShowMessageBox(
+                    "Electron UI failed to start.\n\n" ..
+                    "Falling back to native Resolve UI.\n" ..
+                    "Check the Resolve console for details.",
+                    "RoughCut - Electron Error",
+                    "OK"
+                )
+            end)
             -- Fallback to native
             window = mainWindow.create(runtimeContext)
         end
     else
         -- Launch native Resolve UI
+        logger.info("Launching native Resolve UI")
         window = mainWindow.create(runtimeContext)
     end
     

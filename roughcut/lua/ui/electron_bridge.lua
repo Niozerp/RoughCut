@@ -1,7 +1,7 @@
 -- RoughCut Electron Bridge
 -- Launches and manages the Electron UI from DaVinci Resolve Lua environment
 -- Compatible with DaVinci Resolve's Lua scripting environment
--- Version: 1.0.0
+-- Version: 1.1.0 - With Auto-Installation
 
 local electronBridge = {}
 
@@ -13,6 +13,7 @@ local logger = require("utils.logger")
 local electronProcess = nil
 local projectRoot = nil
 local isRunning = false
+local isInstalling = false
 
 --- Get the project root directory
 -- @return string project root path or nil
@@ -43,27 +44,188 @@ local function getProjectRoot()
     return projectRoot
 end
 
---- Check if Electron app is built
--- @return boolean true if electron app exists
-local function isElectronBuilt()
+--- Check if npm is available
+-- Also checks common Node.js installation paths on Windows
+-- @return boolean true if npm is found
+local function isNpmAvailable()
+    -- First try the standard command check
+    if processUtils.commandExists("npm") then
+        return true
+    end
+    
+    if processUtils.commandExists("npm.cmd") then
+        return true
+    end
+    
+    -- On Windows, check common Node.js installation paths
+    local isWindows = package.config:sub(1,1) == "\\"
+    if isWindows then
+        local commonPaths = {
+            "C:/Program Files/nodejs/npm.cmd",
+            "C:/Program Files (x86)/nodejs/npm.cmd",
+            os.getenv("LOCALAPPDATA") .. "/Microsoft/WindowsApps/npm.cmd",
+            os.getenv("USERPROFILE") .. "/AppData/Roaming/npm/npm.cmd",
+        }
+        
+        for _, path in ipairs(commonPaths) do
+            if path then
+                local f = io.open(path, "r")
+                if f then
+                    f:close()
+                    logger.info("Found npm at: " .. path)
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+--- Get the npm command path
+-- @return string path to npm command or "npm" as fallback
+local function getNpmPath()
+    -- If standard command works, use it
+    if processUtils.commandExists("npm") then
+        return "npm"
+    end
+    
+    if processUtils.commandExists("npm.cmd") then
+        return "npm.cmd"
+    end
+    
+    -- On Windows, check common Node.js installation paths
+    local isWindows = package.config:sub(1,1) == "\\"
+    if isWindows then
+        local commonPaths = {
+            "C:/Program Files/nodejs/npm.cmd",
+            "C:/Program Files (x86)/nodejs/npm.cmd",
+            os.getenv("LOCALAPPDATA") .. "/Microsoft/WindowsApps/npm.cmd",
+            os.getenv("USERPROFILE") .. "/AppData/Roaming/npm/npm.cmd",
+        }
+        
+        for _, path in ipairs(commonPaths) do
+            if path then
+                local f = io.open(path, "r")
+                if f then
+                    f:close()
+                    return path
+                end
+            end
+        end
+    end
+    
+    -- Fallback
+    return "npm"
+end
+
+--- Check if Electron dependencies are installed
+-- @return boolean true if node_modules exists
+local function areDepsInstalled()
     local root = getProjectRoot()
     if not root then
         return false
     end
     
-    -- Check for the built Electron app
-    -- On Windows, check for the .exe in dist or node_modules/.bin
-    local electronDistPath = root .. "/roughcut-electron/dist"
-    local packageJsonPath = root .. "/roughcut-electron/package.json"
+    local nodeModulesPath = root .. "/roughcut-electron/node_modules"
+    local f = io.open(nodeModulesPath .. "/.package-lock.json", "r")
+    if f then
+        f:close()
+        return true
+    end
     
-    -- Check if package.json exists
-    local f = io.open(packageJsonPath, "r")
+    -- Also check for the directory itself
+    f = io.open(nodeModulesPath, "r")
     if f then
         f:close()
         return true
     end
     
     return false
+end
+
+--- Check if Electron app exists
+-- @return boolean true if electron app exists
+function electronBridge.isAvailable()
+    local root = getProjectRoot()
+    if not root then
+        logger.info("Electron not available: could not determine project root")
+        return false
+    end
+    
+    -- Check if package.json exists
+    local packageJsonPath = root .. "/roughcut-electron/package.json"
+    local f = io.open(packageJsonPath, "r")
+    if not f then
+        logger.info("Electron not available: package.json not found at " .. packageJsonPath)
+        return false
+    end
+    f:close()
+    
+    -- Check if npm is available
+    if not isNpmAvailable() then
+        logger.info("Electron not available: npm not found in PATH")
+        logger.info("  Node.js may not be installed or not in system PATH")
+        logger.info("  Download from: https://nodejs.org/")
+        return false
+    end
+    
+    local npmPath = getNpmPath()
+    logger.info("Electron is available at: " .. root .. "/roughcut-electron")
+    logger.info("  npm found at: " .. npmPath)
+    return true
+end
+
+--- Install Electron dependencies (npm install)
+-- @param onProgress callback function(status_message) (optional)
+-- @return boolean success
+function electronBridge.installDependencies(onProgress)
+    if isInstalling then
+        logger.info("Electron dependency installation already in progress")
+        return false
+    end
+    
+    local root = getProjectRoot()
+    if not root then
+        logger.error("Cannot install: could not determine project root")
+        return false
+    end
+    
+    if not isNpmAvailable() then
+        logger.error("Cannot install: npm not found in PATH")
+        logger.error("Please install Node.js from https://nodejs.org/")
+        logger.error("After installation, restart DaVinci Resolve and try again")
+        return false
+    end
+    
+    isInstalling = true
+    
+    if onProgress then
+        onProgress("Installing Electron dependencies...")
+    end
+    
+    logger.info("Installing Electron dependencies...")
+    logger.info("This may take 2-3 minutes...")
+    
+    local electronDir = root .. "/roughcut-electron"
+    local npmCmd = getNpmPath()
+    
+    logger.info("Using npm at: " .. npmCmd)
+    
+    -- Run npm install with longer timeout (5 minutes)
+    local result = processUtils.run({npmCmd, "install"}, electronDir, 300)
+    
+    isInstalling = false
+    
+    if not result.success then
+        logger.error("npm install failed: " .. tostring(result.error))
+        logger.error("stdout: " .. tostring(result.stdout))
+        logger.error("stderr: " .. tostring(result.stderr))
+        return false
+    end
+    
+    logger.info("Electron dependencies installed successfully!")
+    return true
 end
 
 --- Get the path to run Electron
@@ -76,18 +238,19 @@ local function getElectronCommand()
     
     local electronDir = root .. "/roughcut-electron"
     
-    -- Check for npm/node
-    local npmCmd = "npm"
-    if processUtils.commandExists("npm") then
-        npmCmd = "npm"
-    elseif processUtils.commandExists("npm.cmd") then
-        npmCmd = "npm.cmd"
-    else
-        return { cmd = nil, workingDir = nil, error = "npm not found in PATH" }
+    -- Check for npm
+    if not isNpmAvailable() then
+        return { cmd = nil, workingDir = nil, error = "npm not found in PATH. Please install Node.js." }
+    end
+    
+    local npmCmd = getNpmPath()
+    
+    -- Check if dependencies are installed
+    if not areDepsInstalled() then
+        return { cmd = nil, workingDir = nil, error = "Dependencies not installed. Run installDependencies() first." }
     end
     
     -- Build the command: npm run dev
-    -- This will build and launch the Electron app
     return {
         cmd = { npmCmd, "run", "dev" },
         workingDir = electronDir,
@@ -96,7 +259,7 @@ local function getElectronCommand()
 end
 
 --- Launch the Electron application
--- @param resolve Resolve API object
+-- @param resolve Resolve API object (optional, for future use)
 -- @param onMessage callback for messages from Electron (optional)
 -- @return boolean success
 function electronBridge.launch(resolve, onMessage)
@@ -108,9 +271,19 @@ function electronBridge.launch(resolve, onMessage)
     logger.info("Launching RoughCut Electron UI...")
     
     -- Check if Electron is available
-    if not isElectronBuilt() then
-        logger.error("Electron app not found at roughcut-electron/")
+    if not electronBridge.isAvailable() then
+        logger.error("Electron app not found or npm not available")
         return false
+    end
+    
+    -- Auto-install dependencies if needed
+    if not areDepsInstalled() then
+        logger.info("Electron dependencies not found, installing...")
+        local installed = electronBridge.installDependencies()
+        if not installed then
+            logger.error("Failed to install Electron dependencies")
+            return false
+        end
     end
     
     -- Get launch command
@@ -125,7 +298,6 @@ function electronBridge.launch(resolve, onMessage)
     
     -- Spawn the Electron process
     -- Note: We use spawn instead of run because Electron is a long-running GUI app
-    -- We don't wait for it to complete
     local result = processUtils.spawn(launchInfo.cmd, launchInfo.workingDir)
     
     if result.error then
@@ -138,10 +310,8 @@ function electronBridge.launch(resolve, onMessage)
     
     logger.info("Electron process started")
     
-    -- Since Electron is a GUI app, we can't easily read its output via io.popen
-    -- Instead, we'll use a file-based or socket-based protocol for communication
-    -- For now, just report success
-    
+    -- Give Electron a moment to start, then report success
+    -- We don't wait for it to finish since it's a GUI app
     return true
 end
 
@@ -183,6 +353,17 @@ end
 -- @return string path
 function electronBridge.getProjectRoot()
     return getProjectRoot()
+end
+
+--- Get installation status
+-- @return table with available, depsInstalled, isRunning
+function electronBridge.getStatus()
+    return {
+        available = electronBridge.isAvailable(),
+        depsInstalled = areDepsInstalled(),
+        isRunning = isRunning,
+        isInstalling = isInstalling
+    }
 end
 
 return electronBridge
