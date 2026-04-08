@@ -23,6 +23,9 @@ local isCancelled = false
 local startTime = nil
 local currentStep = 0
 local onCancelCallback = nil
+local isVisible = false
+local isRunLoopActive = false
+local supportsStepLoop = nil
 
 -- Reset dialog state to prevent pollution between installations
 local function resetDialogState()
@@ -33,6 +36,9 @@ local function resetDialogState()
     startTime = nil
     currentStep = 0
     onCancelCallback = nil
+    isVisible = false
+    isRunLoopActive = false
+    supportsStepLoop = nil
 end
 
 -- Widget IDs for event handling
@@ -191,16 +197,20 @@ function installDialog.create(uiManager)
     
     winRef = win
     
-    -- Set up event handler for cancel button using window.On table
-    -- Fusion uses win.On.ElementID.EventName pattern
-    win.On = win.On or {}
-    win.On[WIDGET_IDS.cancelButton] = win.On[WIDGET_IDS.cancelButton] or {}
-    win.On[WIDGET_IDS.cancelButton].Clicked = function(ev)
+    function win.On.CancelButton.Clicked(ev)
         isCancelled = true
         if onCancelCallback then
             onCancelCallback()
         end
         print("RoughCut: Installation cancelled by user")
+    end
+
+    function win.On.RoughCutInstallDialog.Close(ev)
+        isCancelled = true
+        if onCancelCallback then
+            onCancelCallback()
+        end
+        print("RoughCut: Installation dialog close requested")
     end
     
     print("RoughCut: Install dialog created successfully")
@@ -223,13 +233,41 @@ function installDialog.show()
         print("RoughCut: Error - Failed to show install dialog")
         return false
     end
-    
-    -- NOTE: We do NOT call disp:RunLoop() here because this is a non-blocking dialog.
-    -- The installation runs in the background while the dialog is shown.
-    -- The calling code is responsible for periodically calling updateProgress()
-    -- and checking isCancelled() during the installation process.
+
+    isVisible = true
+    installDialog.pumpEvents(false)
     
     return true
+end
+
+-- Process one queued UI event for the dialog without entering a blocking run loop.
+-- StepLoop keeps the custom progress window responsive during synchronous install work.
+-- @param waitForEvent Optional boolean indicating whether StepLoop should block
+-- @return boolean indicating whether StepLoop succeeded
+function installDialog.pumpEvents(waitForEvent)
+    if not winRef or not dispRef or not isVisible then
+        return false
+    end
+
+    if supportsStepLoop == false then
+        return false
+    end
+
+    local ok, err = pcall(function()
+        dispRef:StepLoop(waitForEvent == true)
+    end)
+
+    if ok then
+        supportsStepLoop = true
+        return true
+    end
+
+    if supportsStepLoop == nil then
+        print("RoughCut: Warning - StepLoop unavailable for install dialog: " .. tostring(err))
+    end
+
+    supportsStepLoop = false
+    return false
 end
 
 -- Hide the installation dialog
@@ -248,6 +286,8 @@ function installDialog.hide()
         print("RoughCut: Error - Failed to hide install dialog")
         return false
     end
+
+    isVisible = false
     
     return true
 end
@@ -271,8 +311,8 @@ function installDialog.close()
         print("RoughCut: Warning - Failed to hide install dialog: " .. tostring(hideErr))
     end
     
-    -- Exit the dispatcher loop if it was running (for modal usage)
-    if dispRef then
+    -- Exit the dispatcher loop only if we explicitly entered it.
+    if dispRef and isRunLoopActive then
         print("RoughCut: Exiting dispatcher loop...")
         local ok, err = pcall(function()
             dispRef:ExitLoop()
@@ -444,6 +484,8 @@ function installDialog.updateProgress(stepNum, totalStepCount, stepName, percent
         end
     end
     
+    installDialog.pumpEvents(false)
+
     return true
 end
 
@@ -471,7 +513,10 @@ function installDialog.getState()
         isCancelled = isCancelled,
         elapsedSeconds = startTime and (os.time() - startTime) or 0,
         currentStep = currentStep,
-        totalSteps = totalSteps
+        totalSteps = totalSteps,
+        isVisible = isVisible,
+        runLoopActive = isRunLoopActive,
+        stepLoopSupported = supportsStepLoop
     }
 end
 
@@ -499,6 +544,8 @@ function installDialog.setCancelEnabled(enabled)
             print("RoughCut: Warning - Could not update cancel button state")
         end
     end
+
+    installDialog.pumpEvents(false)
 end
 
 -- Update dialog text to show completion
@@ -581,6 +628,8 @@ function installDialog.showCompletion()
             print("RoughCut: Warning - Could not update button text")
         end
     end
+
+    installDialog.pumpEvents(false)
 end
 
 -- Update dialog to show error state
@@ -643,6 +692,8 @@ function installDialog.showError(errorMessage)
             print("RoughCut: Warning - Could not update cancel button text")
         end
     end
+
+    installDialog.pumpEvents(false)
 end
 
 return installDialog

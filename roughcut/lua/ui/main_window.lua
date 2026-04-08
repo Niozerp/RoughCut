@@ -139,6 +139,26 @@ function mainWindow.create(uiManager)
                     Weight = 0.0,
                     MinimumSize = {0, 20}
                 },
+
+                uiManager:HGroup{
+                    ID = "CloseButtonRow",
+                    Weight = 0.0,
+                    Alignment = {AlignHCenter = true},
+
+                    uiManager:Button{
+                        ID = "CloseButton",
+                        Text = "Close",
+                        Weight = 0.0,
+                        MinimumSize = {120, 30}
+                    }
+                },
+
+                uiManager:Label{
+                    ID = "Spacer3",
+                    Text = "",
+                    Weight = 0.0,
+                    MinimumSize = {0, 10}
+                },
                 
                 -- Footer with version
                 uiManager:Label{
@@ -159,10 +179,19 @@ function mainWindow.create(uiManager)
     
     windowRef = win
     
-    -- Resolve/Fusion uses CloseRequested for dispatcher-managed windows.
-    win.CloseRequested = function()
+    local function handleWindowClose()
         print("RoughCut: Main window close requested...")
-        closeMainWindow(windowRef, false)
+        closeMainWindow(win, false)
+    end
+
+    -- Use Fusion's documented dispatcher event model. Mixing direct widget
+    -- callbacks with win.On handlers causes dispatcher startup failures.
+    function win.On.RoughCutMainWindow.Close(ev)
+        handleWindowClose()
+    end
+
+    function win.On.CloseButton.Clicked(ev)
+        handleWindowClose()
     end
     
     print("RoughCut: Main window created successfully")

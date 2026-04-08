@@ -20,6 +20,8 @@ local function resetState()
     isInstalling = false
     projectPath = nil
     requestIdCounter = 0
+    installOrchestrator._poetryCmd = nil
+    installOrchestrator._sourceDir = nil
 end
 
 -- Initialize random seed once
@@ -319,51 +321,135 @@ end
 -- Start the installation process
 -- @param uiManager Resolve UI Manager
 -- @param projectDir Absolute path to project directory
--- @param onComplete Callback function(status) called when installation completes
--- @param onError Callback function(error) called on error
--- @return boolean indicating if installation was started
-function installOrchestrator.startInstallation(uiManager, projectDir, onComplete, onError)
+-- @return table installation result with success/error/backend_state fields
+function installOrchestrator.getBackendState(projectDir)
+    local previousProjectPath = projectPath
+
+    if projectDir then
+        projectPath = projectDir
+    end
+
+    local state = {
+        global_installed = isRoughcutInstalledGlobally(),
+        source_dir = findPyprojectToml(),
+    }
+
+    state.installed = state.global_installed
+    state.needs_install = not state.installed
+
+    projectPath = previousProjectPath
+    return state
+end
+
+-- Start the installation process synchronously and return the final result.
+-- Resolve/Fusion utility scripts do not handle nested callback-driven UI loops
+-- reliably, so callers should wait for the returned status before launching
+-- follow-on windows.
+-- @param uiManager Resolve UI Manager
+-- @param projectDir Absolute path to project directory
+-- @return table installation result with success/error/backend_state fields
+function installOrchestrator.startInstallation(uiManager, projectDir)
     -- Reset state at the start of each installation
     resetState()
     
     if isInstalling then
         print("RoughCut: Installation already in progress")
-        return false
+        return {
+            success = false,
+            error = "Installation already in progress",
+            backend_state = installOrchestrator.getBackendState(projectDir),
+        }
     end
     
     projectPath = projectDir
+    local function buildResult(success, error, extra)
+        local result = {
+            success = success,
+            error = error,
+            backend_state = installOrchestrator.getBackendState(projectPath),
+        }
+
+        if extra then
+            for key, value in pairs(extra) do
+                result[key] = value
+            end
+        end
+
+        return result
+    end
+
+    local backendState = installOrchestrator.getBackendState(projectDir)
+    if backendState.global_installed then
+        return buildResult(true, nil, { skipped_install = true })
+    end
+
     isInstalling = true
+    local finalResult = nil
+    local cancelRequested = false
+
+    local function finalize(success, error, extra)
+        if finalResult then
+            return finalResult
+        end
+
+        finalResult = buildResult(success, error, extra)
+
+        if installProcessHandle and installProcessHandle.handle then
+            pcall(function()
+                processUtils.close(installProcessHandle.handle)
+            end)
+        end
+
+        installProcessHandle = nil
+        isInstalling = false
+        installDialog.close()
+        resetState()
+
+        return finalResult
+    end
+
+    local function fail(errorText, userMessage, extra)
+        installDialog.showError(userMessage or errorText)
+        installDialog.pumpEvents(false)
+        return finalize(false, errorText, extra)
+    end
     
     -- Create and show install dialog
     local dialog = installDialog.create(uiManager)
     if not dialog then
-        isInstalling = false
-        if onError then
-            onError("Failed to create installation dialog")
-        end
-        return false
+        resetState()
+        return buildResult(false, "Failed to create installation dialog")
     end
     
-    installDialog.show()
+    if not installDialog.show() then
+        installDialog.close()
+        resetState()
+        return buildResult(false, "Failed to show installation dialog")
+    end
     
     -- Set up cancel callback
     installDialog.setCancelCallback(function()
         print("RoughCut: Cancelling installation...")
+        cancelRequested = true
         if installProcessHandle and installProcessHandle.handle then
             processUtils.kill(installProcessHandle.handle)
             installProcessHandle = nil
         end
-        isInstalling = false
-        installDialog.close()
     end)
-    
-    -- Start installation in background
-    local installId = generateRequestId()
+
+    local function isCancelled()
+        return cancelRequested or installDialog.isCancelled()
+    end
     
     -- For Resolve Lua, we'll need to use a cooperative approach
     -- since we can't easily run async operations
     local function doInstallStep(step)
-        if not isInstalling or installDialog.isCancelled() then
+        if finalResult then
+            return
+        end
+
+        if not isInstalling or isCancelled() then
+            finalize(false, "Installation cancelled", { cancelled = true })
             return
         end
         
@@ -377,11 +463,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             end
             
             if not result.success then
-                isInstalling = false
-                installDialog.showError("Python not found. Please install Python 3.10 or later.")
-                if onError then
-                    onError("Python not found")
-                end
+                fail("Python not found", "Python not found. Please install Python 3.10 or later.")
                 return
             end
             
@@ -458,25 +540,16 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             end
             
             if not poetryCmd then
-                -- Need to install Poetry - requires user consent
-                isInstalling = false
                 local triedList = table.concat(poetryTried, ", ")
                 print("RoughCut: ERROR - Poetry not found. Tried: " .. triedList)
                 -- Escape paths in error message to prevent injection
                 local safeTriedList = triedList:gsub("[&<>\"']", function(c) 
                     return "&#" .. string.byte(c) .. ";" 
                 end)
-                installDialog.showError("Poetry not found in PATH. Install with: pip install poetry\n\nTried: " .. safeTriedList)
-                installDialog.setCancelEnabled(true)
-                
-                -- Update cancel button to close dialog
-                installDialog.setCancelCallback(function()
-                    installDialog.close()
-                end)
-                
-                if onError then
-                    onError("Poetry not installed - tried: " .. triedList)
-                end
+                fail(
+                    "Poetry not installed - tried: " .. triedList,
+                    "Poetry not found in PATH. Install with: pip install poetry\n\nTried: " .. safeTriedList
+                )
                 return
             end
             
@@ -506,7 +579,6 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             -- Find pyproject.toml in source directory
             local sourceDir = findPyprojectToml()
             if not sourceDir then
-                isInstalling = false
                 print("RoughCut: ERROR - pyproject.toml not found in any location")
                 local sourcePath = os.getenv("ROUGHCUT_SOURCE_PATH") or "<source_directory>"
                 local errorMsg = "Python backend not found.\n\n" ..
@@ -517,10 +589,7 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
                                  "To fix:\n" ..
                                  "1. Install from the source directory: cd " .. sourcePath .. " && poetry install\n" ..
                                  "2. OR set ROUGHCUT_SOURCE_PATH to the source directory containing pyproject.toml"
-                installDialog.showError(errorMsg)
-                if onError then
-                    onError("pyproject.toml not found in any location")
-                end
+                fail("pyproject.toml not found in any location", errorMsg)
                 return
             end
             
@@ -546,20 +615,18 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             print("RoughCut: Spawn result - error: " .. tostring(installProcessHandle.error or "none"))
             
             if not installProcessHandle.handle then
-                isInstalling = false
                 local errorMsg = "Could not start poetry process: " .. tostring(installProcessHandle.error or "Unknown error")
                 print("RoughCut: ERROR - " .. errorMsg)
-                installDialog.showError(errorMsg .. "\n\nPoetry command tried: " .. poetryCmd)
-                if onError then
-                    onError(errorMsg)
-                end
+                fail(errorMsg, errorMsg .. "\n\nPoetry command tried: " .. poetryCmd)
                 return
             end
             
-            if not isInstalling or installDialog.isCancelled() then
+            if not isInstalling or isCancelled() then
                 if installProcessHandle and installProcessHandle.handle then
                     processUtils.close(installProcessHandle.handle)
                 end
+                installProcessHandle = nil
+                finalize(false, "Installation cancelled", { cancelled = true })
                 return
             end
             
@@ -602,6 +669,15 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             local lineCount = 0
             print("RoughCut: Reading poetry install output...")
             while true do
+                if isCancelled() then
+                    if installProcessHandle and installProcessHandle.handle then
+                        processUtils.kill(installProcessHandle.handle)
+                    end
+                    installProcessHandle = nil
+                    finalize(false, "Installation cancelled", { cancelled = true })
+                    return
+                end
+
                 local line = processUtils.readLine(installProcessHandle.handle)
                 if not line then
                     print("RoughCut: End of output reached (line count: " .. lineCount .. ")")
@@ -613,6 +689,13 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
                     print("RoughCut: Output line " .. lineCount .. ": " .. line:sub(1, 100))
                 elseif lineCount == 11 then
                     print("RoughCut: ... (more output lines)")
+                end
+
+                if lineCount % 5 == 0 then
+                    local percent = math.min(50 + (lineCount / 20) * 45, 95)
+                    installDialog.updateProgress(3, 6, line:sub(1, 40), percent)
+                else
+                    installDialog.pumpEvents(false)
                 end
             end
             
@@ -641,7 +724,6 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
                 print("RoughCut: ERROR - " .. errorMsg)
                 print("RoughCut: Full output:\n" .. outputText)
                 
-                isInstalling = false
                 local userErrorMsg = "Installation failed (exit code " .. tostring(closeResult.exitCode or "unknown") .. ").\n\n"
                 if closeResult.exitCode == -1 then
                     userErrorMsg = userErrorMsg .. "Exit code -1 means the process couldn't start.\n" ..
@@ -653,11 +735,11 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
                     userErrorMsg = userErrorMsg .. "Check the console logs for full output."
                 end
                 
-                installDialog.showError(userErrorMsg)
-                if onError then onError(errorMsg) end
+                fail(errorMsg, userErrorMsg)
                 return
             end
             
+            installProcessHandle = nil
             print("RoughCut: poetry install completed successfully")
             doInstallStep(4)
             
@@ -711,12 +793,8 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             end
             
             if not verified then
-                isInstalling = false
                 print("RoughCut: ERROR - Installation verification failed")
-                installDialog.showError("Installation verification failed. Please try again.")
-                if onError then
-                    onError("Verification failed")
-                end
+                fail("Verification failed", "Installation verification failed. Please try again.")
                 return
             end
             
@@ -731,30 +809,17 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
             local sourceDir = installOrchestrator._sourceDir or findPyprojectToml() or projectPath
             local deploySuccess, deployError = deployLuaPlugin(sourceDir)
             if not deploySuccess then
-                isInstalling = false
-                installDialog.showError("Failed to deploy plugin: " .. tostring(deployError))
-                if onError then
-                    onError(deployError)
-                end
+                fail("Failed to deploy plugin: " .. tostring(deployError), "Failed to deploy plugin: " .. tostring(deployError))
                 return
             end
             
             doInstallStep(6)
             
         elseif step == 6 then
-            -- Complete - show completion briefly, then hand off to the main UI
+            -- Complete and return a success result to the caller.
             print("RoughCut: Step 6 reached - completing installation")
             installDialog.showCompletion()
-            isInstalling = false
-
-            -- Hand off to the main UI immediately so the user lands in RoughCut
-            -- instead of being left at a completion dialog that requires another click.
-            installDialog.close()
-
-            if onComplete then
-                onComplete({ success = true })
-            end
-
+            finalize(true, nil)
             return
         end
     end
@@ -762,7 +827,11 @@ function installOrchestrator.startInstallation(uiManager, projectDir, onComplete
     -- Start installation
     doInstallStep(1)
     
-    return true
+    if not finalResult then
+        finalResult = finalize(false, "Installation did not complete")
+    end
+
+    return finalResult
 end
 
 -- Check if installation is in progress

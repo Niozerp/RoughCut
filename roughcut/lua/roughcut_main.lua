@@ -7,7 +7,6 @@ print("[RoughCut] roughcut_main.lua loaded - version 0.3.1")
 
 -- Import UI modules - paths are already set up by the launcher
 local mainWindow = require("ui.main_window")
-local installDialog = require("ui.install_dialog")
 local installOrchestrator = require("install_orchestrator")
 local config = require("utils.config")
 local logger = require("utils.logger")
@@ -46,22 +45,22 @@ end
 
 local projectPath = getProjectPath()
 
--- Check if installation is needed
-local function checkInstallationNeeded()
-    -- First check config
-    if config.isBackendInstalled() then
-        logger.info("Backend already installed according to config")
-        return false
-    end
-    
-    -- Check if installation was cancelled previously
+-- Determine whether RoughCut's Python backend is already available.
+-- Config state is advisory; the orchestrator's backend probe is the source of
+-- truth because the package may already be installed globally.
+local function getBackendState()
     local cfg = config.read()
-    if cfg.installation_cancelled then
-        logger.info("Installation was previously cancelled, will retry")
-        return true
-    end
-    
-    return true
+    local orchestratorState = installOrchestrator.getBackendState(projectPath)
+    local configInstalled = config.isBackendInstalled()
+
+    return {
+        config_installed = configInstalled,
+        global_installed = orchestratorState.global_installed,
+        installation_cancelled = cfg.installation_cancelled == true,
+        source_dir = orchestratorState.source_dir,
+        installed = configInstalled or orchestratorState.global_installed,
+        needs_install = not (configInstalled or orchestratorState.global_installed),
+    }
 end
 
 -- Launch main window (separate from install flow)
@@ -128,67 +127,73 @@ local function launchRoughCut(resolve)
     
     -- Step 3: Check installation
     logger.info("Project path: " .. projectPath)
-    
-    if checkInstallationNeeded() then
-        -- Guard against concurrent installation attempts
-        if installationInProgress then
-            logger.warning("Installation already in progress, not starting another")
-            return false
-        end
-        
-        installationInProgress = true
-        logger.info("Installation required, starting setup...")
-        
-        -- Start installation
-        local installStarted = installOrchestrator.startInstallation(
-            uiManager,
-            projectPath,
-            function(status)
-                -- On complete
-                installationInProgress = false
-                if status.success then
-                    logger.info("Installation completed successfully")
-                    config.markInstalled()
-                    -- Continue to main window
-                    local launched = launchMainWindow(uiManager)
-                    if not launched then
-                        logger.error("Main window failed to launch after installation")
-                        pcall(function()
-                            uiManager:ShowMessageBox(
-                                "RoughCut installed successfully, but the main UI could not be opened.\n\nPlease check the Resolve console for details.",
-                                "RoughCut Launch Error",
-                                "OK"
-                            )
-                        end)
-                    end
-                end
-            end,
-            function(error)
-                -- On error
-                installationInProgress = false
-                logger.error("Installation failed: " .. tostring(error))
-                -- Show error dialog
-                pcall(function()
-                    uiManager:ShowMessageBox(
-                        "Installation Error\n\n" .. tostring(error) .. "\n\nPlease check the logs at:\n" .. logger.getLogPath(),
-                        "RoughCut Installation",
-                        "OK"
-                    )
-                end)
-            end
-        )
-        
-        if not installStarted then
-            logger.error("Failed to start installation")
-            return false
-        end
-        
-        -- Don't launch main window yet - wait for installation
-        return true
-    else
+
+    local backendState = getBackendState()
+    logger.info(
+        "Backend state - config: " .. tostring(backendState.config_installed) ..
+        ", global: " .. tostring(backendState.global_installed) ..
+        ", needs_install: " .. tostring(backendState.needs_install)
+    )
+
+    if backendState.global_installed and not backendState.config_installed then
+        logger.info("Global backend detected - marking local config as installed")
+        config.markInstalled()
+        backendState.config_installed = true
+        backendState.installed = true
+        backendState.needs_install = false
+    end
+
+    if not backendState.needs_install then
         -- No installation needed, launch main window directly
         return launchMainWindow(uiManager)
     end
+
+    -- Guard against concurrent installation attempts
+    if installationInProgress then
+        logger.warning("Installation already in progress, not starting another")
+        return false
+    end
+
+    installationInProgress = true
+    logger.info("Installation required, starting setup...")
+
+    local installResult = installOrchestrator.startInstallation(uiManager, projectPath)
+    installationInProgress = false
+
+    if not installResult.success then
+        if installResult.cancelled then
+            config.markCancelled()
+            logger.info("Installation cancelled by user")
+            return false
+        end
+
+        logger.error("Installation failed: " .. tostring(installResult.error))
+        pcall(function()
+            uiManager:ShowMessageBox(
+                "Installation Error\n\n" .. tostring(installResult.error) .. "\n\nPlease check the logs at:\n" .. logger.getLogPath(),
+                "RoughCut Installation",
+                "OK"
+            )
+        end)
+        return false
+    end
+
+    logger.info("Installation completed successfully")
+    config.markInstalled()
+
+    local launched = launchMainWindow(uiManager)
+    if not launched then
+        logger.error("Main window failed to launch after installation")
+        pcall(function()
+            uiManager:ShowMessageBox(
+                "RoughCut installed successfully, but the main UI could not be opened.\n\nPlease check the Resolve console for details.",
+                "RoughCut Launch Error",
+                "OK"
+            )
+        end)
+    end
+
+    return launched
 end
 
 -- Export the launch function for the launcher to call

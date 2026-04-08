@@ -18,6 +18,7 @@ class TestStory1_2UIComponents(unittest.TestCase):
         cls.main_window_lua = cls.lua_ui_dir / "main_window.lua"
         cls.navigation_lua = cls.lua_ui_dir / "navigation.lua"
         cls.install_dialog_lua = cls.lua_ui_dir / "install_dialog.lua"
+        cls.install_orchestrator_lua = cls.project_root / "lua" / "install_orchestrator.lua"
 
     def test_launcher_exists(self) -> None:
         self.assertTrue(self.launcher_lua.exists(), f"Launcher missing: {self.launcher_lua}")
@@ -45,6 +46,20 @@ class TestStory1_2UIComponents(unittest.TestCase):
         self.assertIn('require("ui.main_window")', content)
         self.assertIn('require("install_orchestrator")', content)
         self.assertIn("launchMainWindow", content)
+
+    def test_main_module_uses_backend_state_detection(self) -> None:
+        content = self.main_module_lua.read_text(encoding="utf-8")
+        self.assertIn("local function getBackendState()", content)
+        self.assertIn("installOrchestrator.getBackendState(projectPath)", content)
+        self.assertIn("backendState.global_installed", content)
+        self.assertIn("config.markInstalled()", content)
+        self.assertIn(
+            "local installResult = installOrchestrator.startInstallation(uiManager, projectPath)",
+            content,
+        )
+        self.assertIn("if installResult.cancelled then", content)
+        self.assertNotIn("function(status)", content)
+        self.assertNotIn("function(error)", content)
 
     def test_main_window_has_required_functions(self) -> None:
         content = self.main_window_lua.read_text(encoding="utf-8")
@@ -87,8 +102,29 @@ class TestStory1_2UIComponents(unittest.TestCase):
 
     def test_main_window_uses_dispatcher_lifecycle(self) -> None:
         content = self.main_window_lua.read_text(encoding="utf-8")
-        self.assertIn("CloseRequested", content)
+        self.assertIn("function win.On.RoughCutMainWindow.Close", content)
+        self.assertIn("function win.On.CloseButton.Clicked", content)
         self.assertIn("RunLoop", content)
+        self.assertNotIn("win.CloseRequested =", content)
+
+    def test_install_dialog_tracks_loop_state(self) -> None:
+        content = self.install_dialog_lua.read_text(encoding="utf-8")
+        self.assertIn("local isRunLoopActive = false", content)
+        self.assertIn("local supportsStepLoop = nil", content)
+        self.assertIn("function installDialog.pumpEvents(waitForEvent)", content)
+        self.assertIn("dispRef:StepLoop(waitForEvent == true)", content)
+        self.assertIn("if dispRef and isRunLoopActive then", content)
+        self.assertIn("function win.On.RoughCutInstallDialog.Close", content)
+
+    def test_install_orchestrator_returns_synchronous_result(self) -> None:
+        content = self.install_orchestrator_lua.read_text(encoding="utf-8")
+        self.assertIn("function installOrchestrator.getBackendState(projectDir)", content)
+        self.assertIn("function installOrchestrator.startInstallation(uiManager, projectDir)", content)
+        self.assertIn("local finalResult = nil", content)
+        self.assertIn("local function finalize(success, error, extra)", content)
+        self.assertIn("return buildResult(true, nil, { skipped_install = true })", content)
+        self.assertIn('finalize(false, "Installation cancelled", { cancelled = true })', content)
+        self.assertIn("return finalResult", content)
 
 
 if __name__ == "__main__":
