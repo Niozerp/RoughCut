@@ -23,6 +23,15 @@ baseline_commit: HEAD
 - **Process Management:** Uses existing `process.lua` utilities to spawn Electron as subprocess
 - **Launch Flow:** Resolve → RoughCut.lua → roughcut_main.lua → Electron app
 
+✅ **Installation Scripts Updated:**
+
+- **install.bat:** 5-step installation with Electron UI dependencies (step 5)
+- **install.sh:** 5-step installation with Electron UI dependencies (step 5)
+- **install_orchestrator.lua:** 7-step installation with Electron deps (step 5)
+- **Auto-install:** npm dependencies installed automatically when available
+- **Node Detection:** Checks common Windows/macOS/Linux paths for npm
+- **Graceful Fallback:** Continues with native UI if Node.js not available
+
 **Additional Features:**
 - Command palette (⌘K) with asset search and action shortcuts
 - ScrollArea components for smooth scrolling
