@@ -1,11 +1,15 @@
 -- RoughCut Main Module
 -- Compatible with DaVinci Resolve's Lua scripting environment
--- Version: 0.3.1 - DEBUG BUILD
+-- Version: 0.4.0 - ELECTRON BRANCH
 -- This module is loaded by RoughCut.lua launcher
 
-print("[RoughCut] roughcut_main.lua loaded - version 0.3.1")
+print("[RoughCut] roughcut_main.lua loaded - version 0.4.0 (Electron Support)")
+
+-- UI mode selection: "native" for Resolve UIManager, "electron" for Electron app
+local UI_MODE = "electron"  -- Default to Electron for the new UI
 
 local mainWindow = require("ui.main_window")
+local electronMainWindow = require("ui.electron_main_window")
 local navigation = require("ui.navigation")
 local uiRuntime = require("ui.runtime")
 local installOrchestrator = require("install_orchestrator")
@@ -59,6 +63,19 @@ local function getBackendState()
     }
 end
 
+--- Detect which UI mode to use
+-- @return string "electron" or "native"
+local function detectUIMode()
+    -- Check if Electron is available
+    if electronMainWindow.isAvailable() then
+        logger.info("Electron UI is available")
+        return "electron"
+    else
+        logger.info("Electron not available, falling back to native Resolve UI")
+        return "native"
+    end
+end
+
 local function launchMainWindow(uiManager)
     navigation.reset()
     logStartupPhase("creating shared navigation runtime")
@@ -73,7 +90,26 @@ local function launchMainWindow(uiManager)
     logStartupPhase("shared navigation runtime created")
     logStartupPhase("preparing home screen")
 
-    local window = mainWindow.create(runtimeContext)
+    -- Detect UI mode
+    local mode = detectUIMode()
+    logger.info("Using UI mode: " .. mode)
+
+    local window = nil
+    
+    if mode == "electron" then
+        -- Launch Electron UI
+        window = electronMainWindow.create(runtimeContext)
+        if not window then
+            print("RoughCut: Error - Failed to create Electron window, falling back to native")
+            logger.error("Failed to create Electron window, falling back to native UI")
+            -- Fallback to native
+            window = mainWindow.create(runtimeContext)
+        end
+    else
+        -- Launch native Resolve UI
+        window = mainWindow.create(runtimeContext)
+    end
+    
     if not window then
         print("RoughCut: Error - Failed to create main window")
         logger.error("Failed to create main window")
@@ -82,21 +118,22 @@ local function launchMainWindow(uiManager)
 
     logStartupPhase("home window created")
 
-    local navBound = navigation.bind(window, runtimeContext)
-    if not navBound then
-        print("RoughCut: Error - Failed to bind navigation")
-        logger.error("Failed to bind navigation to main window")
-        mainWindow.close(window)
-        return false
+    -- Bind navigation (only for native mode, Electron handles its own navigation)
+    if mode ~= "electron" then
+        local navBound = navigation.bind(window, runtimeContext)
+        if not navBound then
+            print("RoughCut: Error - Failed to bind navigation")
+            logger.error("Failed to bind navigation to main window")
+            mainWindow.close(window)
+            return false
+        end
+        logStartupPhase("home screen bound")
     end
 
     mainWindow.setOnClose(function()
         navigation.destroy()
     end)
 
-    logStartupPhase("home screen bound")
-
-    config.updateLastRun()
     logStartupPhase("entering main window RunLoop")
     logger.info("Main window entering UI loop")
 
@@ -158,7 +195,7 @@ local function launchRoughCut(resolve)
     end
 
     if not backendState.needs_install then
-        logStartupPhase("backend ready, skipping install UI")
+        logStartupPhase("backend ready, launching main window")
         return launchMainWindow(uiManager)
     end
 
@@ -193,7 +230,7 @@ local function launchRoughCut(resolve)
         return false
     end
 
-    logStartupPhase("install flow completed, launching home screen")
+    logStartupPhase("install flow completed, launching main window")
     logger.info("Installation completed successfully")
     config.markInstalled()
 

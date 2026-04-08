@@ -16,11 +16,19 @@ baseline_commit: HEAD
 - **AC5:** Format Templates panel with three templates and Generate button
 - **AC6:** Resolve connection status with green/amber/red indicators in header
 
+✅ **DaVinci Resolve Integration:**
+
+- **Lua Bridge:** Created `electron_bridge.lua` to launch Electron from Resolve Scripts
+- **UI Detection:** `roughcut_main.lua` auto-detects Electron availability with fallback to native UI
+- **Process Management:** Uses existing `process.lua` utilities to spawn Electron as subprocess
+- **Launch Flow:** Resolve → RoughCut.lua → roughcut_main.lua → Electron app
+
 **Additional Features:**
 - Command palette (⌘K) with asset search and action shortcuts
 - ScrollArea components for smooth scrolling
 - Tooltip components for filter buttons
 - IPC bridge set up for Python/Resolve backend integration
+- Integration documentation (`INTEGRATION.md`)
 
 # Spec: RoughCut Electron UI Implementation
 
@@ -196,6 +204,20 @@ roughcut-electron/
 - Settings and configuration UI
 
 ## Suggested Review Order
+
+**DaVinci Resolve Integration**
+
+- Electron bridge module launches Electron from Lua
+  [`electron_bridge.lua:1`](../../roughcut/lua/ui/electron_bridge.lua#L1)
+
+- Electron main window abstraction for Resolve integration
+  [`electron_main_window.lua:1`](../../roughcut/lua/ui/electron_main_window.lua#L1)
+
+- Main entry point with auto UI mode detection
+  [`roughcut_main.lua:6`](../../roughcut/lua/roughcut_main.lua#L6)
+
+- Integration documentation
+  [`INTEGRATION.md:1`](../../roughcut-electron/INTEGRATION.md#L1)
 
 **Command Palette Integration**
 
