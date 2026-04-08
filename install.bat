@@ -518,6 +518,37 @@ if exist "%RESOLVE_SCRIPTS%\roughcut\lua\roughcut_main.lua" (
 )
 echo.
 
+:: Copy the roughcut-electron folder (if it exists)
+echo [INFO] Copying RoughCut Electron UI folder...
+echo [DEBUG] Source: %~dp0roughcut-electron\
+echo [DEBUG] Target: %RESOLVE_SCRIPTS%\roughcut-electron\
+
+if exist "%~dp0roughcut-electron\package.json" (
+    if exist "%RESOLVE_SCRIPTS%\roughcut-electron\" (
+        echo [INFO] Existing roughcut-electron folder found, updating...
+        rmdir /S /Q "%RESOLVE_SCRIPTS%\roughcut-electron\" >nul 2>&1
+    )
+    
+    xcopy /E /I /Y "%~dp0roughcut-electron\" "%RESOLVE_SCRIPTS%\roughcut-electron\" >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [WARNING] xcopy returned error code: %errorlevel%
+        echo [WARNING] This might be normal. Checking if files exist...
+    )
+    
+    :: Verify the copy worked
+    if exist "%RESOLVE_SCRIPTS%\roughcut-electron\package.json" (
+        echo [OK] Electron UI folder copied successfully
+    ) else (
+        echo [WARNING] Failed to copy Electron UI folder
+        echo [INFO] The Electron UI will not be available
+        echo [INFO] You can still use the native Resolve UI
+    )
+) else (
+    echo [INFO] roughcut-electron folder not found in source
+    echo [INFO] Skipping Electron UI installation
+)
+echo.
+
 :: Check Python
 echo [3/5] Checking Python installation...
 
@@ -735,6 +766,11 @@ echo ============================================
 echo.
 echo [✓] RoughCut.lua installed to: %RESOLVE_SCRIPTS%
 echo [✓] Backend folder installed: %RESOLVE_SCRIPTS%\roughcut\
+if exist "%RESOLVE_SCRIPTS%\roughcut-electron\package.json" (
+    echo [✓] Electron UI installed: %RESOLVE_SCRIPTS%\roughcut-electron\
+) else (
+    echo [i] Electron UI not installed (requires Node.js)
+)
 echo [✓] Files verified at destination
 echo [✓] Python backend ready (or will auto-install)
 echo.

@@ -427,12 +427,37 @@ else
     exit 1
 fi
 
+# Copy roughcut-electron folder if it exists
+ELECTRON_SOURCE="$INSTALL_ROOT/roughcut-electron"
+ELECTRON_TARGET="$RESOLVE_SCRIPTS/roughcut-electron"
+
+if [[ -f "$ELECTRON_SOURCE/package.json" ]]; then
+    print_info "Copying roughcut-electron folder..."
+    
+    if [[ -d "$ELECTRON_TARGET" ]]; then
+        print_info "Existing roughcut-electron folder found, updating..."
+        rm -rf "$ELECTRON_TARGET"
+    fi
+    
+    if cp -R "$ELECTRON_SOURCE" "$RESOLVE_SCRIPTS/"; then
+        print_ok "roughcut-electron/ copied to Scripts/Utility/"
+    else
+        print_warn "Failed to copy roughcut-electron folder"
+        print_info "The Electron UI will not be available"
+        print_info "You can still use the native Resolve UI"
+    fi
+else
+    print_info "roughcut-electron folder not found, skipping"
+fi
+
 print_info "Verifying installed files..."
 
 REQUIRED_INSTALL_PATHS=(
     "$TARGET_LAUNCHER"
     "$TARGET_MODULE_ROOT/lua/roughcut_main.lua"
     "$TARGET_MODULE_ROOT/lua/ui/main_window.lua"
+    "$TARGET_MODULE_ROOT/lua/ui/electron_bridge.lua"
+    "$TARGET_MODULE_ROOT/lua/ui/electron_main_window.lua"
     "$TARGET_MODULE_ROOT/scripts/install.py"
     "$TARGET_MODULE_ROOT/pyproject.toml"
 )
@@ -616,6 +641,12 @@ echo "============================================"
 echo ""
 print_ok "$SCRIPT_NAME installed to Resolve Scripts"
 print_ok "roughcut/ module tree installed alongside the launcher"
+
+if [[ -f "$RESOLVE_SCRIPTS/roughcut-electron/package.json" ]]; then
+    print_ok "Electron UI installed"
+elif [[ -z "$SKIP_ELECTRON" ]]; then
+    print_info "Electron UI not installed (requires Node.js)"
+fi
 
 if [[ -z "$SKIP_PYTHON" ]]; then
     print_ok "Python backend ready"
