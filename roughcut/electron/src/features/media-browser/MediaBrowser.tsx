@@ -1,17 +1,39 @@
 import { useState } from 'react'
-import { Search, Music, Zap, Clapperboard, Filter, Heart, Clock, Star } from 'lucide-react'
+import { Search, Music, Zap, Clapperboard, Filter, Heart, Clock, Star, FolderOpen, Plus, X, Loader2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 type FilterType = 'all' | 'used' | 'unused' | 'favorites'
+type Category = 'music' | 'sfx' | 'vfx'
+
+interface MediaFolder {
+  id: string
+  path: string
+  category: Category
+}
+
+interface Asset {
+  id: string
+  name: string
+  tags: string[]
+  duration: string
+  used: boolean
+  folderId: string
+}
 
 export function MediaBrowser() {
   const [activeFilter, setActiveFilter] = useState<FilterType>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [isManageModalOpen, setIsManageModalOpen] = useState(false)
+  const [folders, setFolders] = useState<MediaFolder[]>([])
+  const [assets, setAssets] = useState<Asset[]>([])
+  const [indexingStatus, setIndexingStatus] = useState<{ [key: string]: 'idle' | 'indexing' | 'complete' | 'error' }>({})
+  const [selectedManageTab, setSelectedManageTab] = useState<Category>('music')
 
   const filters = [
     { id: 'all' as FilterType, label: 'All', icon: Filter },
@@ -19,6 +41,82 @@ export function MediaBrowser() {
     { id: 'unused' as FilterType, label: 'Unused', icon: Star },
     { id: 'favorites' as FilterType, label: 'Favorites', icon: Heart },
   ]
+
+  const handleSelectFolder = async (category: Category) => {
+    try {
+      const result = await window.electronAPI.selectFolder()
+      
+      if (result.canceled || !result.filePath) {
+        return
+      }
+
+      // Check for duplicates
+      const isDuplicate = folders.some(
+        f => f.path === result.filePath && f.category === category
+      )
+      
+      if (isDuplicate) {
+        console.warn('[MediaBrowser] Folder already added:', result.filePath)
+        return
+      }
+
+      const newFolder: MediaFolder = {
+        id: `${category}-${Date.now()}`,
+        path: result.filePath,
+        category
+      }
+
+      setFolders(prev => [...prev, newFolder])
+      
+      // Trigger indexing (mock for now)
+      setIndexingStatus(prev => ({ ...prev, [newFolder.id]: 'indexing' }))
+      
+      // Simulate indexing delay
+      setTimeout(() => {
+        setIndexingStatus(prev => ({ ...prev, [newFolder.id]: 'complete' }))
+        
+        // Mock: Add some fake assets from this folder
+        const mockAssets: Asset[] = [
+          { id: `${newFolder.id}-1`, name: `Track from ${result.filePath.split('/').pop()}`, tags: ['Imported'], duration: '2:34', used: false, folderId: newFolder.id },
+        ]
+        setAssets(prev => [...prev, ...mockAssets])
+      }, 1500)
+      
+    } catch (error) {
+      console.error('[MediaBrowser] Failed to select folder:', error)
+    }
+  }
+
+  const handleRemoveFolder = (folderId: string) => {
+    setFolders(prev => prev.filter(f => f.id !== folderId))
+    setAssets(prev => prev.filter(a => a.folderId !== folderId))
+    setIndexingStatus(prev => {
+      const newStatus = { ...prev }
+      delete newStatus[folderId]
+      return newStatus
+    })
+  }
+
+  const getFoldersByCategory = (category: Category) => 
+    folders.filter(f => f.category === category)
+
+  const getAssetsByCategory = (category: Category) =>
+    assets.filter(a => {
+      const folder = folders.find(f => f.id === a.folderId)
+      return folder?.category === category
+    })
+
+  const categoryIcons = {
+    music: Music,
+    sfx: Zap,
+    vfx: Clapperboard
+  }
+
+  const categoryLabels = {
+    music: 'Music',
+    sfx: 'Sound Effects',
+    vfx: 'Visual Effects'
+  }
 
   return (
     <TooltipProvider>
@@ -63,13 +161,43 @@ export function MediaBrowser() {
           </TabsList>
 
           <TabsContent value="music" className="flex-1 m-0">
-            <AssetList category="Music" filter={activeFilter} />
+            <AssetList 
+              category="music" 
+              filter={activeFilter}
+              folders={getFoldersByCategory('music')}
+              assets={getAssetsByCategory('music')}
+              indexingStatus={indexingStatus}
+              onManageMedia={() => {
+                setSelectedManageTab('music')
+                setIsManageModalOpen(true)
+              }}
+            />
           </TabsContent>
           <TabsContent value="sfx" className="flex-1 m-0">
-            <AssetList category="SFX" filter={activeFilter} />
+            <AssetList 
+              category="sfx" 
+              filter={activeFilter}
+              folders={getFoldersByCategory('sfx')}
+              assets={getAssetsByCategory('sfx')}
+              indexingStatus={indexingStatus}
+              onManageMedia={() => {
+                setSelectedManageTab('sfx')
+                setIsManageModalOpen(true)
+              }}
+            />
           </TabsContent>
           <TabsContent value="vfx" className="flex-1 m-0">
-            <AssetList category="VFX" filter={activeFilter} />
+            <AssetList 
+              category="vfx" 
+              filter={activeFilter}
+              folders={getFoldersByCategory('vfx')}
+              assets={getAssetsByCategory('vfx')}
+              indexingStatus={indexingStatus}
+              onManageMedia={() => {
+                setSelectedManageTab('vfx')
+                setIsManageModalOpen(true)
+              }}
+            />
           </TabsContent>
         </Tabs>
 
@@ -97,35 +225,189 @@ export function MediaBrowser() {
           </div>
         </div>
       </div>
+
+      {/* Media Management Modal */}
+      <Dialog open={isManageModalOpen} onOpenChange={setIsManageModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Manage Media Folders</DialogTitle>
+            <DialogDescription>
+              Select folders to index for each media category
+            </DialogDescription>
+          </DialogHeader>
+
+          <Tabs value={selectedManageTab} onValueChange={(v) => setSelectedManageTab(v as Category)}>
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="music">
+                <Music className="h-4 w-4 mr-1" />
+                Music
+              </TabsTrigger>
+              <TabsTrigger value="sfx">
+                <Zap className="h-4 w-4 mr-1" />
+                SFX
+              </TabsTrigger>
+              <TabsTrigger value="vfx">
+                <Clapperboard className="h-4 w-4 mr-1" />
+                VFX
+              </TabsTrigger>
+            </TabsList>
+
+            {(['music', 'sfx', 'vfx'] as Category[]).map((cat) => (
+              <TabsContent key={cat} value={cat} className="mt-4">
+                <div className="space-y-3">
+                  {getFoldersByCategory(cat).length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <FolderOpen className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No {categoryLabels[cat].toLowerCase()} folders configured</p>
+                      <p className="text-sm mt-1">Add a folder to start indexing</p>
+                    </div>
+                  ) : (
+                    <ScrollArea className="h-[200px]">
+                      <div className="space-y-2">
+                        {getFoldersByCategory(cat).map((folder) => (
+                          <div 
+                            key={folder.id} 
+                            className="flex items-center justify-between p-2 rounded-md bg-muted"
+                          >
+                            <div className="flex-1 min-w-0 mr-2">
+                              <p className="text-sm truncate" title={folder.path}>
+                                {folder.path.split(/[/\\]/).pop()}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                {folder.path}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {indexingStatus[folder.id] === 'indexing' && (
+                                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                              )}
+                              {indexingStatus[folder.id] === 'complete' && (
+                                <Badge variant="outline" className="text-xs">Indexed</Badge>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => handleRemoveFolder(folder.id)}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+
+                  <Button 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={() => handleSelectFolder(cat)}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add {categoryLabels[cat]} Folder
+                  </Button>
+                </div>
+              </TabsContent>
+            ))}
+          </Tabs>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   )
 }
 
 interface AssetListProps {
-  category: string
+  category: Category
   filter: FilterType
+  folders: MediaFolder[]
+  assets: Asset[]
+  indexingStatus: { [key: string]: 'idle' | 'indexing' | 'complete' | 'error' }
+  onManageMedia: () => void
 }
 
-function AssetList({ category: _category, filter: _filter }: AssetListProps) {
-  // Placeholder assets - in real implementation, these would come from the backend
-  const placeholderAssets = [
-    { id: 1, name: 'Corporate Upbeat', tags: ['Upbeat', 'Corporate'], duration: '2:34', used: true },
-    { id: 2, name: 'Tension Building', tags: ['Tension', 'Dramatic'], duration: '1:45', used: false },
-    { id: 3, name: 'Emotional Piano', tags: ['Emotional', 'Soft'], duration: '3:12', used: false },
-    { id: 4, name: 'Action Chase', tags: ['Fast', 'Intense'], duration: '1:23', used: true },
-    { id: 5, name: 'Peaceful Morning', tags: ['Calm', 'Ambient'], duration: '4:05', used: false },
-  ]
+function AssetList({ category, filter, folders, assets, indexingStatus, onManageMedia }: AssetListProps) {
+  const isIndexing = folders.some(f => indexingStatus[f.id] === 'indexing')
+  
+  const filteredAssets = assets.filter((asset) => {
+    if (filter === 'used') return asset.used
+    if (filter === 'unused') return !asset.used
+    return true
+  })
 
+  const categoryIcons = {
+    music: Music,
+    sfx: Zap,
+    vfx: Clapperboard
+  }
+
+  const categoryLabels = {
+    music: 'Music',
+    sfx: 'Sound Effects', 
+    vfx: 'Visual Effects'
+  }
+
+  const Icon = categoryIcons[category]
+
+  // Empty state - no folders configured
+  if (folders.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+        <Icon className="h-12 w-12 text-muted-foreground mb-4 opacity-50" />
+        <h3 className="text-sm font-medium mb-2">
+          No {categoryLabels[category]} Library
+        </h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Configure folders to index your {categoryLabels[category].toLowerCase()} collection
+        </p>
+        <Button onClick={onManageMedia} size="sm">
+          <FolderOpen className="h-4 w-4 mr-2" />
+          Manage Media
+        </Button>
+      </div>
+    )
+  }
+
+  // Loading state - indexing in progress
+  if (isIndexing && assets.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+        <h3 className="text-sm font-medium mb-2">Indexing {categoryLabels[category]}...</h3>
+        <p className="text-xs text-muted-foreground">
+          Scanning folders for media files
+        </p>
+      </div>
+    )
+  }
+
+  // No assets found (after indexing)
+  if (assets.length === 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+        <Icon className="h-12 w-12 text-muted-foreground mb-4 opacity-50" />
+        <h3 className="text-sm font-medium mb-2">No Assets Found</h3>
+        <p className="text-xs text-muted-foreground mb-4">
+          Folders indexed but no {categoryLabels[category].toLowerCase()} files detected
+        </p>
+        <Button onClick={onManageMedia} variant="outline" size="sm">
+          Manage Folders
+        </Button>
+      </div>
+    )
+  }
+
+  // Assets list
   return (
     <ScrollArea className="h-full">
       <div className="p-2 space-y-2">
-        {placeholderAssets.map((asset) => (
+        {filteredAssets.map((asset) => (
           <div
             key={asset.id}
             className="group flex items-center gap-3 p-2 rounded-md hover:bg-accent cursor-pointer transition-colors"
           >
             <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
-              <Music className="h-5 w-5 text-muted-foreground" />
+              <Icon className="h-5 w-5 text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{asset.name}</p>

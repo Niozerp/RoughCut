@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -84,6 +84,27 @@ ipcMain.handle('media:get-assets', async (_, category: string) => {
   console.log('[RoughCut Electron] Getting assets for category:', category)
   // Placeholder - will integrate with Python backend
   return []
+})
+
+ipcMain.handle('media:select-folder', async () => {
+  console.log('[RoughCut Electron] Opening folder selection dialog')
+  
+  if (!mainWindow) {
+    return { canceled: true, filePath: null }
+  }
+  
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select Media Folder',
+    buttonLabel: 'Select Folder'
+  })
+  
+  console.log('[RoughCut Electron] Folder selection result:', result.canceled ? 'canceled' : result.filePaths[0])
+  
+  return {
+    canceled: result.canceled,
+    filePath: result.canceled ? null : result.filePaths[0]
+  }
 })
 
 ipcMain.handle('app:get-info', async () => {

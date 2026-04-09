@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkResolveConnection: () => ipcRenderer.invoke('resolve:check-connection'),
   sendTimeline: (data: unknown) => ipcRenderer.invoke('resolve:send-timeline', data),
   getAssets: (category: string) => ipcRenderer.invoke('media:get-assets', category),
+  selectFolder: () => ipcRenderer.invoke('media:select-folder'),
 })
 
 // TypeScript support
@@ -15,6 +16,7 @@ declare global {
       checkResolveConnection: () => Promise<{ status: string }>
       sendTimeline: (data: unknown) => Promise<{ success: boolean }>
       getAssets: (category: string) => Promise<unknown[]>
+      selectFolder: () => Promise<{ canceled: boolean; filePath: string | null }>
     }
   }
 }
