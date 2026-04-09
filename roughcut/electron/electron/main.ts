@@ -11,13 +11,17 @@ let mainWindow: BrowserWindow | null
 let resolveStatus: 'connected' | 'connecting' | 'disconnected' = 'connecting'
 
 function createWindow() {
+  const preloadPath = path.join(__dirname, 'preload.js')
+  console.log('[RoughCut Electron] Preload path:', preloadPath)
+  console.log('[RoughCut Electron] __dirname:', __dirname)
+  
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1200,
     minHeight: 700,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },

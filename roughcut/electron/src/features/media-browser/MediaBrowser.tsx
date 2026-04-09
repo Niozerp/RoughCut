@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Search, Music, Zap, Clapperboard, Filter, Heart, Clock, Star, FolderOpen, Plus, X, Loader2 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
@@ -34,6 +34,18 @@ export function MediaBrowser() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [indexingStatus, setIndexingStatus] = useState<{ [key: string]: 'idle' | 'indexing' | 'complete' | 'error' }>({})
   const [selectedManageTab, setSelectedManageTab] = useState<Category>('music')
+  const [isElectronAvailable, setIsElectronAvailable] = useState(true)
+
+  // Check if electronAPI is available on mount
+  useEffect(() => {
+    if (!window.electronAPI) {
+      console.error('[MediaBrowser] window.electronAPI is not available on mount')
+      setIsElectronAvailable(false)
+    } else {
+      console.log('[MediaBrowser] window.electronAPI is available:', Object.keys(window.electronAPI))
+      setIsElectronAvailable(true)
+    }
+  }, [])
 
   const filters = [
     { id: 'all' as FilterType, label: 'All', icon: Filter },
@@ -44,7 +56,22 @@ export function MediaBrowser() {
 
   const handleSelectFolder = async (category: Category) => {
     try {
+      // Debug: Check if electronAPI is available
+      if (!window.electronAPI) {
+        console.error('[MediaBrowser] window.electronAPI is not available. Preload script may not be loaded.')
+        alert('Error: Electron API not available. Please restart the application.')
+        return
+      }
+      
+      if (!window.electronAPI.selectFolder) {
+        console.error('[MediaBrowser] window.electronAPI.selectFolder is not available')
+        alert('Error: Folder selection not available. Please restart the application.')
+        return
+      }
+      
+      console.log('[MediaBrowser] Calling selectFolder...')
       const result = await window.electronAPI.selectFolder()
+      console.log('[MediaBrowser] selectFolder result:', result)
       
       if (result.canceled || !result.filePath) {
         return
@@ -133,6 +160,15 @@ export function MediaBrowser() {
             />
           </div>
         </div>
+
+        {/* Electron API Warning */}
+        {!isElectronAvailable && (
+          <div className="p-2 bg-destructive/10 border-b border-destructive/20">
+            <p className="text-xs text-destructive text-center">
+              ⚠️ Electron API not available. Folder selection disabled.
+            </p>
+          </div>
+        )}
 
         {/* Category Tabs */}
         <Tabs defaultValue="music" className="flex-1 flex flex-col">
