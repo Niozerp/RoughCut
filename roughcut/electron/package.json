@@ -7,8 +7,9 @@
   "scripts": {
     "start": "npm run dev",
     "dev": "npm run build && electron .",
-    "build": "tsc -p tsconfig.electron.json && vite build",
+    "build": "tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "build:preload": "tsc -p tsconfig.preload.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

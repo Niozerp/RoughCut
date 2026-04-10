@@ -1,63 +1,10 @@
-[RoughCut Launcher] Starting...
-[RoughCut Launcher] Scripts directory: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility
-[RoughCut Launcher] Checking: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua/roughcut_main.lua
-[RoughCut Launcher] Found modules at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua
-[RoughCut Launcher] Connecting to DaVinci Resolve...
-[RoughCut Launcher] Got Resolve via fusion:GetResolve() on attempt 1
-[RoughCut Launcher] Connected to Resolve successfully
-[RoughCut Launcher] Added to package.path: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua/?.lua;C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/lua/?/init.lua
-[RoughCut Launcher] Loading roughcut_main module...
-[RoughCut] roughcut_main.lua loaded - version 0.3.1
-[RoughCut Launcher] Calling launch function...
-[RoughCut] launchRoughCut() called
-RoughCut: Install dialog created successfully
-RoughCut: Executing: python3 --version 2>&1
-RoughCut: Checking for Poetry...
-RoughCut: Trying 'poetry' command...
-RoughCut: Executing: poetry --version 2>&1
-RoughCut: Poetry found in PATH
-RoughCut: Using Poetry command: poetry
-RoughCut: Checking if roughcut is already installed globally...
-RoughCut: Executing: python -c "import roughcut; print('INSTALLED')" 2>&1
-RoughCut: Python backend already installed globally - skipping local installation
-RoughCut: Verifying installation...
-RoughCut: Executing: python -c "import roughcut; print('INSTALLED')" 2>&1
-RoughCut: Verified - roughcut is installed globally
-RoughCut: Searching for pyproject.toml...
-RoughCut: Checking path 1: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/pyproject.toml
-RoughCut: FOUND roughcut pyproject.toml at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/pyproject.toml
-RoughCut: Source directory: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
-RoughCut: Deploying Lua plugin from: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
-RoughCut: Checking for deploy script at: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py
-RoughCut: Running deploy script check: python -c import os; print('OK' if os.path.exists('C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py') else 'MISSING')
-RoughCut: Executing: python -c "import os; print('OK' if os.path.exists('C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py') else 'MISSING')" 2>&1
-RoughCut: Deploy script check result - success: true, stdout: OK
-RoughCut: Deploy script found, executing...
-RoughCut: Executing: where python3 2>&1
-RoughCut: Working directory verified: C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut
-RoughCut: Executing: cmd /c pushd "C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut" && python3 "C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut/scripts/deploy.py" --project-path "C:/Users/niozerp/AppData/Roaming/Blackmagic Design/DaVinci Resolve/Support/Fusion/Scripts/Utility/roughcut" --force && popd 2>&1
-RoughCut: Deploy result - success: true
-RoughCut: Deploy result - exitCode: 0
-RoughCut: Deploy result - stdout: Deploying RoughCut from C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut...
-Project is already in Scripts folder at: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
-[OK] RoughCut deployed successfully to: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
-  Files copied: 0
-
-Verifying installation...
-  [OK] main_script
-  [OK] ui_directory
-  [OK] ui_main_window.lua
-  [OK] ui_navigation.lua
-  [OK] ui_install_dialog.lua
-  [OK] utils_directory
-  [OK] utils_config.lua
-  [OK] utils_logger.lua
-  [OK] utils_process.lua
-
-[OK] Installation verified successfully!
-
-You can now access RoughCut from DaVinci Resolve's Workspace > Scripts menu.
-RoughCut: Deploy result - stderr: 
-RoughCut: Deployment completed successfully
-RoughCut: Step 6 reached - completing installation
-[RoughCut Launcher] Launch successful
+Indexing failed: Python process failed (code 1): Traceback (most recent call last):
+File "C:\Users\niozerp\AppData\Local\Temp\roughcut_index_1775793000207.py", line 35, in <module>
+from roughcut.backend.indexing.indexer import MediaIndexer
+File "C:\\User\\niozerp\\AppData\\Roaming\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility\\roughcut\\src\roughcut\backend\indexing\_init_.py", line 12, in <module>
+from .scanner import FileScanner, MEDIA_EXTENSIONS
+File "C:\\User\\niozerp\\AppData\\Roaming\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility
+\\roughcut\\src\roughcut\backend\indexing\scanner.py",
+line 10, in <module>
+import aiofiles
+ModuleNotFoundError: No module name 'aiofiles'
