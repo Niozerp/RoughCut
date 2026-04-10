@@ -59,21 +59,30 @@ export function MediaBrowser() {
       // Debug: Check if electronAPI is available
       if (!window.electronAPI) {
         console.error('[MediaBrowser] window.electronAPI is not available. Preload script may not be loaded.')
-        alert('Error: Electron API not available. Please restart the application.')
+        console.error('[MediaBrowser] window keys:', Object.keys(window))
+        alert('Error: Electron API not available. The preload script failed to load. Please check console for details and restart the application.')
         return
       }
       
       if (!window.electronAPI.selectFolder) {
         console.error('[MediaBrowser] window.electronAPI.selectFolder is not available')
-        alert('Error: Folder selection not available. Please restart the application.')
+        console.error('[MediaBrowser] Available electronAPI methods:', Object.keys(window.electronAPI))
+        alert('Error: Folder selection not available. The API method is missing. Please restart the application.')
         return
       }
       
-      console.log('[MediaBrowser] Calling selectFolder...')
+      console.log(`[MediaBrowser] Calling selectFolder for category: ${category}...`)
       const result = await window.electronAPI.selectFolder()
       console.log('[MediaBrowser] selectFolder result:', result)
       
+      if (result.error) {
+        console.error('[MediaBrowser] Folder selection error:', result.error)
+        alert(`Error selecting folder: ${result.error}`)
+        return
+      }
+      
       if (result.canceled || !result.filePath) {
+        console.log('[MediaBrowser] Folder selection was canceled')
         return
       }
 

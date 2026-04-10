@@ -16,7 +16,7 @@ declare global {
       checkResolveConnection: () => Promise<{ status: string }>
       sendTimeline: (data: unknown) => Promise<{ success: boolean }>
       getAssets: (category: string) => Promise<unknown[]>
-      selectFolder: () => Promise<{ canceled: boolean; filePath: string | null }>
+      selectFolder: () => Promise<{ canceled: boolean; filePath: string | null; error?: string }>
     }
   }
 }

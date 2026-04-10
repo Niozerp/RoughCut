@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import fs from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -11,20 +12,47 @@ let mainWindow: BrowserWindow | null
 let resolveStatus: 'connected' | 'connecting' | 'disconnected' = 'connecting'
 
 function createWindow() {
-  const preloadPath = path.join(__dirname, 'preload.js')
-  console.log('[RoughCut Electron] Preload path:', preloadPath)
-  console.log('[RoughCut Electron] __dirname:', __dirname)
+  // Resolve preload script path - check multiple possible locations
+  const possiblePreloadPaths = [
+    path.join(__dirname, 'preload.js'),
+    path.join(__dirname, 'electron', 'preload.js'),
+    path.join(app.getAppPath(), 'electron', 'preload.js'),
+    path.join(process.cwd(), 'electron', 'preload.js'),
+  ]
+  
+  let preloadPath: string | null = null
+  for (const testPath of possiblePreloadPaths) {
+    console.log('[RoughCut Electron] Checking preload path:', testPath)
+    if (fs.existsSync(testPath)) {
+      preloadPath = testPath
+      console.log('[RoughCut Electron] Found preload script at:', preloadPath)
+      break
+    }
+  }
+  
+  if (!preloadPath) {
+    console.error('[RoughCut Electron] ERROR: preload.js not found in any of the expected locations:')
+    possiblePreloadPaths.forEach(p => console.error('  -', p))
+    console.error('[RoughCut Electron] __dirname:', __dirname)
+    console.error('[RoughCut Electron] app.getAppPath():', app.getAppPath())
+    console.error('[RoughCut Electron] process.cwd():', process.cwd())
+  }
+  
+  const webPreferences: Electron.WebPreferences = {
+    contextIsolation: true,
+    nodeIntegration: false,
+  }
+  
+  if (preloadPath) {
+    webPreferences.preload = preloadPath
+  }
   
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1200,
     minHeight: 700,
-    webPreferences: {
-      preload: preloadPath,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+    webPreferences,
     titleBarStyle: 'hiddenInset',
     show: false,
   })
@@ -94,20 +122,32 @@ ipcMain.handle('media:select-folder', async () => {
   console.log('[RoughCut Electron] Opening folder selection dialog')
   
   if (!mainWindow) {
-    return { canceled: true, filePath: null }
+    console.error('[RoughCut Electron] ERROR: mainWindow is null, cannot open dialog')
+    return { canceled: true, filePath: null, error: 'Main window not available' }
   }
   
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: 'Select Media Folder',
-    buttonLabel: 'Select Folder'
-  })
+  // Check if mainWindow is destroyed
+  if (mainWindow.isDestroyed()) {
+    console.error('[RoughCut Electron] ERROR: mainWindow is destroyed, cannot open dialog')
+    return { canceled: true, filePath: null, error: 'Main window destroyed' }
+  }
   
-  console.log('[RoughCut Electron] Folder selection result:', result.canceled ? 'canceled' : result.filePaths[0])
-  
-  return {
-    canceled: result.canceled,
-    filePath: result.canceled ? null : result.filePaths[0]
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Media Folder',
+      buttonLabel: 'Select Folder'
+    })
+    
+    console.log('[RoughCut Electron] Folder selection result:', result.canceled ? 'canceled' : result.filePaths[0])
+    
+    return {
+      canceled: result.canceled,
+      filePath: result.canceled ? null : result.filePaths[0]
+    }
+  } catch (error) {
+    console.error('[RoughCut Electron] ERROR: Failed to open folder dialog:', error)
+    return { canceled: true, filePath: null, error: String(error) }
   }
 })
 
