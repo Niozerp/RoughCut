@@ -40,7 +40,7 @@ if not exist "%BACKEND_DIR%" (
 )
 
 :: Find DaVinci Resolve Scripts folder
-echo [1/5] Looking for DaVinci Resolve installation...
+echo [1/6] Looking for DaVinci Resolve installation...
 echo.
 
 set "RESOLVE_SCRIPTS="
@@ -121,7 +121,7 @@ echo [OK] Resolve Scripts folder: %RESOLVE_SCRIPTS%
 echo.
 
 :: Step 2: Build Electron UI FIRST (before copying anything)
-echo [2/5] Building Electron UI...
+echo [2/6] Building Electron UI...
 echo.
 echo ============================================
 echo ELECTRON BUILD DIAGNOSTICS
@@ -259,7 +259,7 @@ echo.
 :skip_electron_build
 
 :: Step 3: Copy files to Resolve
-echo [3/5] Installing RoughCut to DaVinci Resolve...
+echo [3/6] Installing RoughCut to DaVinci Resolve...
 echo.
 
 :: Check if Resolve is running
@@ -336,25 +336,92 @@ if exist "%RESOLVE_SCRIPTS%\roughcut\electron\dist\main.js" (
 
 echo.
 
-:: Step 4: Check Python
-echo [4/5] Checking Python installation...
+:: Step 4: Check Python and install Poetry
+echo [4/6] Checking Python installation...
 echo.
 
+set "PYTHON_CMD="
+set "POETRY_INSTALLED=false"
+
 python --version >nul 2>&1
-if %errorlevel% neq 0 (
+if %errorlevel% equ 0 (
+    for /f "tokens=2" %%a in ('python --version 2^>^&1') do echo [OK] Found Python %%a
+    set "PYTHON_CMD=python"
+) else (
     python3 --version >nul 2>&1
-    if %errorlevel% neq 0 (
+    if %errorlevel% equ 0 (
+        for /f "tokens=2" %%a in ('python3 --version 2^>^&1') do echo [OK] Found Python %%a
+        set "PYTHON_CMD=python3"
+    ) else (
         echo [WARNING] Python not found!
         echo [INFO] RoughCut will use Lua features only (no AI).
         echo [INFO] Install Python 3.10+ for full functionality.
         echo.
-    ) else (
-        for /f "tokens=2" %%a in ('python3 --version 2^>^&1') do echo [OK] Found Python %%a
+        goto :step5
     )
-) else (
-    for /f "tokens=2" %%a in ('python --version 2^>^&1') do echo [OK] Found Python %%a
 )
 
+:: Check if Poetry is installed
+echo.
+echo [INFO] Checking Poetry installation...
+poetry --version >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [OK] Poetry is already installed
+    set "POETRY_INSTALLED=true"
+) else (
+    echo [INFO] Poetry not found. Installing Poetry automatically...
+    echo [INFO] This is required for Python dependencies...
+    echo.
+    
+    :: Install Poetry using pip
+    %PYTHON_CMD% -m pip install poetry --user
+    
+    if %errorlevel% equ 0 (
+        echo.
+        echo [OK] Poetry installed successfully
+        set "POETRY_INSTALLED=true"
+        
+        :: Add Poetry to PATH for this session
+        set "PATH=%PATH%;%APPDATA%\Python\Scripts"
+        set "PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python310\Scripts"
+        set "PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python311\Scripts"
+        set "PATH=%PATH%;%LOCALAPPDATA%\Programs\Python\Python312\Scripts"
+    ) else (
+        echo [WARNING] Poetry installation failed
+        echo [INFO] You may need to install Poetry manually: pip install poetry
+        echo.
+    )
+)
+
+:: Install Python dependencies if Poetry is available
+if "%POETRY_INSTALLED%"=="true" (
+    echo.
+    echo [INFO] Installing Python dependencies with Poetry...
+    echo [INFO] This may take a few minutes on first run...
+    echo.
+    
+    :: Find pyproject.toml location
+    if exist "%~dp0roughcut\pyproject.toml" (
+        echo [INFO] Found pyproject.toml in: %~dp0roughcut\
+        pushd "%~dp0roughcut"
+        poetry install --no-interaction
+        set "POETRY_RESULT=%errorlevel%"
+        popd
+        
+        if %POETRY_RESULT% equ 0 (
+            echo.
+            echo [OK] Python dependencies installed successfully!
+        ) else (
+            echo [WARNING] poetry install exited with code %POETRY_RESULT%
+            echo [INFO] Dependencies will be installed automatically when RoughCut launches
+        )
+    ) else (
+        echo [WARNING] pyproject.toml not found, skipping dependency installation
+    )
+    echo.
+)
+
+:step5
 :: Step 5: Summary
 echo.
 echo ============================================

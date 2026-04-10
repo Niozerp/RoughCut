@@ -6,7 +6,7 @@ authors = [
     {name = "Jon Ausherman",email = "6740250+Niozerp@users.noreply.github.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<4"
 dependencies = [
     "pyyaml (>=6.0.3,<7.0.0)",
     "cryptography (>=41.0.0,<45.0.0)",

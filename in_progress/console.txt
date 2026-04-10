@@ -1,10 +1,523 @@
-Indexing failed: Python process failed (code 1): Traceback (most recent call last):
-File "C:\Users\niozerp\AppData\Local\Temp\roughcut_index_1775793000207.py", line 35, in <module>
-from roughcut.backend.indexing.indexer import MediaIndexer
-File "C:\\User\\niozerp\\AppData\\Roaming\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility\\roughcut\\src\roughcut\backend\indexing\_init_.py", line 12, in <module>
-from .scanner import FileScanner, MEDIA_EXTENSIONS
-File "C:\\User\\niozerp\\AppData\\Roaming\\Blackmagic Design\\DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility
-\\roughcut\\src\roughcut\backend\indexing\scanner.py",
-line 10, in <module>
-import aiofiles
-ModuleNotFoundError: No module name 'aiofiles'
+[RC] Starting RoughCut...
+[RC] In: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron
+[RC] Launching...
+
+> roughcut-electron@1.0.0 dev
+> npm run build && electron .
+
+
+> roughcut-electron@1.0.0 build
+> tsc -p tsconfig.electron.json && tsc -p tsconfig.preload.json && vite build
+
+vite v5.4.21 building for production...
+✓ 1604 modules transformed.
+dist/index.html                   0.76 kB │ gzip:  0.43 kB
+dist/assets/index-Ce5soCBc.css   23.91 kB │ gzip:  5.19 kB
+dist/assets/index-DIklI_XQ.js   311.89 kB │ gzip: 98.02 kB
+✓ built in 2.74s
+
+[RoughCut Electron] App starting...
+[RoughCut Electron] Launched from DaVinci Resolve
+[RoughCut Electron] Checking preload path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\dist\electron\preload.js
+[RoughCut Electron] Found preload script at: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\dist\electron\preload.js
+[RoughCut Electron] Loading from file: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\dist\index.html
+[Renderer INFO] [Preload] Script starting execution...
+[Renderer INFO] [Preload] process.contextIsolated: true
+[Renderer INFO] [Preload] electronAPI exposed via contextBridge
+[Renderer INFO] [Preload] Script execution completed
+[RoughCut Electron] Window ready
+[Renderer INFO] [MediaBrowser] window.electronAPI is available with methods: checkResolveConnection,sendTimeline,getAssets,selectFolder,indexFolders,reindexFolders,queryAssets,getDatabaseStatus,cancelIndexing,onIndexProgress,removeIndexProgressListener
+[RoughCut Electron] Getting database status
+[PythonBridge] Searching for roughcut module in locations:
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\node_modules\electron\dist\resources\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\src
+[PythonBridge] Found roughcut at: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\src
+[PythonBridge] Found project root at: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Poetry lock file found, using Poetry
+[PythonBridge] Searching for Poetry venv in project: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Checking venv path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\.venv\Scripts\python.exe
+[PythonBridge] Checking venv path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\.venv\bin\python
+[PythonBridge] Checking venv path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\.venv\bin\python3
+[PythonBridge] Trying to get venv path from poetry env info...
+'poetry' is not recognized as an internal or external command,
+operable program or batch file.
+[PythonBridge] poetry env info command failed (venv may not exist yet)
+[PythonBridge] Checking Poetry cache at: C:\Users\niozerp\AppData\Local\pypoetry\Cache\virtualenvs
+[PythonBridge] Poetry project detected but venv not found, will attempt to create it
+[PythonBridge] ============================================
+[PythonBridge] Creating Poetry virtual environment and installing dependencies...
+[PythonBridge] Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] ============================================
+[PythonBridge] ============================================
+[PythonBridge] Starting poetry install
+[PythonBridge] Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Checking if pyproject.toml exists...
+[PythonBridge] Checking for poetry at: poetry
+'poetry' is not recognized as an internal or external command,
+operable program or batch file.
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.local\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.poetry\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Poetry not found
+[PythonBridge] Poetry not found. Attempting to install Poetry automatically...
+[PythonBridge] ============================================
+[PythonBridge] Installing Poetry using pip...
+[PythonBridge] ============================================
+[Renderer INFO] [MediaBrowser] Loading assets for music...
+[RoughCut Electron] Querying assets: { category: 'music', limit: 1000 }
+[PythonBridge] Searching for roughcut module in locations:
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\node_modules\electron\dist\resources\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\src
+  - C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\electron\src
+[PythonBridge] Found roughcut at: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\src
+[PythonBridge] Found project root at: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Poetry lock file found, using Poetry
+[PythonBridge] Searching for Poetry venv in project: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Checking venv path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\.venv\Scripts\python.exe
+[PythonBridge] Checking venv path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\.venv\bin\python
+[PythonBridge] Checking venv path: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut\.venv\bin\python3
+[PythonBridge] Trying to get venv path from poetry env info...
+'poetry' is not recognized as an internal or external command,
+operable program or batch file.
+[PythonBridge] poetry env info command failed (venv may not exist yet)
+[PythonBridge] Checking Poetry cache at: C:\Users\niozerp\AppData\Local\pypoetry\Cache\virtualenvs
+[PythonBridge] Poetry project detected but venv not found, will attempt to create it
+[PythonBridge] ============================================
+[PythonBridge] Creating Poetry virtual environment and installing dependencies...
+[PythonBridge] Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] ============================================
+[PythonBridge] ============================================
+[PythonBridge] Starting poetry install
+[PythonBridge] Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Checking if pyproject.toml exists...
+[PythonBridge] Checking for poetry at: poetry
+'poetry' is not recognized as an internal or external command,
+operable program or batch file.
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.local\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.poetry\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Poetry not found
+[PythonBridge] Poetry not found. Attempting to install Poetry automatically...
+[PythonBridge] ============================================
+[PythonBridge] Installing Poetry using pip...
+[PythonBridge] ============================================
+[Renderer WARN] %cElectron Security Warning (Insecure Content-Security-Policy) font-weight: bold; This renderer process has either no Content Security
+  Policy set or a policy with "unsafe-eval" enabled. This exposes users of
+  this app to unnecessary security risks.
+
+For more information and help, consult
+https://electronjs.org/docs/tutorial/security.
+This warning will not show up
+once the app is packaged.
+[RoughCut Electron] Preload script check - window.electronAPI available: true
+[Poetry install] Requirement already satisfied: poetry in c:\users\niozerp\appdata\roaming\python\python314\site-packages (2.3.3)
+
+[Poetry install] Requirement already satisfied: poetry in c:\users\niozerp\appdata\roaming\python\python314\site-packages (2.3.3)
+
+[Poetry install] Requirement already satisfied: build<2.0.0,>=1.2.1 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.4.2)
+
+[Poetry install] Requirement already satisfied: build<2.0.0,>=1.2.1 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.4.2)
+
+[Poetry install] Requirement already satisfied: cachecontrol<0.15.0,>=0.14.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cachecontrol[filecache]<0.15.0,>=0.14.0->poetry) (0.14.4)
+
+[Poetry install] Requirement already satisfied: cachecontrol<0.15.0,>=0.14.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cachecontrol[filecache]<0.15.0,>=0.14.0->poetry) (0.14.4)
+
+[Poetry install] Requirement already satisfied: cleo<3.0.0,>=2.1.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.1.0)
+
+[Poetry install] Requirement already satisfied: cleo<3.0.0,>=2.1.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.1.0)
+
+[Poetry install] Requirement already satisfied: dulwich<2,>=0.25.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.1.0)
+
+[Poetry install] Requirement already satisfied: dulwich<2,>=0.25.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.1.0)
+
+[Poetry install] Requirement already satisfied: fastjsonschema<3.0.0,>=2.18.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.21.2)
+
+[Poetry install] Requirement already satisfied: fastjsonschema<3.0.0,>=2.18.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.21.2)
+
+[Poetry install] Requirement already satisfied: findpython<0.8.0,>=0.6.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (0.7.1)
+
+[Poetry install] Requirement already satisfied: findpython<0.8.0,>=0.6.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (0.7.1)
+
+[Poetry install] Requirement already satisfied: installer<0.8.0,>=0.7.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (0.7.0)
+
+[Poetry install] Requirement already satisfied: installer<0.8.0,>=0.7.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (0.7.0)
+
+[Poetry install] Requirement already satisfied: keyring<26.0.0,>=25.1.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (25.7.0)
+
+[Poetry install] Requirement already satisfied: keyring<26.0.0,>=25.1.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (25.7.0)
+
+[Poetry install] Requirement already satisfied: packaging>=24.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (26.0)
+
+[Poetry install] Requirement already satisfied: packaging>=24.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (26.0)
+
+[Poetry install] Requirement already satisfied: pbs-installer>=2025.6.10 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from pbs-installer[download,install]>=2025.6.10->poetry) (2026.4.7)
+
+[Poetry install] Requirement already satisfied: pbs-installer>=2025.6.10 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from pbs-installer[download,install]>=2025.6.10->poetry) (2026.4.7)
+
+[Poetry install] Requirement already satisfied: pkginfo<2.0,>=1.12 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.12.1.2)
+
+[Poetry install] Requirement already satisfied: pkginfo<2.0,>=1.12 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.12.1.2)
+
+[Poetry install] Requirement already satisfied: platformdirs<5,>=3.0.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (4.9.6)
+
+[Poetry install] Requirement already satisfied: platformdirs<5,>=3.0.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (4.9.6)
+
+[Poetry install] Requirement already satisfied: poetry-core==2.3.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.3.2)
+
+[Poetry install] Requirement already satisfied: poetry-core==2.3.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.3.2)
+
+[Poetry install] Requirement already satisfied: pyproject-hooks<2.0.0,>=1.0.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.2.0)
+
+[Poetry install] Requirement already satisfied: pyproject-hooks<2.0.0,>=1.0.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.2.0)
+
+[Poetry install] Requirement already satisfied: requests<3.0,>=2.26 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.33.1)
+Requirement already satisfied: requests-toolbelt<2.0.0,>=1
+[Poetry install] Requirement already satisfied: requests<3.0,>=2.26 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2.33.1)
+
+[Poetry install] Requirement already satisfied: requests-toolbelt<2.0.0,>=1.0.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.0.0)
+Requirement already satisfied: shellingham<2.0,
+[Poetry install] Requirement already satisfied: shellingham<2.0,>=1.5 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (1.5.4)
+
+[Poetry install] Requirement already satisfied: tomlkit<1.0.0,>=0.11.4 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (0.14.0)
+
+[Poetry install] Requirement already satisfied: tomlkit<1.0.0,>=0.11.4 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (0.14.0)
+
+[Poetry install] Requirement already satisfied: trove-classifiers>=2022.5.19 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2026.1.14.14)
+Requirement already satisfied: virtualenv>=
+[Poetry install] Requirement already satisfied: trove-classifiers>=2022.5.19 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (2026.1.14.14)
+
+[Poetry install] Requirement already satisfied: virtualenv>=20.26.6 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from poetry) (21.2.1)
+
+[Poetry install] Requirement already satisfied: colorama in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from build<2.0.0,>=1.2.1->poetry) (0.4.6)
+
+[Poetry install] Requirement already satisfied: colorama in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from build<2.0.0,>=1.2.1->poetry) (0.4.6)
+
+[Poetry install] Requirement already satisfied: msgpack<2.0.0,>=0.5.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cachecontrol<0.15.0,>=0.14.0->cachecontrol[filecache]<0.15.0,>=0.14.0->poe
+[Poetry install] Requirement already satisfied: msgpack<2.0.0,>=0.5.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cachecontrol<0.15.0,>=0.14.0->cachecontrol[filecache]<0.15.0,>=0.14.0->poe
+[Poetry install] Requirement already satisfied: filelock>=3.8.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cachecontrol[filecache]<0.15.0,>=0.14.0->poetry) (3.25.2)
+
+[Poetry install] Requirement already satisfied: filelock>=3.8.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cachecontrol[filecache]<0.15.0,>=0.14.0->poetry) (3.25.2)
+
+[Poetry install] Requirement already satisfied: crashtest<0.5.0,>=0.4.1 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cleo<3.0.0,>=2.1.0->poetry) (0.4.1)
+
+[Poetry install] Requirement already satisfied: crashtest<0.5.0,>=0.4.1 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cleo<3.0.0,>=2.1.0->poetry) (0.4.1)
+Requirement already satisfied: rapi
+[Poetry install] Requirement already satisfied: rapidfuzz<4.0.0,>=3.0.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from cleo<3.0.0,>=2.1.0->poetry) (3.14.5)
+
+[Poetry install] Requirement already satisfied: urllib3>=2.2.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from dulwich<2,>=0.25.0->poetry) (2.6.3)
+
+[Poetry install] Requirement already satisfied: urllib3>=2.2.2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from dulwich<2,>=0.25.0->poetry) (2.6.3)
+
+[Poetry install] Requirement already satisfied: pywin32-ctypes>=0.2.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from keyring<26.0.0,>=25.1.0->poetry) (0.2.3)
+
+[Poetry install] Requirement already satisfied: pywin32-ctypes>=0.2.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from keyring<26.0.0,>=25.1.0->poetry) (0.2.3)
+
+[Poetry install] Requirement already satisfied: jaraco.classes in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from keyring<26.0.0,>=25.1.0->poetry) (3.4.0)
+
+[Poetry install] Requirement already satisfied: jaraco.classes in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from keyring<26.0.0,>=25.1.0->poetry) (3.4.0)
+
+[Poetry install] Requirement already satisfied: jaraco.functools in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from keyring<26.0.0,>=25.1.0->poetry) (4.4.0)
+Requirement already satisfied: jaraco
+[Poetry install] Requirement already satisfied: jaraco.functools in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from keyring<26.0.0,>=25.1.0->poetry) (4.4.0)
+Requirement already satisfied: jaraco
+[Poetry install] Requirement already satisfied: charset_normalizer<4,>=2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from requests<3.0,>=2.26->poetry) (3.4.7)
+
+[Poetry install] Requirement already satisfied: charset_normalizer<4,>=2 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from requests<3.0,>=2.26->poetry) (3.4.7)
+
+[Poetry install] Requirement already satisfied: idna<4,>=2.5 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from requests<3.0,>=2.26->poetry) (3.11)
+
+[Poetry install] Requirement already satisfied: idna<4,>=2.5 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from requests<3.0,>=2.26->poetry) (3.11)
+
+[Poetry install] Requirement already satisfied: certifi>=2023.5.7 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from requests<3.0,>=2.26->poetry) (2026.2.25)
+
+[Poetry install] Requirement already satisfied: certifi>=2023.5.7 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from requests<3.0,>=2.26->poetry) (2026.2.25)
+
+[Poetry install] Requirement already satisfied: httpx<1,>=0.27.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from pbs-installer[download,install]>=2025.6.10->poetry) (0.28.1)
+
+[Poetry install] Requirement already satisfied: httpx<1,>=0.27.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from pbs-installer[download,install]>=2025.6.10->poetry) (0.28.1)
+
+[Poetry install] Requirement already satisfied: zstandard>=0.21.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from pbs-installer[download,install]>=2025.6.10->poetry) (0.25.0)
+
+[Poetry install] Requirement already satisfied: zstandard>=0.21.0 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from pbs-installer[download,install]>=2025.6.10->poetry) (0.25.0)
+
+[Poetry install] Requirement already satisfied: anyio in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from httpx<1,>=0.27.0->pbs-installer[download,install]>=2025.6.10->poetry) (4.13.0)
+
+[Poetry install] Requirement already satisfied: anyio in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from httpx<1,>=0.27.0->pbs-installer[download,install]>=2025.6.10->poetry) (4.13.0)
+
+[Poetry install] Requirement already satisfied: httpcore==1.* in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from httpx<1,>=0.27.0->pbs-installer[download,install]>=2025.6.10->poetry) (1.0.9)
+
+[Poetry install] Requirement already satisfied: httpcore==1.* in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from httpx<1,>=0.27.0->pbs-installer[download,install]>=2025.6.10->poetry) (1.0.9)
+
+[Poetry install] Requirement already satisfied: h11>=0.16 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from httpcore==1.*->httpx<1,>=0.27.0->pbs-installer[download,install]>=2025.6.10->poetry) (
+[Poetry install] Requirement already satisfied: h11>=0.16 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from httpcore==1.*->httpx<1,>=0.27.0->pbs-installer[download,install]>=2025.6.10->poetry) (
+[Poetry install] Requirement already satisfied: distlib<1,>=0.3.7 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from virtualenv>=20.26.6->poetry) (0.4.0)
+
+[Poetry install] Requirement already satisfied: distlib<1,>=0.3.7 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from virtualenv>=20.26.6->poetry) (0.4.0)
+
+[Poetry install] Requirement already satisfied: python-discovery>=1 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from virtualenv>=20.26.6->poetry) (1.2.2)
+
+[Poetry install] Requirement already satisfied: python-discovery>=1 in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from virtualenv>=20.26.6->poetry) (1.2.2)
+
+[Poetry install] Requirement already satisfied: more-itertools in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from jaraco.classes->keyring<26.0.0,>=25.1.0->poetry) (11.0.2)
+
+[Poetry install] Requirement already satisfied: more-itertools in c:\users\niozerp\appdata\roaming\python\python314\site-packages (from jaraco.classes->keyring<26.0.0,>=25.1.0->poetry) (11.0.2)
+
+[Poetry install stderr]
+[notice] A new release of pip is available: 25.3
+[Poetry install stderr]  -> 26.0.1
+[notice] To update, run: C:\Users\niozerp\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pip install --upgrade pip
+
+[Poetry install stderr]
+[
+[Poetry install stderr] notice] A new release of pip is available: 25.3 -> 26.0.1
+[notice] To update, run: C:\Users\niozerp\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pip install --upgrade pip
+
+[PythonBridge] Poetry pip install completed with code: 0
+[PythonBridge] Checking for poetry at: poetry
+'poetry' is not recognized as an internal or external command,
+operable program or batch file.
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.local\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.poetry\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Poetry not found
+[PythonBridge] Poetry not found in standard locations, doing exhaustive search...
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python39\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python39\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Trying where/which command to find poetry...
+INFO: Could not find files for the given pattern(s).
+[PythonBridge] ERROR: Poetry was installed but could not be found
+[PythonBridge] ERROR: Failed to install Poetry
+[PythonBridge] Poetry install failed: Poetry was installed but could not be found. The installation may have succeeded but Poetry is not in PATH. Please try restarting DaVinci Resolve or install Poetry manually with: pip install poetry
+[PythonBridge] Checking Python dependencies...
+[PythonBridge] Using Python: python
+[PythonBridge] Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Use Poetry: true
+[PythonBridge] Poetry pip install completed with code: 0
+[PythonBridge] Checking for poetry at: poetry
+'poetry' is not recognized as an internal or external command,
+operable program or batch file.
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.local\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\.poetry\bin\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Programs\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Local\Microsoft\WindowsApps\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry
+[PythonBridge] Checking for poetry at: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Poetry not found
+[PythonBridge] Poetry not found in standard locations, doing exhaustive search...
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python310\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python311\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python312\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python313\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python39\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Python39\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry
+[PythonBridge] Exhaustive search checking: C:\Users\niozerp\AppData\Roaming\Python\Scripts\poetry.exe
+[PythonBridge] Trying where/which command to find poetry...
+INFO: Could not find files for the given pattern(s).
+[PythonBridge] ERROR: Poetry was installed but could not be found
+[PythonBridge] ERROR: Failed to install Poetry
+[PythonBridge] Poetry install failed: Poetry was installed but could not be found. The installation may have succeeded but Poetry is not in PATH. Please try restarting DaVinci Resolve or install Poetry manually with: pip install poetry
+[PythonBridge] Checking Python dependencies...
+[PythonBridge] Using Python: python
+[PythonBridge] Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+[PythonBridge] Use Poetry: true
+[PythonBridge] Dependency check result: {
+  allInstalled: false,
+  missing: [
+    'aiofiles',
+    'pydantic',
+    'pyyaml',
+    'cryptography',
+    'openai',
+    'notion_client',
+    'websockets\r'
+  ]
+}
+[PythonBridge] Missing required Python dependencies: aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+Poetry auto-install failed or is not available.
+
+To fix this, try one of the following:
+
+Option 1 - Run from DaVinci Resolve:
+  Workspace > Scripts > RoughCut (Install)
+
+Option 2 - Run manually in terminal:
+  cd "C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut"
+  poetry install
+
+Option 3 - Install with pip:
+  pip install aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+DIAGNOSTIC INFO:
+Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+Using Poetry: true
+Python path: python
+pyproject.toml exists: true
+
+[RoughCut Electron] Asset query failed: Error: Missing required Python dependencies: aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+Poetry auto-install failed or is not available.
+
+To fix this, try one of the following:
+
+Option 1 - Run from DaVinci Resolve:
+  Workspace > Scripts > RoughCut (Install)
+
+Option 2 - Run manually in terminal:
+  cd "C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut"
+  poetry install
+
+Option 3 - Install with pip:
+  pip install aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+DIAGNOSTIC INFO:
+Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+Using Poetry: true
+Python path: python
+pyproject.toml exists: true
+
+    at executePythonCommand (file:///C:/Users/niozerp/AppData/Roaming/Blackmagic%20Design/DaVinci%20Resolve/Support/Fusion/Scripts/Utility/roughcut/electron/dist/electron/pythonBridge.js:789:15)
+    at async file:///C:/Users/niozerp/AppData/Roaming/Blackmagic%20Design/DaVinci%20Resolve/Support/Fusion/Scripts/Utility/roughcut/electron/dist/electron/main.js:233:24
+    at async WebContents.<anonymous> (node:electron/js2c/browser_init:2:83724)
+[PythonBridge] Dependency check result: {
+  allInstalled: false,
+  missing: [
+    'aiofiles',
+    'pydantic',
+    'pyyaml',
+    'cryptography',
+    'openai',
+    'notion_client',
+    'websockets\r'
+  ]
+}
+[PythonBridge] Missing required Python dependencies: aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+Poetry auto-install failed or is not available.
+
+To fix this, try one of the following:
+
+Option 1 - Run from DaVinci Resolve:
+  Workspace > Scripts > RoughCut (Install)
+
+Option 2 - Run manually in terminal:
+  cd "C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut"
+  poetry install
+
+Option 3 - Install with pip:
+  pip install aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+DIAGNOSTIC INFO:
+Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+Using Poetry: true
+Python path: python
+pyproject.toml exists: true
+
+[RoughCut Electron] Database status check failed: Error: Missing required Python dependencies: aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+Poetry auto-install failed or is not available.
+
+To fix this, try one of the following:
+
+Option 1 - Run from DaVinci Resolve:
+  Workspace > Scripts > RoughCut (Install)
+
+Option 2 - Run manually in terminal:
+  cd "C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut"
+  poetry install
+
+Option 3 - Install with pip:
+  pip install aiofiles, pydantic, pyyaml, cryptography, openai, notion_client, websockets
+
+DIAGNOSTIC INFO:
+Project root: C:\Users\niozerp\AppData\Roaming\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\roughcut
+Using Poetry: true
+Python path: python
+pyproject.toml exists: true
+
+    at executePythonCommand (file:///C:/Users/niozerp/AppData/Roaming/Blackmagic%20Design/DaVinci%20Resolve/Support/Fusion/Scripts/Utility/roughcut/electron/dist/electron/pythonBridge.js:789:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async file:///C:/Users/niozerp/AppData/Roaming/Blackmagic%20Design/DaVinci%20Resolve/Support/Fusion/Scripts/Utility/roughcut/electron/dist/electron/main.js:256:24
+    at async WebContents.<anonymous> (node:electron/js2c/browser_init:2:83724)
+[Renderer INFO] [MediaBrowser] Database status: [object Object]

@@ -5,7 +5,7 @@
  * Used for indexing operations, asset queries, and other backend tasks.
  */
 
-import { spawn } from 'child_process'
+import { spawn, execSync, spawnSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs'
@@ -17,6 +17,13 @@ const __dirname = path.dirname(__filename)
 
 // Track active Python processes
 const activeProcesses = new Map<string, { proc: any; tmpFile: string; command: string }>()
+const poetryBootstrapPromises = new Map<string, Promise<{ poetryPythonPath: string | null; error?: string }>>()
+
+type PoetryCommand = {
+  command: string
+  args: string[]
+  description: string
+}
 
 // Required Python dependencies
 const REQUIRED_DEPENDENCIES = [
@@ -28,6 +35,8 @@ const REQUIRED_DEPENDENCIES = [
   'notion_client',  // underscore for import check
   'websockets'
 ]
+
+const POETRY_STALE_LOCK_MESSAGE = 'pyproject.toml changed significantly since poetry.lock was last generated'
 
 /**
  * Find the Python executable, roughcut module, and project root
@@ -117,8 +126,10 @@ function findPythonEnvironment(): {
 /**
  * Get the Poetry virtual environment Python path
  */
-function getPoetryVenvPython(projectRoot: string): string | null {
+function getPoetryVenvPython(projectRoot: string, pythonCommand: string): string | null {
   try {
+    console.log('[PythonBridge] Searching for Poetry venv in project:', projectRoot)
+    
     // Common Poetry venv locations (in project)
     const venvPaths = [
       path.join(projectRoot, '.venv', 'Scripts', 'python.exe'),  // Windows
@@ -128,6 +139,7 @@ function getPoetryVenvPython(projectRoot: string): string | null {
     
     // Check common venv locations first
     for (const venvPath of venvPaths) {
+      console.log('[PythonBridge] Checking venv path:', venvPath)
       if (fs.existsSync(venvPath)) {
         console.log('[PythonBridge] Found Poetry venv at:', venvPath)
         return venvPath
@@ -135,26 +147,41 @@ function getPoetryVenvPython(projectRoot: string): string | null {
     }
     
     // Try to get venv path from poetry env info
-    const { execSync } = require('child_process')
-    try {
-      const result = execSync('poetry env info --path', { 
-        cwd: projectRoot,
-        encoding: 'utf-8',
-        timeout: 5000 
-      }).trim()
-      
-      if (result) {
-        const poetryVenvPython = process.platform === 'win32'
-          ? path.join(result, 'Scripts', 'python.exe')
-          : path.join(result, 'bin', 'python')
+    const poetryCommand = findPoetry(pythonCommand)
+    if (poetryCommand) {
+      try {
+        console.log(`[PythonBridge] Trying to get venv path from ${poetryCommand.description} env info...`)
+        const result = spawnSync(poetryCommand.command, [...poetryCommand.args, 'env', 'info', '--path'], {
+          cwd: projectRoot,
+          encoding: 'utf-8',
+          timeout: 5000,
+          windowsHide: true,
+        })
         
-        if (fs.existsSync(poetryVenvPython)) {
-          console.log('[PythonBridge] Poetry venv from poetry env info:', poetryVenvPython)
-          return poetryVenvPython
+        if (result.status === 0) {
+          const venvRoot = result.stdout.trim()
+          
+          if (venvRoot) {
+            console.log('[PythonBridge] Poetry env info returned:', venvRoot)
+            const poetryVenvPython = process.platform === 'win32'
+              ? path.join(venvRoot, 'Scripts', 'python.exe')
+              : path.join(venvRoot, 'bin', 'python')
+            
+            if (fs.existsSync(poetryVenvPython)) {
+              console.log('[PythonBridge] Poetry venv from poetry env info:', poetryVenvPython)
+              return poetryVenvPython
+            } else {
+              console.log('[PythonBridge] Poetry env info path exists but Python not found at:', poetryVenvPython)
+            }
+          }
+        } else {
+          console.log('[PythonBridge] poetry env info command failed (venv may not exist yet)')
         }
+      } catch (e) {
+        console.log('[PythonBridge] poetry env info command failed (venv may not exist yet)')
       }
-    } catch (e) {
-      // Poetry command failed, continue
+    } else {
+      console.log('[PythonBridge] Poetry command unavailable for env info lookup')
     }
     
     // Check standard poetry cache locations - look for roughcut-named venvs
@@ -225,16 +252,123 @@ function getPoetryVenvPython(projectRoot: string): string | null {
 }
 
 /**
- * Run poetry install to set up dependencies
+ * Find the poetry executable
  */
-async function runPoetryInstall(projectRoot: string): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    console.log('[PythonBridge] Running poetry install in:', projectRoot)
+function getPoetryExecutableCandidates(): string[] {
+  const homeDir = os.homedir()
+  const possiblePaths: string[] = [
+    'poetry',  // In PATH
+    path.join(homeDir, '.local', 'bin', 'poetry'),  // Linux
+    path.join(homeDir, '.poetry', 'bin', 'poetry'),  // Old poetry install
+  ]
+  
+  // Windows-specific paths - pip --user installs
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming')
+    const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local')
+
+    const scriptDirs = new Set<string>([
+      path.join(appData, 'Python', 'Scripts'),
+      path.join(homeDir, 'AppData', 'Roaming', 'Python', 'Scripts'),
+    ])
+
+    const pythonInstallRoots = [
+      path.join(appData, 'Python'),
+      path.join(localAppData, 'Programs', 'Python'),
+    ]
+
+    for (const root of pythonInstallRoots) {
+      if (!fs.existsSync(root)) {
+        continue
+      }
+
+      try {
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            scriptDirs.add(path.join(root, entry.name, 'Scripts'))
+          }
+        }
+      } catch (e) {
+        console.log('[PythonBridge] Error enumerating Poetry script directory candidates:', root, e)
+      }
+    }
+
+    for (const scriptDir of scriptDirs) {
+      possiblePaths.push(path.join(scriptDir, 'poetry.exe'))
+      possiblePaths.push(path.join(scriptDir, 'poetry'))
+    }
+
+    possiblePaths.push(path.join(localAppData, 'Microsoft', 'WindowsApps', 'poetry.exe'))
+  }
+
+  return Array.from(new Set(possiblePaths))
+}
+
+function findPoetry(pythonCommand: string): PoetryCommand | null {
+  try {
+    const poetryModuleCheck = spawnSync(pythonCommand, ['-m', 'poetry', '--version'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      windowsHide: true,
+    })
+
+    if (poetryModuleCheck.status === 0) {
+      console.log('[PythonBridge] Found poetry via Python module:', `${pythonCommand} -m poetry`)
+      return {
+        command: pythonCommand,
+        args: ['-m', 'poetry'],
+        description: `${pythonCommand} -m poetry`,
+      }
+    }
+  } catch (e) {
+    console.log('[PythonBridge] python -m poetry check failed')
+  }
+
+  const possiblePaths = getPoetryExecutableCandidates()
+  for (const poetryPath of possiblePaths) {
+    console.log('[PythonBridge] Checking for poetry at:', poetryPath)
     
-    const { spawn } = require('child_process')
-    const proc = spawn('poetry', ['install', '--no-interaction'], {
-      cwd: projectRoot,
-      timeout: 10 * 60 * 1000  // 10 minutes
+    if (poetryPath === 'poetry') {
+      // Try to spawn just 'poetry' to check if it's in PATH
+      try {
+        execSync('poetry --version', { timeout: 5000 })
+        console.log('[PythonBridge] Found poetry in PATH')
+        return {
+          command: 'poetry',
+          args: [],
+          description: 'poetry',
+        }
+      } catch (e) {
+        continue
+      }
+    } else if (fs.existsSync(poetryPath)) {
+      console.log('[PythonBridge] Found poetry at:', poetryPath)
+      return {
+        command: poetryPath,
+        args: [],
+        description: poetryPath,
+      }
+    }
+  }
+  
+  console.log('[PythonBridge] Poetry not found')
+  return null
+}
+
+/**
+ * Install Poetry using pip
+ */
+async function installPoetry(pythonCommand: string): Promise<{ success: boolean; poetryCommand: PoetryCommand | null; error?: string }> {
+  return new Promise((resolve) => {
+    console.log('[PythonBridge] ============================================')
+    console.log('[PythonBridge] Installing Poetry using pip...')
+    console.log('[PythonBridge] ============================================')
+
+    const shellOption = process.platform === 'win32' ? true : false
+    const proc = spawn(pythonCommand, ['-m', 'pip', 'install', 'poetry', '--user'], {
+      shell: shellOption,
+      windowsHide: true,
+      timeout: 5 * 60 * 1000  // 5 minutes
     })
     
     let stdout = ''
@@ -253,26 +387,279 @@ async function runPoetryInstall(projectRoot: string): Promise<{ success: boolean
     })
     
     proc.on('close', (code: number | null) => {
+      console.log('[PythonBridge] Poetry pip install completed with code:', code)
+      
       if (code === 0) {
-        console.log('[PythonBridge] Poetry install completed successfully')
-        resolve({ success: true })
-      } else {
-        console.error('[PythonBridge] Poetry install failed with code:', code)
+        const poetryCommand = findPoetry(pythonCommand)
+        
+        if (poetryCommand) {
+          console.log('[PythonBridge] Poetry installed successfully at:', poetryCommand.description)
+          resolve({ success: true, poetryCommand })
+          return
+        }
+
+        console.error('[PythonBridge] ERROR: Poetry was installed but could not be found')
         resolve({ 
           success: false, 
-          error: `Poetry install failed (code ${code}): ${stderr || stdout || 'Unknown error'}` 
+          poetryCommand: null,
+          error: `Poetry was installed for ${pythonCommand} but could not be invoked afterward from DaVinci Resolve.` 
+        })
+      } else {
+        resolve({ 
+          success: false, 
+          poetryCommand: null,
+          error: `Failed to install Poetry (exit code ${code}). Error: ${stderr || stdout || 'Unknown error'}` 
         })
       }
     })
     
     proc.on('error', (err: Error) => {
-      console.error('[PythonBridge] Failed to spawn poetry:', err)
+      console.error('[PythonBridge] Failed to install Poetry:', err)
       resolve({ 
         success: false, 
-        error: `Cannot run poetry: ${err.message}. Is Poetry installed?` 
+        poetryCommand: null,
+        error: `Failed to install Poetry: ${err.message}` 
       })
     })
   })
+}
+
+async function executePoetryCommand(
+  poetryCommand: PoetryCommand,
+  projectRoot: string,
+  args: string[],
+  label: string
+): Promise<{ success: boolean; code: number | null; stdout: string; stderr: string; hasOutput: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const shellOption = process.platform === 'win32' ? true : false
+    const proc = spawn(poetryCommand.command, [...poetryCommand.args, ...args], {
+      cwd: projectRoot,
+      shell: shellOption,
+      windowsHide: true,
+      timeout: 15 * 60 * 1000,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let hasOutput = false
+
+    proc.stdout.on('data', (data: Buffer) => {
+      hasOutput = true
+      const line = data.toString()
+      stdout += line
+      console.log(`[${label}]`, line.substring(0, 200))
+    })
+
+    proc.stderr.on('data', (data: Buffer) => {
+      hasOutput = true
+      const line = data.toString()
+      stderr += line
+      console.error(`[${label} stderr]`, line.substring(0, 200))
+    })
+
+    proc.on('close', (code: number | null) => {
+      resolve({
+        success: code === 0,
+        code,
+        stdout,
+        stderr,
+        hasOutput,
+      })
+    })
+
+    proc.on('error', (err: Error) => {
+      console.error(`[PythonBridge] Failed to spawn ${label.toLowerCase()} command:`, err)
+      resolve({
+        success: false,
+        code: null,
+        stdout,
+        stderr,
+        hasOutput,
+        error: err.message,
+      })
+    })
+  })
+}
+
+async function runPoetryInstall(projectRoot: string, pythonCommand: string): Promise<{ success: boolean; error?: string }> {
+  return new Promise(async (resolve) => {
+    console.log('[PythonBridge] ============================================')
+    console.log('[PythonBridge] Starting poetry install')
+    console.log('[PythonBridge] Project root:', projectRoot)
+    console.log('[PythonBridge] Checking if pyproject.toml exists...')
+    
+    // Verify project root exists and has pyproject.toml
+    const pyprojectPath = path.join(projectRoot, 'pyproject.toml')
+    if (!fs.existsSync(pyprojectPath)) {
+      console.error('[PythonBridge] ERROR: pyproject.toml not found at:', pyprojectPath)
+      resolve({ 
+        success: false, 
+        error: `pyproject.toml not found in ${projectRoot}. Cannot run poetry install.` 
+      })
+      return
+    }
+    
+    // Find poetry executable - install if not found
+    let poetryCommand = findPoetry(pythonCommand)
+    
+    if (!poetryCommand) {
+      console.log('[PythonBridge] Poetry not found. Attempting to install Poetry automatically...')
+      const poetryInstallResult = await installPoetry(pythonCommand)
+      
+      if (!poetryInstallResult.success) {
+        console.error('[PythonBridge] ERROR: Failed to install Poetry')
+        resolve({ 
+          success: false, 
+          error: poetryInstallResult.error || `Failed to install Poetry automatically. Please install Poetry manually with: pip install poetry` 
+        })
+        return
+      }
+      
+      poetryCommand = poetryInstallResult.poetryCommand
+      console.log('[PythonBridge] Poetry installed successfully at:', poetryCommand?.description)
+    }
+    
+    if (!poetryCommand) {
+      resolve({ 
+        success: false, 
+        error: 'Poetry command is unavailable after installation. This should not happen.' 
+      })
+      return
+    }
+    
+    console.log('[PythonBridge] Found poetry at:', poetryCommand.description)
+    console.log('[PythonBridge] Spawning poetry install...')
+    console.log('[PythonBridge] Working directory:', projectRoot)
+
+    const formatPoetryFailure = (operation: string, result: { code: number | null; stdout: string; stderr: string; hasOutput: boolean; error?: string }): string => {
+      if (result.error) {
+        return `Cannot run ${operation}: ${result.error}. Try: ${pythonCommand} -m pip install poetry --user`
+      }
+
+      let errorMsg = `${operation} failed (code ${result.code})`
+      if (!result.hasOutput) {
+        errorMsg += ': No output from poetry command. Is Poetry installed and in PATH?'
+      } else if (result.stderr) {
+        errorMsg += `: ${result.stderr.substring(0, 300)}`
+      } else if (result.stdout) {
+        errorMsg += `: ${result.stdout.substring(0, 300)}`
+      }
+
+      return errorMsg
+    }
+
+    let installResult = await executePoetryCommand(
+      poetryCommand,
+      projectRoot,
+      ['install', '--no-interaction'],
+      'Poetry install'
+    )
+    console.log('[PythonBridge] Poetry install process closed with code:', installResult.code)
+
+    if (!installResult.success) {
+      console.error('[PythonBridge] Poetry install failed with code:', installResult.code)
+      console.error('[PythonBridge] stdout:', installResult.stdout.substring(0, 500))
+      console.error('[PythonBridge] stderr:', installResult.stderr.substring(0, 500))
+
+      const combinedOutput = `${installResult.stdout}\n${installResult.stderr}`
+      if (combinedOutput.includes(POETRY_STALE_LOCK_MESSAGE)) {
+        console.log('[PythonBridge] poetry.lock is out of date, refreshing lock file before retrying install...')
+
+        const lockResult = await executePoetryCommand(
+          poetryCommand,
+          projectRoot,
+          ['lock', '--no-interaction'],
+          'Poetry lock'
+        )
+        console.log('[PythonBridge] Poetry lock process closed with code:', lockResult.code)
+
+        if (!lockResult.success) {
+          console.error('[PythonBridge] Poetry lock refresh failed with code:', lockResult.code)
+          console.error('[PythonBridge] lock stdout:', lockResult.stdout.substring(0, 500))
+          console.error('[PythonBridge] lock stderr:', lockResult.stderr.substring(0, 500))
+          resolve({ success: false, error: formatPoetryFailure('Poetry lock refresh', lockResult) })
+          return
+        }
+
+        console.log('[PythonBridge] Poetry lock refresh completed successfully, retrying install...')
+        installResult = await executePoetryCommand(
+          poetryCommand,
+          projectRoot,
+          ['install', '--no-interaction'],
+          'Poetry install'
+        )
+        console.log('[PythonBridge] Poetry install retry closed with code:', installResult.code)
+      }
+    }
+
+    if (installResult.success) {
+      console.log('[PythonBridge] Poetry install completed successfully')
+      resolve({ success: true })
+      return
+    }
+
+    console.error('[PythonBridge] Poetry install failed with code:', installResult.code)
+    console.error('[PythonBridge] stdout:', installResult.stdout.substring(0, 500))
+    console.error('[PythonBridge] stderr:', installResult.stderr.substring(0, 500))
+    resolve({ success: false, error: formatPoetryFailure('Poetry install', installResult) })
+  })
+}
+
+async function bootstrapPoetryEnvironment(
+  projectRoot: string,
+  pythonCommand: string,
+  forceInstall = false
+): Promise<{ poetryPythonPath: string | null; error?: string }> {
+  const existingPromise = poetryBootstrapPromises.get(projectRoot)
+  if (existingPromise) {
+    console.log('[PythonBridge] Awaiting active Poetry bootstrap for project:', projectRoot)
+    return existingPromise
+  }
+
+  const bootstrapPromise = (async () => {
+    const existingVenvPython = getPoetryVenvPython(projectRoot, pythonCommand)
+    if (existingVenvPython && !forceInstall) {
+      return { poetryPythonPath: existingVenvPython }
+    }
+
+    if (existingVenvPython && forceInstall) {
+      console.log('[PythonBridge] Poetry venv exists but dependencies are missing, will attempt to repair it')
+    } else {
+      console.log('[PythonBridge] Poetry project detected but venv not found, will attempt to create it')
+    }
+    console.log('[PythonBridge] ============================================')
+    console.log('[PythonBridge] Running Poetry install to ensure dependencies are available...')
+    console.log('[PythonBridge] Project root:', projectRoot)
+    console.log('[PythonBridge] ============================================')
+
+    const installResult = await runPoetryInstall(projectRoot, pythonCommand)
+    if (!installResult.success) {
+      return {
+        poetryPythonPath: null,
+        error: installResult.error || 'Poetry install failed for an unknown reason.',
+      }
+    }
+
+    console.log('[PythonBridge] Poetry install completed, locating virtual environment...')
+    const installedVenvPython = getPoetryVenvPython(projectRoot, pythonCommand)
+
+    if (!installedVenvPython) {
+      return {
+        poetryPythonPath: null,
+        error: 'Poetry install succeeded but the virtual environment Python executable could not be found afterward.',
+      }
+    }
+
+    return { poetryPythonPath: installedVenvPython }
+  })()
+
+  poetryBootstrapPromises.set(projectRoot, bootstrapPromise)
+
+  try {
+    return await bootstrapPromise
+  } finally {
+    poetryBootstrapPromises.delete(projectRoot)
+  }
 }
 
 /**
@@ -306,10 +693,10 @@ else:
     proc.on('close', () => {
       try { fs.unlinkSync(tmpFile) } catch {}
       
-      const lines = output.split('\n')
+      const lines = output.split(/\r?\n/)
       for (const line of lines) {
         if (line.startsWith('MISSING:')) {
-          const missing = line.substring(8).split(',').filter(Boolean)
+          const missing = line.substring(8).split(',').map(dep => dep.trim()).filter(Boolean)
           resolve({ allInstalled: false, missing })
           return
         } else if (line.startsWith('OK:')) {
@@ -518,71 +905,98 @@ export async function executePythonCommand(
   
   // Determine which Python to use
   let actualPythonPath = pythonPath
+  let poetryPythonPath: string | null = null
+  let poetryBootstrapError: string | undefined
   
+  // When using Poetry, we MUST use the Poetry venv Python for everything
+  // System Python should never be used for dependency checks in Poetry projects
   if (usePoetry && projectRoot) {
-    // Try to find Poetry virtual environment Python
-    const poetryPython = getPoetryVenvPython(projectRoot)
-    if (poetryPython) {
-      actualPythonPath = poetryPython
+    const bootstrapResult = await bootstrapPoetryEnvironment(projectRoot, pythonPath)
+    poetryPythonPath = bootstrapResult.poetryPythonPath
+    poetryBootstrapError = bootstrapResult.error
+
+    if (poetryPythonPath) {
+      actualPythonPath = poetryPythonPath
       console.log('[PythonBridge] Using Poetry virtual environment Python:', actualPythonPath)
     } else {
-      console.log('[PythonBridge] Poetry project detected but venv not found, using system Python')
+      console.error('[PythonBridge] Poetry bootstrap failed:', poetryBootstrapError)
     }
   }
   
-  // Check dependencies
+  // Check dependencies using the correct Python (Poetry venv if applicable)
   console.log('[PythonBridge] Checking Python dependencies...')
-  let depsCheck = await checkDependencies(actualPythonPath)
+  console.log('[PythonBridge] Using Python:', actualPythonPath)
+  console.log('[PythonBridge] Project root:', projectRoot)
+  console.log('[PythonBridge] Use Poetry:', usePoetry)
+  if (poetryPythonPath) {
+    console.log('[PythonBridge] Poetry venv Python:', poetryPythonPath)
+  }
   
-  // If dependencies missing and we have a Poetry project, try auto-install
+  let depsCheck = await checkDependencies(actualPythonPath)
+  console.log('[PythonBridge] Dependency check result:', depsCheck)
+
   if (!depsCheck.allInstalled && usePoetry && projectRoot) {
-    console.log('[PythonBridge] Dependencies missing, attempting auto-install with Poetry...')
+    console.log('[PythonBridge] Poetry project has missing dependencies, attempting repair with poetry install...')
     console.log('[PythonBridge] Missing:', depsCheck.missing.join(', '))
-    
-    const installResult = await runPoetryInstall(projectRoot)
-    
-    if (installResult.success) {
-      console.log('[PythonBridge] Poetry install completed, re-checking dependencies...')
-      
-      // Re-find the venv (it should now exist)
-      const poetryPython = getPoetryVenvPython(projectRoot)
-      if (poetryPython) {
-        actualPythonPath = poetryPython
-        console.log('[PythonBridge] Now using Poetry venv Python:', actualPythonPath)
-      }
-      
-      // Re-check dependencies
+
+    const repairResult = await bootstrapPoetryEnvironment(projectRoot, pythonPath, true)
+    poetryPythonPath = repairResult.poetryPythonPath
+    poetryBootstrapError = repairResult.error
+
+    if (poetryPythonPath) {
+      actualPythonPath = poetryPythonPath
+      console.log('[PythonBridge] Repaired Poetry environment Python:', actualPythonPath)
       depsCheck = await checkDependencies(actualPythonPath)
-      
-      if (depsCheck.allInstalled) {
-        console.log('[PythonBridge] All dependencies now installed!')
-      } else {
-        console.error('[PythonBridge] Still missing after install:', depsCheck.missing.join(', '))
-      }
-    } else {
-      console.error('[PythonBridge] Poetry install failed:', installResult.error)
+      console.log('[PythonBridge] Dependency check after Poetry repair:', depsCheck)
+    } else if (poetryBootstrapError) {
+      console.error('[PythonBridge] Poetry repair failed:', poetryBootstrapError)
     }
+  }
+  
+  // If dependencies are still missing in a Poetry project, something went wrong
+  if (!depsCheck.allInstalled && usePoetry && projectRoot && poetryPythonPath) {
+    console.error('[PythonBridge] Dependencies still missing after Poetry install')
+    console.error('[PythonBridge] This may indicate a corrupted Poetry environment')
+  } else if (!depsCheck.allInstalled && !usePoetry) {
+    console.log('[PythonBridge] Not a Poetry project, skipping auto-install')
+  } else if (!depsCheck.allInstalled && !projectRoot) {
+    console.log('[PythonBridge] No project root found, cannot auto-install')
   }
   
   if (!depsCheck.allInstalled) {
     const missingList = depsCheck.missing.join(', ')
     
+    // Build diagnostic info
+    let diagInfo = `\n\nDIAGNOSTIC INFO:\n`
+    diagInfo += `Project root: ${projectRoot || 'NOT FOUND'}\n`
+    diagInfo += `Using Poetry: ${usePoetry}\n`
+    diagInfo += `Python path: ${actualPythonPath}\n`
+    
+    if (projectRoot) {
+      const pyprojectExists = fs.existsSync(path.join(projectRoot, 'pyproject.toml'))
+      diagInfo += `pyproject.toml exists: ${pyprojectExists}\n`
+    }
+    
     let errorMsg: string
     if (usePoetry && projectRoot) {
       errorMsg = `Missing required Python dependencies: ${missingList}\n\n`
-      errorMsg += `Poetry auto-install failed or is not available.\n\n`
+      errorMsg += poetryBootstrapError
+        ? `Poetry install or repair failed: ${poetryBootstrapError}\n\n`
+        : `Poetry install or repair failed or is not available.\n\n`
       errorMsg += `To fix this, try one of the following:\n\n`
       errorMsg += `Option 1 - Run from DaVinci Resolve:\n`
       errorMsg += `  Workspace > Scripts > RoughCut (Install)\n\n`
       errorMsg += `Option 2 - Run manually in terminal:\n`
       errorMsg += `  cd "${projectRoot}"\n`
-      errorMsg += `  poetry install\n\n`
+      errorMsg += `  ${pythonPath} -m poetry install\n\n`
       errorMsg += `Option 3 - Install with pip:\n`
       errorMsg += `  pip install ${missingList}`
+      errorMsg += diagInfo
     } else {
       errorMsg = `Missing required Python dependencies: ${missingList}\n\n`
       errorMsg += `Install with:\n`
       errorMsg += `pip install ${missingList}`
+      errorMsg += diagInfo
     }
     
     console.error('[PythonBridge]', errorMsg)
