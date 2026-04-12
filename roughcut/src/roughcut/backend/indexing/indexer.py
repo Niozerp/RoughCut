@@ -5,10 +5,11 @@ with support for progress updates and performance optimization.
 """
 
 import asyncio
+import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Callable, Any, TYPE_CHECKING, Set, Tuple
 from dataclasses import dataclass, field
 
 from ...config.models import MediaFolderConfig
@@ -85,6 +86,12 @@ class MediaIndexer:
         # Initialize SpacetimeDB client (connection deferred to connect_database())
         self._db_client = None
         self._db_lock = asyncio.Lock()
+
+    @staticmethod
+    def _normalize_path(file_path: Path | str) -> str:
+        """Normalize a filesystem path for stable comparisons."""
+        resolved = Path(file_path).resolve()
+        return os.path.normcase(str(resolved))
     
     async def connect_database(self) -> bool:
         """Connect to SpacetimeDB for persistent storage.
@@ -124,10 +131,9 @@ class MediaIndexer:
             return connected
             
         except Exception as e:
-            # Log error but don't fail - indexing can continue with in-memory only
             import logging
             logging.getLogger(__name__).warning(
-                f"Failed to connect to SpacetimeDB: {e}. Continuing with in-memory storage only."
+                f"Failed to connect to SpacetimeDB: {e}"
             )
             return False
     
@@ -196,145 +202,8 @@ class MediaIndexer:
         Returns:
             IndexResult with counts and timing information
         """
-        start_time = time.time()
-        result = IndexResult()
-        
-        # Get configured folders as dict
-        folders_dict = folder_configs.get_configured_folders()
-        
-        if not any(folders_dict.values()):
-            result.errors.append("No media folders configured")
-            return result
-        
-        # Update index state with current folders
-        self.index_state.folder_configs = folders_dict
-        
-        # Use empty list if no cached assets
-        if cached_assets is None:
-            cached_assets = []
-        
-        self._send_progress(
-            current=0,
-            total=0,
-            message="Scanning for media files...",
-            operation="scan"
-        )
-        
-        try:
-            # 1. Scan for changes
-            if incremental and cached_assets:
-                changes = await self.incremental_scanner.scan_for_changes(
-                    folders_dict, cached_assets
-                )
-            else:
-                # Full scan: treat everything as new
-                changes = await self._full_scan(folders_dict)
-            
-            files_to_process = changes.new_files + changes.modified_files
-            total_files = len(files_to_process)
-            
-            if total_files == 0:
-                self._send_progress(
-                    current=0,
-                    total=0,
-                    message="No changes detected",
-                    operation="complete"
-                )
-                result.indexed_count = 0
-                result.duration_ms = int((time.time() - start_time) * 1000)
-                return result
-            
-            self._send_progress(
-                current=0,
-                total=total_files,
-                message=f"Found {len(changes.new_files)} new, {len(changes.modified_files)} modified files",
-                operation="index"
-            )
-            
-            # 2. Process new and modified files
-            processed_assets: List[MediaAsset] = []
-            processed = 0
-            
-            for file_path in files_to_process:
-                # Check for cancellation request
-                if self._cancelled:
-                    result.errors.append("Indexing cancelled by user")
-                    break
-                
-                try:
-                    # Determine category
-                    category = self._get_file_category(file_path, folders_dict)
-                    if not category:
-                        continue
-                    
-                    # Create asset from file
-                    asset = MediaAsset.from_file_path(
-                        file_path=file_path,
-                        category=category,
-                        file_hash=self.hash_cache.get_file_hash(file_path)
-                    )
-                    
-                    processed_assets.append(asset)
-                    processed += 1
-                    
-                    # Update counts
-                    if file_path in changes.new_files:
-                        result.new_count += 1
-                    else:
-                        result.modified_count += 1
-                    
-                    # Send progress update
-                    await self._maybe_send_progress(
-                        current=processed,
-                        total=total_files,
-                        message=f"Indexing: {file_path.name}",
-                        operation="index"
-                    )
-                    
-                except (FileNotFoundError, PermissionError, OSError) as e:
-                    result.errors.append(f"Error processing {file_path}: {e}")
-                    continue
-            
-            # 3. Store in database (batch operation)
-            if processed_assets:
-                self._send_progress(
-                    current=processed,
-                    total=total_files,
-                    message=f"Storing {len(processed_assets)} assets...",
-                    operation="store"
-                )
-                await self._store_assets_batch(processed_assets)
-            
-            # 4. Handle deleted files
-            if changes.deleted_files:
-                self._send_progress(
-                    current=processed,
-                    total=total_files,
-                    message=f"Removing {len(changes.deleted_files)} deleted assets...",
-                    operation="cleanup"
-                )
-                await self._delete_assets(changes.deleted_files)
-                result.deleted_count = len(changes.deleted_files)
-            
-            # Update result counts
-            result.indexed_count = processed
-            
-            # Update index state
-            self.index_state.total_assets_indexed = len(cached_assets) + result.new_count - result.deleted_count
-            self.index_state.update_last_index_time()
-            
-            self._send_progress(
-                current=total_files,
-                total=total_files,
-                message=f"Indexing complete: {processed} assets processed",
-                operation="complete"
-            )
-            
-        except Exception as e:
-            result.errors.append(f"Indexing error: {e}")
-        
-        result.duration_ms = int((time.time() - start_time) * 1000)
-        return result
+        _ = cached_assets, incremental
+        return await self._reconcile_folders(folder_configs, operation_name="index")
     
     async def _full_scan(
         self,
@@ -369,6 +238,251 @@ class MediaIndexer:
             deleted_files=[],
             total_scanned=total_scanned
         )
+
+    async def _load_category_assets(
+        self,
+        category: str,
+    ) -> List[MediaAsset]:
+        """Load all assets for a category from durable storage or memory."""
+        if self._db_client:
+            query_result = await self._db_client.query_assets(
+                category=category,
+                limit=100000,
+            )
+            if query_result.error:
+                raise RuntimeError(query_result.error)
+            return query_result.assets
+
+        return [asset for asset in self._assets.values() if asset.category == category]
+
+    async def _hydrate_assets_cache(self, assets: List[MediaAsset]) -> None:
+        """Refresh the in-memory cache from authoritative assets."""
+        async with self._assets_lock:
+            current_time = time.time()
+            for asset in assets:
+                self._assets[asset.id] = asset
+                self._assets_access_time[asset.id] = current_time
+            self._evict_oldest_assets_if_needed()
+            if hasattr(self, '_counter') and self._counter is not None:
+                self._counter.invalidate_cache()
+
+    async def _deduplicate_assets(
+        self,
+        assets: List[MediaAsset],
+    ) -> Tuple[List[MediaAsset], List[str]]:
+        """Collapse duplicate records by normalized file path."""
+        survivors: Dict[str, MediaAsset] = {}
+        duplicate_ids: List[str] = []
+
+        for asset in assets:
+            normalized_path = self._normalize_path(asset.file_path)
+            existing = survivors.get(normalized_path)
+            if existing is None:
+                survivors[normalized_path] = asset
+                continue
+
+            existing_created = existing.created_at or datetime.min
+            candidate_created = asset.created_at or datetime.min
+            keep_existing = (
+                existing_created < candidate_created or
+                (existing_created == candidate_created and existing.id <= asset.id)
+            )
+
+            survivor = existing if keep_existing else asset
+            duplicate = asset if keep_existing else existing
+            merged_tags = list(dict.fromkeys((existing.ai_tags or []) + (asset.ai_tags or [])))
+            survivor.ai_tags = merged_tags
+            survivors[normalized_path] = survivor
+            duplicate_ids.append(duplicate.id)
+
+        if duplicate_ids and self._db_client:
+            await self._delete_assets(duplicate_ids)
+
+        deduplicated_assets = list(survivors.values())
+        await self._hydrate_assets_cache(deduplicated_assets)
+        return deduplicated_assets, duplicate_ids
+
+    async def _load_reconciliation_assets(
+        self,
+        folders_dict: Dict[str, Optional[str]],
+    ) -> Tuple[List[MediaAsset], List[str]]:
+        """Load and scope DB assets for reconciliation."""
+        target_categories = [category for category, folder in folders_dict.items() if folder]
+        all_assets: List[MediaAsset] = []
+        for category in target_categories:
+            all_assets.extend(await self._load_category_assets(category))
+
+        deduplicated_assets, duplicate_ids = await self._deduplicate_assets(all_assets)
+
+        in_scope_assets: List[MediaAsset] = []
+        out_of_scope_ids: List[str] = []
+        for asset in deduplicated_assets:
+            folder_path = folders_dict.get(asset.category)
+            if not folder_path:
+                out_of_scope_ids.append(asset.id)
+                continue
+
+            if self.incremental_scanner.get_asset_category(asset.file_path, folders_dict) != asset.category:
+                out_of_scope_ids.append(asset.id)
+                continue
+
+            in_scope_assets.append(asset)
+
+        stale_ids = list(dict.fromkeys(out_of_scope_ids + duplicate_ids))
+        return in_scope_assets, stale_ids
+
+    async def _reconcile_folders(
+        self,
+        folder_configs: MediaFolderConfig,
+        operation_name: str,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> IndexResult:
+        """Reconcile configured folders with SpacetimeDB and cache."""
+        start_time = time.time()
+        result = IndexResult()
+
+        original_callback = self.progress_callback
+        if progress_callback is not None:
+            self.progress_callback = progress_callback
+
+        folders_dict = folder_configs.get_configured_folders()
+        if not any(folders_dict.values()):
+            result.errors.append("No media folders configured")
+            if progress_callback is not None:
+                self.progress_callback = original_callback
+            return result
+
+        self.index_state.folder_configs = folders_dict
+
+        try:
+            self._send_progress(
+                current=0,
+                total=0,
+                message=f"{operation_name.capitalize()}: scanning folders...",
+                operation="scan",
+            )
+
+            scanned_files: Dict[Path, FileMetadata] = {}
+            for category, folder_path in folders_dict.items():
+                if not folder_path or not Path(folder_path).exists():
+                    continue
+
+                files_metadata = await self._scan_folder_full(folder_path, category)
+                scanned_files.update(files_metadata)
+                self._send_progress(
+                    current=len(scanned_files),
+                    total=len(scanned_files),
+                    message=f"{operation_name.capitalize()}: scanned {category} ({len(files_metadata)} files)",
+                    operation="scan",
+                )
+
+            result.total_scanned = len(scanned_files)
+
+            self._send_progress(
+                current=0,
+                total=0,
+                message=f"{operation_name.capitalize()}: reconciling database state...",
+                operation="scan",
+            )
+
+            from .change_detector import ChangeDetector
+
+            db_assets, pre_delete_ids = await self._load_reconciliation_assets(folders_dict)
+            detector = ChangeDetector()
+            changes = detector.detect_changes(scanned_files, db_assets)
+
+            path_lookup = {
+                self._normalize_path(asset.file_path): asset
+                for asset in db_assets
+            }
+            deleted_ids = list(dict.fromkeys(pre_delete_ids + changes.deleted_files))
+            total_changes = (
+                len(changes.new_files) +
+                len(changes.modified_files) +
+                len(changes.moved_files) +
+                len(deleted_ids)
+            )
+
+            self._send_progress(
+                current=0,
+                total=total_changes,
+                message=(
+                    f"Processing {len(changes.new_files)} new, "
+                    f"{len(changes.modified_files)} modified, "
+                    f"{len(changes.moved_files)} moved, "
+                    f"{len(deleted_ids)} deleted..."
+                ),
+                operation="index",
+            )
+
+            processed = 0
+            if changes.new_files:
+                new_assets = await self._process_new_files(
+                    changes.new_files, folders_dict, processed, total_changes
+                )
+                if new_assets:
+                    self._send_progress(
+                        current=processed,
+                        total=total_changes,
+                        message=f"Storing {len(new_assets)} new assets...",
+                        operation="store",
+                        database_writing=True,
+                    )
+                    await self._store_assets_batch(new_assets)
+                result.new_count = len(new_assets)
+                processed += len(changes.new_files)
+
+            if changes.modified_files:
+                await self._process_modified_files(
+                    changes.modified_files,
+                    folders_dict,
+                    processed,
+                    total_changes,
+                    path_lookup,
+                )
+                result.modified_count = len(changes.modified_files)
+                processed += len(changes.modified_files)
+
+            if changes.moved_files:
+                await self._process_moved_files(changes.moved_files, path_lookup)
+                result.moved_count = len(changes.moved_files)
+                processed += len(changes.moved_files)
+
+            if deleted_ids:
+                self._send_progress(
+                    current=processed,
+                    total=total_changes,
+                    message=f"Removing {len(deleted_ids)} stale assets...",
+                    operation="cleanup",
+                )
+                await self._delete_assets(deleted_ids)
+                result.deleted_count = len(deleted_ids)
+
+            result.indexed_count = result.new_count + result.modified_count
+            self.index_state.total_assets_indexed = max(
+                0,
+                len(db_assets) + result.new_count - result.deleted_count
+            )
+            self.index_state.update_last_index_time()
+
+            self._send_progress(
+                current=total_changes,
+                total=total_changes,
+                message=(
+                    f"{operation_name.capitalize()} complete: {result.new_count} new, "
+                    f"{result.modified_count} modified, {result.moved_count} moved, "
+                    f"{result.deleted_count} deleted"
+                ),
+                operation="complete",
+            )
+        except Exception as e:
+            result.errors.append(f"{operation_name.capitalize()} error: {e}")
+        finally:
+            if progress_callback is not None:
+                self.progress_callback = original_callback
+
+        result.duration_ms = int((time.time() - start_time) * 1000)
+        return result
     
     async def _maybe_send_progress(
         self,
@@ -406,7 +520,10 @@ class MediaIndexer:
         current: int,
         total: int,
         message: str,
-        operation: str
+        operation: str,
+        database_writing: bool = False,
+        batch_current: Optional[int] = None,
+        batch_total: Optional[int] = None,
     ) -> None:
         """Send progress update via callback.
         
@@ -420,9 +537,13 @@ class MediaIndexer:
             self.progress_callback({
                 'type': 'progress',
                 'operation': operation,
+                'phase': operation,
                 'current': current,
                 'total': total,
-                'message': message
+                'message': message,
+                'databaseWriting': database_writing,
+                'batchCurrent': batch_current,
+                'batchTotal': batch_total,
             })
     
     def _get_file_category(
@@ -492,7 +613,8 @@ class MediaIndexer:
                 async with self._db_lock:
                     result = await self._db_client.insert_assets(
                         assets,
-                        batch_size=500  # Optimal batch size per story requirements
+                        batch_size=500,  # Optimal batch size per story requirements
+                        progress_callback=self._handle_store_batch_progress,
                     )
                     if result.errors:
                         import logging
@@ -516,6 +638,26 @@ class MediaIndexer:
             logging.getLogger(__name__).debug(
                 f"Failed to queue assets for Notion sync: {e}"
             )
+
+    def _handle_store_batch_progress(self, progress: Dict[str, Any]) -> None:
+        """Forward Spacetime batch writes through the main progress callback."""
+        current = int(progress.get('current', 0))
+        total = int(progress.get('total', 0))
+        batch_current = progress.get('batch_current')
+        batch_total = progress.get('batch_total')
+        message = f"Writing {current}/{total} assets to SpacetimeDB"
+        if batch_total:
+            message += f" (batch {batch_current}/{batch_total})"
+
+        self._send_progress(
+            current=current,
+            total=total,
+            message=message,
+            operation="store",
+            database_writing=True,
+            batch_current=batch_current,
+            batch_total=batch_total,
+        )
     
     async def _delete_assets(self, asset_ids: List[str]) -> None:
         """Delete assets from memory and SpacetimeDB.
@@ -530,25 +672,27 @@ class MediaIndexer:
         Args:
             asset_ids: List of asset IDs to delete
         """
-        deleted_ids: List[str] = []
-        
+        deleted_ids = list(dict.fromkeys(asset_ids))
+
         async with self._assets_lock:
-            for asset_id in asset_ids:
-                if asset_id in self._assets:
-                    del self._assets[asset_id]
-                    deleted_ids.append(asset_id)
-            
-            # Invalidate counter cache only if deletions occurred
-            if deleted_ids:
-                if hasattr(self, '_counter') and self._counter is not None:
-                    self._counter.invalidate_cache()
+            for asset_id in deleted_ids:
+                self._assets.pop(asset_id, None)
+                self._assets_access_time.pop(asset_id, None)
+
+            if deleted_ids and hasattr(self, '_counter') and self._counter is not None:
+                self._counter.invalidate_cache()
         
         # Delete from SpacetimeDB (outside lock to avoid blocking)
         # Database failures are logged but don't prevent in-memory deletion
         if self._db_client and deleted_ids:
             try:
                 async with self._db_lock:
-                    deleted_count = await self._db_client.delete_assets(deleted_ids)
+                    delete_result = await self._db_client.delete_assets(deleted_ids)
+                    deleted_count = (
+                        delete_result.deleted_count
+                        if hasattr(delete_result, 'deleted_count')
+                        else int(delete_result)
+                    )
                     import logging
                     logging.getLogger(__name__).info(
                         f"Deleted {deleted_count} assets from SpacetimeDB"
@@ -603,150 +747,11 @@ class MediaIndexer:
         Returns:
             IndexResult with counts including moved and deleted assets
         """
-        start_time = time.time()
-        result = IndexResult()
-        
-        # Use provided callback or instance callback
-        callback = progress_callback or self.progress_callback
-        
-        # Temporarily set callback for _send_progress to use
-        original_callback = self.progress_callback
-        self.progress_callback = callback
-        
-        # Get configured folders as dict
-        folders_dict = folder_configs.get_configured_folders()
-        
-        if not any(folders_dict.values()):
-            result.errors.append("No media folders configured")
-            self.progress_callback = original_callback
-            return result
-        
-        try:
-            # Step 1: Full scan of all configured folders
-            self._send_progress(
-                current=0,
-                total=0,
-                message="Re-indexing: scanning folders...",
-                operation="scan"
-            )
-            
-            scanned_files: Dict[Path, FileMetadata] = {}
-            for category, folder_path in folders_dict.items():
-                if not folder_path or not Path(folder_path).exists():
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        f"Skipping missing folder: {category}={folder_path}"
-                    )
-                    continue
-                
-                # Scan folder for all files (no incremental filtering)
-                files_metadata = await self._scan_folder_full(folder_path, category)
-                scanned_files.update(files_metadata)
-                
-                self._send_progress(
-                    current=len(scanned_files),
-                    total=len(scanned_files),
-                    message=f"Re-indexing: scanned {category} ({len(files_metadata)} files)",
-                    operation="scan"
-                )
-            
-            result.total_scanned = len(scanned_files)
-            
-            # Step 2: Retrieve current database state
-            self._send_progress(
-                current=0,
-                total=0,
-                message="Re-indexing: detecting changes...",
-                operation="detect"
-            )
-            
-            # Get existing assets from database or memory
-            db_assets: List[MediaAsset] = []
-            if self._db_client:
-                try:
-                    db_assets = await self._db_client.query_assets(limit=100000)
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        f"Failed to query database: {e}. Using in-memory assets only."
-                    )
-                    db_assets = list(self._assets.values())
-            else:
-                db_assets = list(self._assets.values())
-            
-            # Step 3: Detect changes
-            from .change_detector import ChangeDetector, FileMetadata
-            detector = ChangeDetector()
-            changes = detector.detect_changes(scanned_files, db_assets)
-            
-            # Step 4: Process changes
-            total_changes = len(changes.new_files) + len(changes.modified_files) + len(changes.moved_files) + len(changes.deleted_files)
-            processed = 0
-            
-            self._send_progress(
-                current=0,
-                total=total_changes,
-                message=f"Processing {len(changes.new_files)} new, {len(changes.modified_files)} modified, "
-                        f"{len(changes.moved_files)} moved, {len(changes.deleted_files)} deleted...",
-                operation="process"
-            )
-            
-            # Handle new files
-            if changes.new_files:
-                new_assets = await self._process_new_files(
-                    changes.new_files, folders_dict, processed, total_changes
-                )
-                await self._store_assets_batch(new_assets)
-                result.new_count = len(new_assets)
-                processed += len(changes.new_files)
-            
-            # Handle modified files
-            if changes.modified_files:
-                await self._process_modified_files(
-                    changes.modified_files, folders_dict, processed, total_changes
-                )
-                result.modified_count = len(changes.modified_files)
-                processed += len(changes.modified_files)
-            
-            # Handle moved files (update paths only)
-            if changes.moved_files:
-                await self._process_moved_files(changes.moved_files)
-                result.moved_count = len(changes.moved_files)
-                processed += len(changes.moved_files)
-            
-            # Handle deleted/orphaned files
-            if changes.deleted_files:
-                await self._delete_assets(changes.deleted_files)
-                result.deleted_count = len(changes.deleted_files)
-                processed += len(changes.deleted_files)
-            
-            # Update total count
-            result.indexed_count = result.new_count + result.modified_count
-            
-            # Update index state
-            self.index_state.total_assets_indexed = len(db_assets) + result.new_count - result.deleted_count
-            self.index_state.update_last_index_time()
-            
-            self._send_progress(
-                current=total_changes,
-                total=total_changes,
-                message=f"Re-indexing complete: {result.new_count} new, "
-                        f"{result.modified_count} modified, {result.moved_count} moved, "
-                        f"{result.deleted_count} deleted",
-                operation="complete"
-            )
-            
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Re-indexing error: {e}")
-            result.errors.append(f"Re-indexing error: {e}")
-        
-        finally:
-            # Restore original callback
-            self.progress_callback = original_callback
-        
-        result.duration_ms = int((time.time() - start_time) * 1000)
-        return result
+        return await self._reconcile_folders(
+            folder_configs,
+            operation_name="reindex",
+            progress_callback=progress_callback,
+        )
     
     async def _scan_folder_full(
         self,
@@ -768,8 +773,10 @@ class MediaIndexer:
         files: Dict[Path, FileMetadata] = {}
         folder = Path(folder_path)
         
-        # Scan for all supported extensions for this category
-        for file_path in self.file_scanner.scan_folder(folder):
+        scanner = FileScanner(categories=[category])
+
+        # Scan only the extensions valid for this category
+        for file_path in scanner.scan_folder(folder):
             try:
                 stat = file_path.stat()
                 file_hash = self.hash_cache.get_file_hash(file_path)
@@ -833,7 +840,7 @@ class MediaIndexer:
                     current=processed,
                     total=total,
                     message=f"Processing new: {file_path.name}",
-                    operation="process"
+                    operation="index"
                 )
                 
             except (FileNotFoundError, PermissionError, OSError) as e:
@@ -850,7 +857,8 @@ class MediaIndexer:
         modified_files: List[Path],
         folder_configs: Dict[str, Optional[str]],
         current: int,
-        total: int
+        total: int,
+        path_lookup: Dict[str, MediaAsset],
     ) -> None:
         """Process modified files by updating their metadata.
         
@@ -867,24 +875,30 @@ class MediaIndexer:
                 break
             
             try:
-                # Find existing asset by path
-                path_str = str(file_path)
-                existing_asset = None
-                for asset in self._assets.values():
-                    if asset.file_path == path_str:
-                        existing_asset = asset
-                        break
+                normalized_path = self._normalize_path(file_path)
+                existing_asset = path_lookup.get(normalized_path)
                 
                 if existing_asset:
-                    # Update hash and modified time
+                    stat = file_path.stat()
                     existing_asset.file_hash = self.hash_cache.get_file_hash(file_path)
-                    existing_asset.modified_time = datetime.now()
+                    existing_asset.modified_time = datetime.fromtimestamp(stat.st_mtime)
+                    existing_asset.file_size = stat.st_size
+                    existing_asset.file_name = file_path.name
+                    existing_asset.file_path = file_path.resolve()
+                    existing_asset.category = self._get_file_category(file_path, folder_configs) or existing_asset.category
+                    existing_asset.updated_at = datetime.now()
+                    path_lookup[normalized_path] = existing_asset
+                    await self._hydrate_assets_cache([existing_asset])
                     
-                    # Update in database
                     if self._db_client:
                         await self._db_client.update_asset(existing_asset.id, {
+                            'file_path': str(existing_asset.file_path),
+                            'file_name': existing_asset.file_name,
+                            'category': existing_asset.category,
+                            'file_size': existing_asset.file_size,
                             'file_hash': existing_asset.file_hash,
-                            'modified_time': existing_asset.modified_time.isoformat()
+                            'modified_time': existing_asset.modified_time.isoformat(),
+                            'updated_at': existing_asset.updated_at.isoformat(),
                         })
                 
                 processed += 1
@@ -892,7 +906,7 @@ class MediaIndexer:
                     current=processed,
                     total=total,
                     message=f"Processing modified: {file_path.name}",
-                    operation="process"
+                    operation="index"
                 )
                 
             except (FileNotFoundError, PermissionError, OSError) as e:
@@ -904,7 +918,8 @@ class MediaIndexer:
     
     async def _process_moved_files(
         self,
-        moved_files: List[Tuple[Path, Path]]
+        moved_files: List[Tuple[Path, Path]],
+        path_lookup: Dict[str, MediaAsset],
     ) -> None:
         """Update database records for moved files (path change only).
         
@@ -913,25 +928,24 @@ class MediaIndexer:
         """
         for old_path, new_path in moved_files:
             try:
-                path_str = str(old_path)
-                
-                # Find existing asset by old path
-                existing_asset = None
-                for asset in self._assets.values():
-                    if asset.file_path == path_str:
-                        existing_asset = asset
-                        break
+                old_path_normalized = self._normalize_path(old_path)
+                new_path_normalized = self._normalize_path(new_path)
+                existing_asset = path_lookup.pop(old_path_normalized, None)
                 
                 if existing_asset:
                     # Update path and name
-                    existing_asset.file_path = str(new_path)
+                    existing_asset.file_path = new_path.resolve()
                     existing_asset.file_name = new_path.name
+                    existing_asset.updated_at = datetime.now()
+                    path_lookup[new_path_normalized] = existing_asset
+                    await self._hydrate_assets_cache([existing_asset])
                     
                     # Update in database
                     if self._db_client:
                         await self._db_client.update_asset(existing_asset.id, {
-                            'file_path': existing_asset.file_path,
-                            'file_name': existing_asset.file_name
+                            'file_path': str(existing_asset.file_path),
+                            'file_name': existing_asset.file_name,
+                            'updated_at': existing_asset.updated_at.isoformat(),
                         })
                     
                     import logging

@@ -550,9 +550,15 @@ def index_media(params: dict) -> dict:
             }
         }
     
-    folder_config = config_manager.get_media_folders_config()
+    full_folder_config = config_manager.get_media_folders_config()
     incremental = params.get('incremental', True)
     categories = params.get('categories', ['music', 'sfx', 'vfx'])
+
+    folder_config = MediaFolderConfig(
+        music_folder=full_folder_config.music_folder if 'music' in categories else None,
+        sfx_folder=full_folder_config.sfx_folder if 'sfx' in categories else None,
+        vfx_folder=full_folder_config.vfx_folder if 'vfx' in categories else None,
+    )
     
     # Get the indexer instance
     indexer = _get_indexer()
@@ -568,13 +574,10 @@ def index_media(params: dict) -> dict:
         # Reset cancellation state before starting
         indexer.reset_cancellation()
         
-        # Load cached assets from in-memory storage (Story 2.5: will load from SpacetimeDB)
-        cached_assets: List[MediaAsset] = list(indexer._assets.values())
-        
         result = loop.run_until_complete(
             indexer.index_media(
                 folder_configs=folder_config,
-                cached_assets=cached_assets,
+                cached_assets=None,
                 incremental=incremental
             )
         )

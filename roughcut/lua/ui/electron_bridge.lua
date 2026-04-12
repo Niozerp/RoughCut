@@ -14,6 +14,8 @@ local electronProcess = nil
 local projectRoot = nil
 local isRunning = false
 local isInstalling = false
+local launchState = "idle"
+local lastLaunchError = nil
 
 --- Get the project root directory
 -- @return string project root path or nil
@@ -144,8 +146,8 @@ local function areDepsInstalled()
     return false
 end
 
---- Check if Electron app exists
--- @return boolean true if electron app exists
+--- Check if the shipped RoughCut bootstrap entrypoint exists
+-- @return boolean true if RoughCut can be launched
 function electronBridge.isAvailable()
     local root = getProjectRoot()
     if not root then
@@ -161,18 +163,17 @@ function electronBridge.isAvailable()
         return false
     end
     f:close()
-    
-    -- Check if npm is available
-    if not isNpmAvailable() then
-        logger.info("Electron not available: npm not found in PATH")
-        logger.info("  Node.js may not be installed or not in system PATH")
-        logger.info("  Download from: https://nodejs.org/")
+
+    local bootstrapPath = root .. "/roughcut/scripts/bootstrap_launch.py"
+    f = io.open(bootstrapPath, "r")
+    if not f then
+        logger.info("Electron not available: bootstrap script not found at " .. bootstrapPath)
         return false
     end
-    
-    local npmPath = getNpmPath()
+    f:close()
+
     logger.info("Electron is available at: " .. root .. "/electron")
-    logger.info("  npm found at: " .. npmPath)
+    logger.info("  bootstrap found at: " .. bootstrapPath)
     return true
 end
 
@@ -228,32 +229,72 @@ function electronBridge.installDependencies(onProgress)
     return true
 end
 
---- Get the path to run Electron
+--- Get the Python bootstrap command used to launch RoughCut
+-- @param resolve Resolve API object (optional)
 -- @return table with cmd (array), workingDir, and error
-local function getElectronCommand()
+local function getElectronCommand(resolve)
     local root = getProjectRoot()
     if not root then
         return { cmd = nil, workingDir = nil, error = "Could not determine project root" }
     end
-    
-    local electronDir = root .. "/electron"
-    
-    -- Check for npm
-    if not isNpmAvailable() then
-        return { cmd = nil, workingDir = nil, error = "npm not found in PATH. Please install Node.js." }
+
+    local bootstrapScript = root .. "/roughcut/scripts/bootstrap_launch.py"
+    local bootstrapFile = io.open(bootstrapScript, "r")
+    if not bootstrapFile then
+        return {
+            cmd = nil,
+            workingDir = nil,
+            error = "Bootstrap script not found at " .. bootstrapScript
+        }
     end
-    
-    local npmCmd = getNpmPath()
-    
-    -- Check if dependencies are installed
-    if not areDepsInstalled() then
-        return { cmd = nil, workingDir = nil, error = "Dependencies not installed. Run installDependencies() first." }
+    bootstrapFile:close()
+
+    local pythonCmd = nil
+    local pythonArgs = {}
+    if processUtils.commandExists("python") then
+        pythonCmd = "python"
+    elseif processUtils.commandExists("py") then
+        pythonCmd = "py"
+        pythonArgs = {"-3"}
+    else
+        return {
+            cmd = nil,
+            workingDir = nil,
+            error = "Python 3.10+ is required before RoughCut can bootstrap itself."
+        }
     end
-    
-    -- Build the command: npm run dev
+
+    local cmd = {pythonCmd}
+    for _, arg in ipairs(pythonArgs) do
+        table.insert(cmd, arg)
+    end
+    table.insert(cmd, bootstrapScript)
+    table.insert(cmd, "--mode")
+    table.insert(cmd, "resolve")
+
+    if resolve and resolve.GetProjectManager then
+        local ok, projectManager = pcall(function()
+            return resolve:GetProjectManager()
+        end)
+        if ok and projectManager and projectManager.GetCurrentProject then
+            local okProject, project = pcall(function()
+                return projectManager:GetCurrentProject()
+            end)
+            if okProject and project and project.GetName then
+                local okName, projectName = pcall(function()
+                    return project:GetName()
+                end)
+                if okName and projectName and projectName ~= "" then
+                    table.insert(cmd, "--project-name")
+                    table.insert(cmd, projectName)
+                end
+            end
+        end
+    end
+
     return {
-        cmd = { npmCmd, "run", "dev" },
-        workingDir = electronDir,
+        cmd = cmd,
+        workingDir = root,
         error = nil
     }
 end
@@ -267,51 +308,53 @@ function electronBridge.launch(resolve, onMessage)
         logger.info("Electron is already running")
         return true
     end
-    
+   
     logger.info("Launching RoughCut Electron UI...")
+    launchState = "launching"
+    lastLaunchError = nil
     
     -- Check if Electron is available
     if not electronBridge.isAvailable() then
         logger.error("Electron app not found or npm not available")
+        launchState = "failed"
+        lastLaunchError = "Electron app not found or npm not available"
         return false
     end
     
-    -- Auto-install dependencies if needed
-    if not areDepsInstalled() then
-        logger.info("Electron dependencies not found, installing...")
-        local installed = electronBridge.installDependencies()
-        if not installed then
-            logger.error("Failed to install Electron dependencies")
-            return false
-        end
-    end
-    
     -- Get launch command
-    local launchInfo = getElectronCommand()
+    local launchInfo = getElectronCommand(resolve)
     if launchInfo.error then
         logger.error("Failed to get Electron command: " .. launchInfo.error)
+        launchState = "failed"
+        lastLaunchError = launchInfo.error
         return false
     end
     
     logger.info("Starting Electron from: " .. launchInfo.workingDir)
     logger.info("Command: " .. table.concat(launchInfo.cmd, " "))
-    
-    -- Spawn the Electron process
-    -- Note: We use spawn instead of run because Electron is a long-running GUI app
-    local result = processUtils.spawn(launchInfo.cmd, launchInfo.workingDir)
-    
-    if result.error then
-        logger.error("Failed to spawn Electron: " .. result.error)
+
+    local result = processUtils.run(launchInfo.cmd, launchInfo.workingDir, 1800)
+    if not result.success then
+        local combinedOutput = (result.stdout or "") .. "\n" .. (result.stderr or "")
+        lastLaunchError = result.error or combinedOutput
+        logger.error("RoughCut bootstrap failed before Electron became ready")
+        if combinedOutput and combinedOutput ~= "" then
+            logger.error(combinedOutput)
+        elseif result.error then
+            logger.error(result.error)
+        end
+        launchState = "failed"
         return false
     end
-    
-    electronProcess = result
+
+    electronProcess = nil
     isRunning = true
-    
-    logger.info("Electron process started")
-    
-    -- Give Electron a moment to start, then report success
-    -- We don't wait for it to finish since it's a GUI app
+    launchState = "running"
+
+    if result.stdout and result.stdout ~= "" then
+        logger.info(result.stdout)
+    end
+    logger.info("Electron bootstrap completed and the main window survived startup")
     return true
 end
 
@@ -336,6 +379,7 @@ end
 function electronBridge.close()
     if not electronProcess or not electronProcess.handle then
         isRunning = false
+        launchState = "idle"
         return true
     end
     
@@ -345,6 +389,7 @@ function electronBridge.close()
     
     electronProcess = nil
     isRunning = false
+    launchState = "idle"
     
     return result.success
 end
@@ -362,7 +407,9 @@ function electronBridge.getStatus()
         available = electronBridge.isAvailable(),
         depsInstalled = areDepsInstalled(),
         isRunning = isRunning,
-        isInstalling = isInstalling
+        isInstalling = isInstalling,
+        launchState = launchState,
+        lastLaunchError = lastLaunchError,
     }
 end
 

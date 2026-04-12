@@ -4,6 +4,7 @@ Provides change detection algorithms to identify new, modified,
 moved, and deleted files during full re-indexing scans.
 """
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +64,11 @@ class ChangeDetector:
         3. Moved: Hash matches, but path differs (old path in DB, new in scan)
         4. Deleted: Path in DB but not in scan (orphaned)
     """
+
+    @staticmethod
+    def _normalize_path(file_path: Path | str) -> str:
+        """Normalize a filesystem path for stable comparisons."""
+        return os.path.normcase(str(Path(file_path).resolve()))
     
     def detect_changes(
         self,
@@ -86,7 +92,7 @@ class ChangeDetector:
         db_by_hash: Dict[str, MediaAsset] = {}
         
         for asset in db_assets:
-            db_by_path[asset.file_path] = asset
+            db_by_path[self._normalize_path(asset.file_path)] = asset
             # Handle potential duplicate hashes (rare but possible)
             # We only store the first asset with a given hash to avoid
             # ambiguity in move detection. Duplicate-hash assets that aren't
@@ -103,7 +109,7 @@ class ChangeDetector:
         processed_hashes: set = set()
         
         for path, metadata in scanned_files.items():
-            path_str = str(path)
+            path_str = self._normalize_path(path)
             
             if path_str in db_by_path:
                 # Path exists - check for modification
@@ -117,7 +123,8 @@ class ChangeDetector:
                     metadata.file_hash not in processed_hashes):
                     old_asset = db_by_hash[metadata.file_hash]
                     # Only treat as move if old path is different and exists in DB
-                    if old_asset.file_path != path_str:
+                    old_path = self._normalize_path(old_asset.file_path)
+                    if old_path != path_str:
                         moved_files.append((Path(old_asset.file_path), path))
                         processed_hashes.add(metadata.file_hash)
                     else:
@@ -128,9 +135,9 @@ class ChangeDetector:
                     new_files.append(path)
         
         # Find orphaned entries (in DB but not on disk)
-        scanned_paths = {str(p) for p in scanned_files.keys()}
+        scanned_paths = {self._normalize_path(p) for p in scanned_files.keys()}
         for db_asset in db_assets:
-            if db_asset.file_path not in scanned_paths:
+            if self._normalize_path(db_asset.file_path) not in scanned_paths:
                 # Check if this asset was "moved" - if hash is in scanned files
                 # under a different path, it's a move (already handled above)
                 if db_asset.file_hash not in processed_hashes:
@@ -158,18 +165,18 @@ class ChangeDetector:
         Returns:
             Tuple of (orphaned_asset_ids, new_paths)
         """
-        db_paths = {asset.file_path for asset in db_assets}
+        db_paths = {self._normalize_path(asset.file_path) for asset in db_assets}
         
         # Orphaned: in DB but not on disk
         orphaned = [
             asset.id for asset in db_assets
-            if asset.file_path not in scanned_paths
+            if self._normalize_path(asset.file_path) not in scanned_paths
         ]
         
         # New: on disk but not in DB
         new_paths = [
             Path(p) for p in scanned_paths
-            if p not in db_paths
+            if self._normalize_path(p) not in db_paths
         ]
         
         return orphaned, new_paths

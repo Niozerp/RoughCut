@@ -1,46 +1,76 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-console.log('[Preload] Script starting execution...')
-console.log('[Preload] process.contextIsolated:', process.contextIsolated)
-
-try {
-  if (!process.contextIsolated) {
-    console.warn('[Preload] WARNING: contextIsolation is disabled - this is insecure!')
-    // Fall back to direct window assignment (for debugging only)
-    throw new Error('contextIsolation must be enabled for security')
-  }
-
-  // Use contextBridge for secure exposure
-  contextBridge.exposeInMainWorld('electronAPI', {
-    // Existing methods
-    checkResolveConnection: () => ipcRenderer.invoke('resolve:check-connection'),
-    sendTimeline: (data: unknown) => ipcRenderer.invoke('resolve:send-timeline', data),
-    getAssets: (category: string) => ipcRenderer.invoke('media:get-assets', category),
-    selectFolder: () => ipcRenderer.invoke('media:select-folder'),
-    
-    // NEW: Indexing methods
-    indexFolders: (params: IndexFoldersParams) => ipcRenderer.invoke('media:index-folders', params),
-    reindexFolders: (params: ReindexFoldersParams) => ipcRenderer.invoke('media:reindex-folders', params),
-    queryAssets: (params: QueryAssetsParams) => ipcRenderer.invoke('media:query-assets', params),
-    getDatabaseStatus: () => ipcRenderer.invoke('media:database-status'),
-    cancelIndexing: (operationId: string) => ipcRenderer.invoke('media:cancel-indexing', { operationId }),
-    
-    // NEW: Progress listener setup
-    onIndexProgress: (callback: (event: unknown, data: IndexProgressData) => void) => {
-      ipcRenderer.on('media:index-progress', callback)
-    },
-    removeIndexProgressListener: (callback: (event: unknown, data: IndexProgressData) => void) => {
-      ipcRenderer.removeListener('media:index-progress', callback)
-    }
-  })
-
-  console.log('[Preload] electronAPI exposed via contextBridge')
-  console.log('[Preload] Script execution completed')
-} catch (error) {
-  console.error('[Preload] FATAL ERROR exposing API:', error)
+interface MediaFolders {
+  music_folder: string | null
+  sfx_folder: string | null
+  vfx_folder: string | null
 }
 
-// Type definitions for the new API
+interface OnboardingState {
+  completed: boolean
+  configured_count: number
+  folders: {
+    music: boolean
+    sfx: boolean
+    vfx: boolean
+  }
+  has_invalid_folders: boolean
+  invalid_folders: {
+    music?: string
+    sfx?: string
+    vfx?: string
+  }
+}
+
+interface SpacetimeRuntimeState {
+  host: string
+  port: number
+  database_name: string
+  module_path: string | null
+  data_dir: string | null
+  binary_path: string | null
+  binary_version: string | null
+  module_published: boolean
+  module_fingerprint: string | null
+  published_fingerprint: string | null
+  last_ready_at: string | null
+  last_health_check_at: string | null
+}
+
+interface ConfigState {
+  media_folders: MediaFolders
+  onboarding: OnboardingState
+  spacetime: SpacetimeRuntimeState
+}
+
+interface BootstrapStatus {
+  status: 'idle' | 'starting' | 'ready' | 'error'
+  message: string
+  error?: string
+  spacetime: SpacetimeRuntimeState
+}
+
+interface StorageHealthStatus {
+  status: 'idle' | 'starting' | 'ready' | 'degraded' | 'recovering' | 'error'
+  message: string
+  error?: string
+  lastHealthyAt?: string | null
+  lastCheckAt?: string | null
+  recoveryAttemptCount?: number
+  spacetime: SpacetimeRuntimeState
+}
+
+interface ResolveConnectionStatus {
+  status: 'connected' | 'connecting' | 'disconnected'
+  connected: boolean
+  available: boolean
+  attached: boolean
+  project_name: string | null
+  version: unknown
+  module_error: string | null
+  search_paths: string[]
+}
+
 interface IndexFoldersParams {
   folders: Array<{
     id: string
@@ -48,6 +78,7 @@ interface IndexFoldersParams {
     category: 'music' | 'sfx' | 'vfx'
   }>
   incremental?: boolean
+  operationId?: string
 }
 
 interface ReindexFoldersParams {
@@ -56,25 +87,51 @@ interface ReindexFoldersParams {
     path: string
     category: 'music' | 'sfx' | 'vfx'
   }>
+  operationId?: string
 }
 
 interface QueryAssetsParams {
   category: 'music' | 'sfx' | 'vfx'
   limit?: number
+  folderPath?: string
+  verifyOnDisk?: boolean
 }
 
 interface IndexProgressData {
   operationId: string
+  category: 'music' | 'sfx' | 'vfx'
   type: string
   operation: string
+  phase: 'scan' | 'index' | 'store' | 'cleanup' | 'complete'
   current: number
   total: number
   message: string
+  databaseWriting: boolean
+  batchCurrent?: number
+  batchTotal?: number
+}
+
+interface IndexedAsset {
+  id: string
+  file_name?: string
+  file_path?: string
+  ai_tags?: string[]
+  duration?: string
+  used?: boolean
+}
+
+interface QueryAssetsResult {
+  success: boolean
+  assets: IndexedAsset[]
+  total_count: number
+  database_connected: boolean
+  error?: string
 }
 
 interface IndexResult {
   success: boolean
   operation_id: string
+  category: 'music' | 'sfx' | 'vfx'
   indexed_count: number
   new_count: number
   modified_count: number
@@ -89,15 +146,6 @@ interface IndexResult {
   error_type?: string
 }
 
-interface Asset {
-  id: string
-  name: string
-  tags: string[]
-  duration: string
-  used: boolean
-  folderId: string
-}
-
 interface DatabaseStatus {
   success: boolean
   connected: boolean
@@ -108,26 +156,98 @@ interface DatabaseStatus {
   error?: string
 }
 
-// TypeScript support
+interface AppInfo {
+  version: string
+  mode: 'electron'
+  launchMode: 'standalone' | 'resolve'
+  launchedFromResolve: boolean
+  projectName: string | null
+}
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  getBootstrapStatus: () => ipcRenderer.invoke('bootstrap:get-status'),
+  retryBootstrap: () => ipcRenderer.invoke('bootstrap:retry'),
+  getStorageHealth: () => ipcRenderer.invoke('storage:get-health'),
+  retryStorageRecovery: () => ipcRenderer.invoke('storage:retry-recovery'),
+  getResolveStatus: () => ipcRenderer.invoke('resolve:get-status'),
+  connectResolve: () => ipcRenderer.invoke('resolve:connect'),
+  disconnectResolve: () => ipcRenderer.invoke('resolve:disconnect'),
+  sendTimeline: (data: unknown) => ipcRenderer.invoke('resolve:send-timeline', data),
+  getAppInfo: () => ipcRenderer.invoke('app:get-info'),
+  getConfigState: () => ipcRenderer.invoke('config:get-state'),
+  saveMediaFolders: (folders: MediaFolders) => ipcRenderer.invoke('config:save-media-folders', folders),
+  setOnboardingComplete: (completed: boolean) =>
+    ipcRenderer.invoke('config:set-onboarding-complete', { completed }),
+  selectFolder: () => ipcRenderer.invoke('media:select-folder'),
+  indexFolders: (params: IndexFoldersParams) => ipcRenderer.invoke('media:index-folders', params),
+  reindexFolders: (params: ReindexFoldersParams) => ipcRenderer.invoke('media:reindex-folders', params),
+  queryAssets: (params: QueryAssetsParams) => ipcRenderer.invoke('media:query-assets', params),
+  getDatabaseStatus: () => ipcRenderer.invoke('media:database-status'),
+  purgeCategoryAssets: (category: 'music' | 'sfx' | 'vfx') => ipcRenderer.invoke('media:purge-category', { category }),
+  cancelIndexing: (operationId: string) => ipcRenderer.invoke('media:cancel-indexing', { operationId }),
+  onIndexProgress: (callback: (event: unknown, data: IndexProgressData) => void) => {
+    ipcRenderer.on('media:index-progress', callback)
+  },
+  removeIndexProgressListener: (callback: (event: unknown, data: IndexProgressData) => void) => {
+    ipcRenderer.removeListener('media:index-progress', callback)
+  },
+  onStorageHealthChanged: (callback: (event: unknown, data: StorageHealthStatus) => void) => {
+    ipcRenderer.on('storage:health-changed', callback)
+  },
+  removeStorageHealthListener: (callback: (event: unknown, data: StorageHealthStatus) => void) => {
+    ipcRenderer.removeListener('storage:health-changed', callback)
+  },
+})
+
 declare global {
   interface Window {
     electronAPI: {
-      // Existing
-      checkResolveConnection: () => Promise<{ status: string }>
-      sendTimeline: (data: unknown) => Promise<{ success: boolean }>
-      getAssets: (category: string) => Promise<Asset[]>
+      getBootstrapStatus: () => Promise<BootstrapStatus>
+      retryBootstrap: () => Promise<BootstrapStatus>
+      getStorageHealth: () => Promise<StorageHealthStatus>
+      retryStorageRecovery: () => Promise<StorageHealthStatus>
+      getResolveStatus: () => Promise<ResolveConnectionStatus>
+      connectResolve: () => Promise<ResolveConnectionStatus>
+      disconnectResolve: () => Promise<ResolveConnectionStatus>
+      sendTimeline: (data: unknown) => Promise<{ success: boolean; error?: string }>
+      getAppInfo: () => Promise<AppInfo>
+      getConfigState: () => Promise<ConfigState>
+      saveMediaFolders: (folders: MediaFolders) => Promise<{
+        success: boolean
+        message: string
+        media_folders: MediaFolders
+        onboarding: OnboardingState
+      }>
+      setOnboardingComplete: (completed: boolean) => Promise<{
+        success: boolean
+        message: string
+        onboarding: OnboardingState
+      }>
       selectFolder: () => Promise<{ canceled: boolean; filePath: string | null; error?: string }>
-      
-      // NEW: Indexing
       indexFolders: (params: IndexFoldersParams) => Promise<IndexResult>
       reindexFolders: (params: ReindexFoldersParams) => Promise<IndexResult>
-      queryAssets: (params: QueryAssetsParams) => Promise<{ success: boolean; assets: Asset[]; total_count: number; database_connected: boolean; error?: string }>
+      queryAssets: (params: QueryAssetsParams) => Promise<QueryAssetsResult>
       getDatabaseStatus: () => Promise<DatabaseStatus>
+      purgeCategoryAssets: (category: 'music' | 'sfx' | 'vfx') => Promise<{ success: boolean; deleted_count: number; error?: string }>
       cancelIndexing: (operationId: string) => Promise<{ success: boolean; operation_id: string }>
-      
-      // NEW: Progress events
       onIndexProgress: (callback: (event: unknown, data: IndexProgressData) => void) => void
       removeIndexProgressListener: (callback: (event: unknown, data: IndexProgressData) => void) => void
+      onStorageHealthChanged: (callback: (event: unknown, data: StorageHealthStatus) => void) => void
+      removeStorageHealthListener: (callback: (event: unknown, data: StorageHealthStatus) => void) => void
     }
   }
+}
+
+export type {
+  AppInfo,
+  BootstrapStatus,
+  ConfigState,
+  DatabaseStatus,
+  IndexProgressData,
+  IndexResult,
+  MediaFolders,
+  OnboardingState,
+  QueryAssetsResult,
+  ResolveConnectionStatus,
+  StorageHealthStatus,
 }

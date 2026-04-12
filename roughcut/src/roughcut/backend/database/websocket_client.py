@@ -22,7 +22,10 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 # WebSocket library - using websockets as it's the most robust
 try:
     import websockets
-    from websockets.client import WebSocketClientProtocol
+    try:
+        from websockets.client import WebSocketClientProtocol
+    except ImportError:
+        from websockets.legacy.client import WebSocketClientProtocol
     HAS_WEBSOCKETS = True
 except ImportError:
     HAS_WEBSOCKETS = False
@@ -166,6 +169,7 @@ class SpacetimeWebSocketClient:
         # Message handling
         self._message_handlers: Dict[MessageType, Callable] = {}
         self._pending_requests: Dict[str, asyncio.Future] = {}
+        self._pending_message_types: Dict[str, List[asyncio.Future]] = {}
         self._subscriptions: Dict[str, Callable[[TableUpdate], None]] = {}
         
         # Callbacks
@@ -271,7 +275,10 @@ class SpacetimeWebSocketClient:
             
             # Wait for connect response
             try:
-                response = await self._wait_for_message("connect_response", timeout=5.0)
+                response = await self._wait_for_message(
+                    expected_type="connect_response",
+                    timeout=5.0
+                )
                 
                 if response.get("success"):
                     self._connected = True
@@ -340,6 +347,11 @@ class SpacetimeWebSocketClient:
             if not future.done():
                 future.set_exception(ConnectionError("Disconnected"))
         self._pending_requests.clear()
+        for futures in self._pending_message_types.values():
+            for future in futures:
+                if not future.done():
+                    future.set_exception(ConnectionError("Disconnected"))
+        self._pending_message_types.clear()
         
         if self._on_disconnect:
             try:
@@ -359,11 +371,13 @@ class SpacetimeWebSocketClient:
             await self._ws.close()
             self._ws = None
         self._connected = False
+        self._pending_requests.clear()
+        self._pending_message_types.clear()
     
     async def _receive_loop(self):
         """Background task to receive and process messages."""
         try:
-            while self._ws and self._connected:
+            while self._ws is not None:
                 try:
                     message = await self._ws.recv()
                     await self._handle_message(message)
@@ -442,6 +456,15 @@ class SpacetimeWebSocketClient:
                 if not future.done():
                     future.set_result(data)
                 return
+
+            pending_type_waiters = self._pending_message_types.get(msg_type)
+            if pending_type_waiters:
+                future = pending_type_waiters.pop(0)
+                if not pending_type_waiters:
+                    self._pending_message_types.pop(msg_type, None)
+                if not future.done():
+                    future.set_result(data)
+                return
             
             # Handle based on type
             if msg_type == "connect_response":
@@ -486,24 +509,42 @@ class SpacetimeWebSocketClient:
         # Fallback: assume it's JSON in bytes
         return json.loads(data.decode('utf-8'))
     
-    async def _wait_for_message(self, msg_type: str, timeout: float = 30.0) -> Dict[str, Any]:
-        """Wait for a specific message type.
+    async def _wait_for_message(
+        self,
+        expected_type: Optional[str] = None,
+        timeout: float = 30.0,
+        request_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Wait for a specific message type or request id.
         
         Args:
-            msg_type: Expected message type
+            expected_type: Expected message type
             timeout: Maximum wait time
+            request_id: Specific request identifier to await
             
         Returns:
             Message data
         """
-        request_id = str(uuid.uuid4())
         future = asyncio.get_event_loop().create_future()
-        self._pending_requests[request_id] = future
+
+        if request_id is not None:
+            self._pending_requests[request_id] = future
+        elif expected_type is not None:
+            self._pending_message_types.setdefault(expected_type, []).append(future)
+        else:
+            raise ValueError("expected_type or request_id must be provided")
         
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
-            self._pending_requests.pop(request_id, None)
+            if request_id is not None:
+                self._pending_requests.pop(request_id, None)
+            elif expected_type is not None:
+                waiters = self._pending_message_types.get(expected_type, [])
+                if future in waiters:
+                    waiters.remove(future)
+                if not waiters:
+                    self._pending_message_types.pop(expected_type, None)
             raise
     
     async def _handle_table_update(self, data: Dict[str, Any]):
@@ -577,7 +618,11 @@ class SpacetimeWebSocketClient:
         
         # Wait for confirmation
         try:
-            response = await self._wait_for_message("subscription_response", timeout)
+            response = await self._wait_for_message(
+                expected_type="subscription_response",
+                timeout=timeout,
+                request_id=subscription_id
+            )
             if not response.get("success"):
                 error = response.get("error", "Unknown error")
                 raise RuntimeError(f"Subscription failed: {error}")
@@ -643,7 +688,11 @@ class SpacetimeWebSocketClient:
         
         # Wait for result
         try:
-            response = await self._wait_for_message("reducer_result", timeout)
+            response = await self._wait_for_message(
+                expected_type="reducer_result",
+                timeout=timeout,
+                request_id=request_id
+            )
             
             return ReducerResult(
                 success=response.get("success", False),

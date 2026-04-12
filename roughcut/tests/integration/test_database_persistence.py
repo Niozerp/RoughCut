@@ -128,6 +128,44 @@ class TestIndexerDatabaseIntegration:
         mock_spacetime_client.insert_assets.assert_called_once()
         call_args = mock_spacetime_client.insert_assets.call_args
         assert call_args[1]['batch_size'] == 500
+        assert callable(call_args[1]['progress_callback'])
+
+    @pytest.mark.asyncio
+    async def test_store_assets_forwards_spacetime_batch_progress(self, mock_spacetime_client):
+        """Store phase should surface granular SpacetimeDB batch progress."""
+        progress_updates = []
+        indexer = MediaIndexer(progress_callback=progress_updates.append)
+        indexer._db_client = mock_spacetime_client
+
+        async def insert_assets_side_effect(*args, **kwargs):
+            kwargs['progress_callback']({
+                'current': 0,
+                'total': 2,
+                'batch_current': 0,
+                'batch_total': 1,
+            })
+            kwargs['progress_callback']({
+                'current': 2,
+                'total': 2,
+                'batch_current': 1,
+                'batch_total': 1,
+            })
+            return Mock(inserted_count=2, errors=[], duration_ms=50.0)
+
+        mock_spacetime_client.insert_assets = AsyncMock(side_effect=insert_assets_side_effect)
+
+        assets = [
+            MediaAsset.from_file_path(Path("/test/music/song1.mp3"), category="music"),
+            MediaAsset.from_file_path(Path("/test/music/song2.mp3"), category="music"),
+        ]
+
+        await indexer._store_assets_batch(assets)
+
+        store_updates = [update for update in progress_updates if update['phase'] == 'store']
+        assert len(store_updates) >= 2
+        assert all(update['databaseWriting'] is True for update in store_updates)
+        assert store_updates[-1]['batchCurrent'] == 1
+        assert store_updates[-1]['batchTotal'] == 1
     
     @pytest.mark.asyncio
     async def test_delete_assets_removes_from_database(self, mock_spacetime_client):

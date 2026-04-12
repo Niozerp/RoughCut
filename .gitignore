@@ -1,0 +1,9 @@
+# RoughCut local runtime/install artifacts
+electron-stdout.log
+electron-stderr.log
+roughcut/.venv/
+roughcut/src/roughcut/backend/database/rust_modules/target/
+
+# Python caches
+__pycache__/
+*.py[cod]

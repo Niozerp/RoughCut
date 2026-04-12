@@ -6,6 +6,8 @@ with proper error handling and version compatibility.
 
 import logging
 import os
+import sys
+from importlib import import_module
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -32,8 +34,80 @@ class ResolveApi:
         self._project = None
         self._fusion = None
         self._initialized = False
+        self._module_search_paths: List[str] = []
+        self._module_error: Optional[str] = None
         
         logger.debug("ResolveApi initialized")
+
+    def _candidate_module_dirs(self) -> List[str]:
+        """Build the list of DaVinci Resolve scripting module directories."""
+        candidates: List[str] = []
+
+        def add_candidate(path_value: Optional[str]) -> None:
+            if not path_value:
+                return
+            normalized = os.path.normpath(path_value)
+            if normalized not in candidates:
+                candidates.append(normalized)
+
+        env_api = os.environ.get("RESOLVE_SCRIPT_API")
+        env_lib = os.environ.get("RESOLVE_SCRIPT_LIB")
+        python_path = os.environ.get("PYTHONPATH", "")
+        platform = sys.platform
+
+        # Official env vars may point at either the API root or Modules directory.
+        for path_value in (env_api, env_lib):
+            if not path_value:
+                continue
+            add_candidate(path_value)
+            add_candidate(os.path.join(path_value, "Modules"))
+            add_candidate(os.path.join(path_value, "Developer", "Scripting", "Modules"))
+
+        for entry in python_path.split(os.pathsep):
+            if entry:
+                add_candidate(entry)
+
+        if platform.startswith("win"):
+            program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+            program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+            program_files_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+            add_candidate(os.path.join(program_data, "Blackmagic Design", "DaVinci Resolve", "Support", "Developer", "Scripting", "Modules"))
+            add_candidate(os.path.join(program_files, "Blackmagic Design", "DaVinci Resolve", "Developer", "Scripting", "Modules"))
+            add_candidate(os.path.join(program_files_x86, "Blackmagic Design", "DaVinci Resolve", "Developer", "Scripting", "Modules"))
+        elif platform == "darwin":
+            add_candidate("/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules")
+            add_candidate("/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/Modules")
+            add_candidate("/Applications/DaVinci Resolve Studio.app/Contents/Libraries/Fusion/Modules")
+        else:
+            add_candidate("/opt/resolve/Developer/Scripting/Modules")
+            add_candidate("/home/resolve/Developer/Scripting/Modules")
+            add_candidate("/opt/resolve/libs/Fusion/Modules")
+
+        return candidates
+
+    def _import_resolve_script_module(self) -> Optional[Any]:
+        """Import DaVinciResolveScript after probing standard locations."""
+        try:
+            return import_module("DaVinciResolveScript")
+        except ImportError as initial_error:
+            self._module_error = str(initial_error)
+
+        for candidate in self._candidate_module_dirs():
+            module_file = os.path.join(candidate, "DaVinciResolveScript.py")
+            if not os.path.exists(module_file):
+                continue
+
+            self._module_search_paths.append(candidate)
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+
+            try:
+                return import_module("DaVinciResolveScript")
+            except ImportError as import_error:
+                self._module_error = str(import_error)
+                continue
+
+        return None
     
     def _get_resolve(self) -> Optional[Any]:
         """Get the Resolve application instance.
@@ -45,13 +119,18 @@ class ResolveApi:
             return self._resolve
         
         try:
-            # Try to import the resolve module (available in Resolve's Python environment)
-            import DaVinciResolveScript as dvr_script
+            dvr_script = self._import_resolve_script_module()
+            if dvr_script is None:
+                logger.debug("DaVinciResolveScript module not available after discovery")
+                return None
+
             self._resolve = dvr_script.scriptapp("Resolve")
             
             if self._resolve:
                 logger.info("Connected to DaVinci Resolve")
                 self._fusion = self._resolve.Fusion()
+                self._module_error = None
+                self._initialized = True
             
             return self._resolve
             
@@ -60,7 +139,49 @@ class ResolveApi:
             return None
         except Exception as e:
             logger.error(f"Error connecting to Resolve: {e}")
+            self._module_error = str(e)
             return None
+
+    def connect(self) -> bool:
+        """Attempt to establish a usable Resolve scripting connection."""
+        return self._get_resolve() is not None and self.is_available()
+
+    def disconnect(self) -> None:
+        """Clear cached Resolve handles.
+
+        Resolve scripting is process-global, so disconnect is limited to clearing
+        cached handles and forcing future calls to re-discover the application.
+        """
+        self._resolve = None
+        self._project = None
+        self._fusion = None
+        self._initialized = False
+
+    def get_connection_status(self) -> Dict[str, Any]:
+        """Return structured connection status for standalone Electron attach flows."""
+        connected = self.is_available()
+        project_name = None
+        version = None
+
+        if connected:
+            try:
+                project = self._get_project()
+                if project:
+                    project_name = project.GetName()
+            except Exception as error:
+                logger.debug(f"Could not read current project name: {error}")
+
+            version = self.get_resolve_version()
+
+        search_paths = list(dict.fromkeys(self._module_search_paths + self._candidate_module_dirs()))
+        return {
+            "connected": connected,
+            "available": connected,
+            "project_name": project_name,
+            "version": version,
+            "module_error": None if connected else self._module_error,
+            "search_paths": search_paths,
+        }
     
     def _get_project(self) -> Optional[Any]:
         """Get the current Resolve project.

@@ -23,9 +23,11 @@ class TestConfigManager(unittest.TestCase):
         # Store original environment
         self.original_home = os.environ.get("HOME")
         self.original_appdata = os.environ.get("APPDATA")
+        self.original_userprofile = os.environ.get("USERPROFILE")
         
         # Set environment to use temp directory
         os.environ["HOME"] = str(self.temp_dir)
+        os.environ["USERPROFILE"] = str(self.temp_dir)
         if "APPDATA" in os.environ:
             del os.environ["APPDATA"]
         
@@ -42,6 +44,13 @@ class TestConfigManager(unittest.TestCase):
         
         if self.original_appdata:
             os.environ["APPDATA"] = self.original_appdata
+        elif "APPDATA" in os.environ:
+            del os.environ["APPDATA"]
+
+        if self.original_userprofile:
+            os.environ["USERPROFILE"] = self.original_userprofile
+        elif "USERPROFILE" in os.environ:
+            del os.environ["USERPROFILE"]
         
         # Clean up temp directory
         import shutil
@@ -248,6 +257,175 @@ class TestConfigManager(unittest.TestCase):
         # Should have loaded the saved config
         self.assertTrue(manager.is_notion_configured())
 
+    def test_onboarding_defaults_to_incomplete(self):
+        """Test onboarding is incomplete by default."""
+        manager = ConfigManager()
+
+        self.assertFalse(manager.is_onboarding_complete())
+        state = manager.get_onboarding_state()
+        self.assertFalse(state["completed"])
+        self.assertEqual(state["configured_count"], 0)
+
+    def test_set_onboarding_complete_persists(self):
+        """Test onboarding completion persists across instances."""
+        manager = ConfigManager()
+
+        success, message = manager.set_onboarding_complete(True)
+
+        self.assertTrue(success)
+        self.assertIn("complete", message.lower())
+        self.assertTrue(manager.is_onboarding_complete())
+
+        ConfigManager.reset_instance()
+        manager = ConfigManager()
+        self.assertTrue(manager.is_onboarding_complete())
+
+    def test_get_onboarding_state_reflects_configured_categories(self):
+        """Test onboarding state includes configured folder coverage."""
+        manager = ConfigManager()
+        music_dir = self.temp_dir / "music"
+        music_dir.mkdir()
+        sfx_dir = self.temp_dir / "sfx"
+        sfx_dir.mkdir()
+
+        manager.save_media_folders_config(
+            music_folder=str(music_dir),
+            sfx_folder=str(sfx_dir),
+        )
+
+        state = manager.get_onboarding_state()
+
+        self.assertFalse(state["completed"])
+        self.assertEqual(state["configured_count"], 2)
+        self.assertTrue(state["folders"]["music"])
+        self.assertTrue(state["folders"]["sfx"])
+        self.assertFalse(state["folders"]["vfx"])
+        self.assertFalse(state["has_invalid_folders"])
+        self.assertEqual(state["invalid_folders"], {})
+
+    def test_get_onboarding_state_ignores_missing_saved_folder_paths(self):
+        """Test missing saved folder paths are not counted as configured."""
+        manager = ConfigManager()
+        missing_music = self.temp_dir / "missing-music"
+
+        success, message, errors = manager.save_media_folders_config(
+            music_folder=str(missing_music),
+        )
+
+        self.assertFalse(success)
+        self.assertIn("Validation failed", message)
+        self.assertIn("music", errors)
+
+        manager._config_data["media_folders"] = {
+            "music_folder": str(missing_music),
+            "sfx_folder": None,
+            "vfx_folder": None,
+        }
+
+        state = manager.get_onboarding_state()
+
+        self.assertEqual(state["configured_count"], 0)
+        self.assertFalse(state["folders"]["music"])
+        self.assertTrue(state["has_invalid_folders"])
+
+    def test_get_onboarding_state_marks_completed_false_when_saved_paths_invalid(self):
+        """Test invalid saved paths force onboarding back into incomplete state."""
+        manager = ConfigManager()
+        missing_music = self.temp_dir / "missing-music"
+
+        manager._config_data["media_folders"] = {
+            "music_folder": str(missing_music),
+            "sfx_folder": None,
+            "vfx_folder": None,
+        }
+        manager._config_data["onboarding_completed"] = True
+
+        state = manager.get_onboarding_state()
+
+        self.assertFalse(state["completed"])
+        self.assertTrue(manager.is_onboarding_complete())
+        self.assertTrue(state["has_invalid_folders"])
+        self.assertIn("music", state["invalid_folders"])
+
+    def test_get_onboarding_state_preserves_completed_true_for_valid_partial_setup(self):
+        """Test valid partial setup remains complete after onboarding is finished."""
+        manager = ConfigManager()
+        music_dir = self.temp_dir / "music"
+        sfx_dir = self.temp_dir / "sfx"
+        music_dir.mkdir()
+        sfx_dir.mkdir()
+
+        success, _, errors = manager.save_media_folders_config(
+            music_folder=str(music_dir),
+            sfx_folder=str(sfx_dir),
+            vfx_folder=None,
+        )
+        self.assertTrue(success)
+        self.assertEqual(errors, {})
+
+        manager.set_onboarding_complete(True)
+        state = manager.get_onboarding_state()
+
+        self.assertTrue(state["completed"])
+        self.assertEqual(state["configured_count"], 2)
+        self.assertFalse(state["has_invalid_folders"])
+        self.assertEqual(state["invalid_folders"], {})
+
+    def test_get_onboarding_state_returns_invalid_folder_errors(self):
+        """Test onboarding state surfaces per-category invalid folder errors."""
+        manager = ConfigManager()
+        missing_music = self.temp_dir / "missing-music"
+        missing_sfx = self.temp_dir / "missing-sfx"
+
+        manager._config_data["media_folders"] = {
+            "music_folder": str(missing_music),
+            "sfx_folder": str(missing_sfx),
+            "vfx_folder": None,
+        }
+
+        state = manager.get_onboarding_state()
+
+        self.assertTrue(state["has_invalid_folders"])
+        self.assertIn("music", state["invalid_folders"])
+        self.assertIn("sfx", state["invalid_folders"])
+        self.assertNotIn("vfx", state["invalid_folders"])
+
+    def test_spacetime_runtime_state_updates_without_overwriting_token(self):
+        """Test runtime metadata updates preserve existing encrypted token."""
+        manager = ConfigManager()
+
+        success, _ = manager.save_spacetime_config(
+            host="localhost",
+            port=3000,
+            database_name="roughcut",
+            identity_token="runtime-token",
+            module_path="/module/path",
+        )
+        self.assertTrue(success)
+
+        success, _ = manager.update_spacetime_runtime_state(
+            data_dir="/data/path",
+            binary_path="/bin/spacetime",
+            binary_version="2.0.0",
+            module_published=True,
+            module_fingerprint="source-123",
+            published_fingerprint="source-123",
+            last_ready_at="2026-04-11T12:00:00Z",
+            last_health_check_at="2026-04-11T12:00:05Z",
+        )
+        self.assertTrue(success)
+
+        config = manager.get_spacetime_config()
+        self.assertEqual(config["identity_token"], "runtime-token")
+        self.assertEqual(config["data_dir"], "/data/path")
+        self.assertEqual(config["binary_path"], "/bin/spacetime")
+        self.assertEqual(config["binary_version"], "2.0.0")
+        self.assertTrue(config["module_published"])
+        self.assertEqual(config["module_fingerprint"], "source-123")
+        self.assertEqual(config["published_fingerprint"], "source-123")
+        self.assertEqual(config["last_ready_at"], "2026-04-11T12:00:00Z")
+        self.assertEqual(config["last_health_check_at"], "2026-04-11T12:00:05Z")
+
 
 class TestConfigManagerGracefulDegradation(unittest.TestCase):
     """Test graceful degradation when config is missing or invalid."""
@@ -256,7 +434,9 @@ class TestConfigManagerGracefulDegradation(unittest.TestCase):
         """Set up test environment."""
         self.temp_dir = Path(tempfile.mkdtemp())
         self.original_home = os.environ.get("HOME")
+        self.original_userprofile = os.environ.get("USERPROFILE")
         os.environ["HOME"] = str(self.temp_dir)
+        os.environ["USERPROFILE"] = str(self.temp_dir)
         if "APPDATA" in os.environ:
             del os.environ["APPDATA"]
         
@@ -266,6 +446,13 @@ class TestConfigManagerGracefulDegradation(unittest.TestCase):
         """Clean up."""
         if self.original_home:
             os.environ["HOME"] = self.original_home
+        elif "HOME" in os.environ:
+            del os.environ["HOME"]
+
+        if self.original_userprofile:
+            os.environ["USERPROFILE"] = self.original_userprofile
+        elif "USERPROFILE" in os.environ:
+            del os.environ["USERPROFILE"]
         
         import shutil
         if self.temp_dir.exists():

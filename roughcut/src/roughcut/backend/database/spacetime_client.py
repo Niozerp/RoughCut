@@ -7,8 +7,9 @@ synchronization, row-level security, and batch processing support.
 from __future__ import annotations
 
 import asyncio
-import hashlib
+import json
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -17,9 +18,15 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+from urllib.parse import quote
 
 # Configure logger first (before any code that might use it)
 logger = logging.getLogger(__name__)
+
+TIMESTAMP_FIELD = "__timestamp_micros_since_unix_epoch__"
+LOCAL_SPACETIMEDB_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 # Import WebSocket client for SpacetimeDB communication
 try:
@@ -370,16 +377,24 @@ class SpacetimeClient:
         Returns:
             True if connection successful, False otherwise
         """
-        async with self._state_lock:
-            if self._connection_state == ConnectionState.CONNECTED:
-                return True
-            if self._connection_state == ConnectionState.CONNECTING:
-                # Wait for ongoing connection attempt
-                while self._connection_state == ConnectionState.CONNECTING:
-                    await asyncio.sleep(0.1)
-                return self._connection_state == ConnectionState.CONNECTED
-            
-            await self._set_state(ConnectionState.CONNECTING)
+        while True:
+            async with self._state_lock:
+                if self._connection_state == ConnectionState.CONNECTED:
+                    return True
+                if self._connection_state != ConnectionState.CONNECTING:
+                    old_state = self._connection_state
+                    self._connection_state = ConnectionState.CONNECTING
+                    logger.debug(
+                        f"Connection state: {old_state.value} -> "
+                        f"{ConnectionState.CONNECTING.value}"
+                    )
+                    break
+
+            # Another task is already connecting. Yield until it finishes.
+            await asyncio.sleep(0.1)
+
+        if self._connection_state == ConnectionState.CONNECTED:
+            return True
         
         for attempt in range(self.config.max_reconnect_attempts):
             try:
@@ -425,8 +440,13 @@ class SpacetimeClient:
         async with self._state_lock:
             if self._connection_state == ConnectionState.DISCONNECTED:
                 return
-            
-            await self._set_state(ConnectionState.DISCONNECTED)
+
+            old_state = self._connection_state
+            self._connection_state = ConnectionState.DISCONNECTED
+            logger.debug(
+                f"Connection state: {old_state.value} -> "
+                f"{ConnectionState.DISCONNECTED.value}"
+            )
         
         # Cancel all subscriptions first
         async with self._subscription_lock:
@@ -461,42 +481,16 @@ class SpacetimeClient:
         logger.info("Disconnected from SpacetimeDB")
     
     async def _create_connection(self) -> Optional[Any]:
-        """Create actual database connection using WebSocket.
-        
-        Returns:
-            SpacetimeDB WebSocket client instance or None
-        """
-        if HAS_WEBSOCKET_CLIENT:
-            # Use WebSocket client for real SpacetimeDB communication
-            try:
-                # Decode identity token if it's encrypted
-                identity_token = self.config.identity_token
-                
-                # Create WebSocket connection config
-                ws_config = WSConnectionConfig(
-                    host=self.config.host,
-                    port=self.config.port,
-                    database_name=self.config.database_name,
-                    identity_token=identity_token,
-                    module_name="roughcut"
-                )
-                
-                # Create and connect WebSocket client
-                client = SpacetimeWebSocketClient(ws_config)
-                
-                # Actually connect the client - this was missing!
-                if hasattr(client, 'connect') and callable(getattr(client, 'connect')):
-                    await client.connect()
-                
-                return client
-                
-            except Exception as e:
-                logger.error(f"Failed to create SpacetimeDB WebSocket connection: {e}")
-                raise
-        else:
-            # Fallback warning - websockets library not available
-            logger.error("WebSocket client not available. Install with: pip install websockets")
-            raise RuntimeError("WebSocket client not available")
+        """Create a database connection by probing the SpacetimeDB HTTP API."""
+        try:
+            await self._execute_sql("SELECT COUNT(*) AS total FROM media_assets")
+            return {
+                "transport": "http",
+                "server_url": self._server_url(),
+            }
+        except Exception as e:
+            logger.error(f"Failed to create SpacetimeDB HTTP connection: {e}")
+            raise
     
     async def _close_connection(self):
         """Close database connection."""
@@ -527,6 +521,32 @@ class SpacetimeClient:
             )
         
         return normalized
+
+    @staticmethod
+    def _normalize_path(file_path: Path | str) -> str:
+        """Normalize a filesystem path for stable filtering."""
+        return os.path.normcase(str(Path(file_path).resolve()))
+
+    def _matches_scope(self, asset_path: Path, scope_folders: Optional[List[str]]) -> bool:
+        """Return True when an asset path is inside one of the scope folders."""
+        if not scope_folders:
+            return True
+
+        normalized_asset_path = self._normalize_path(asset_path)
+        for folder in scope_folders:
+            if not folder:
+                continue
+
+            folder_path = Path(folder).resolve()
+            normalized_folder = self._normalize_path(folder_path)
+            if normalized_asset_path == normalized_folder:
+                return True
+
+            folder_prefix = normalized_folder + os.sep
+            if normalized_asset_path.startswith(folder_prefix):
+                return True
+
+        return False
     
     def _build_safe_query(
         self,
@@ -610,7 +630,8 @@ class SpacetimeClient:
     async def insert_assets(
         self,
         assets: List[MediaAsset],
-        batch_size: Optional[int] = None
+        batch_size: Optional[int] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> InsertResult:
         """Insert multiple assets into SpacetimeDB with batching.
         
@@ -661,7 +682,16 @@ class SpacetimeClient:
         start_time = time.monotonic()
         total_inserted = 0
         errors: List[Dict[str, Any]] = validation_errors
-        
+        total_batches = (len(valid_assets) + effective_batch_size - 1) // effective_batch_size
+
+        if progress_callback:
+            progress_callback({
+                'current': 0,
+                'total': len(valid_assets),
+                'batch_current': 0,
+                'batch_total': total_batches,
+            })
+
         # Process in batches
         for i in range(0, len(valid_assets), effective_batch_size):
             batch = valid_assets[i:i + effective_batch_size]
@@ -703,6 +733,13 @@ class SpacetimeClient:
                     })
                 
                 logger.debug(f"Inserted batch {batch_num}: {batch_inserted}/{len(db_assets)} assets")
+                if progress_callback:
+                    progress_callback({
+                        'current': min(i + len(batch), len(valid_assets)),
+                        'total': len(valid_assets),
+                        'batch_current': batch_num,
+                        'batch_total': total_batches,
+                    })
                 
             except SpacetimeDBError as e:
                 error_info = {
@@ -713,6 +750,13 @@ class SpacetimeClient:
                 }
                 errors.append(error_info)
                 logger.error(f"Batch {batch_num} failed: {e}")
+                if progress_callback:
+                    progress_callback({
+                        'current': min(i + len(batch), len(valid_assets)),
+                        'total': len(valid_assets),
+                        'batch_current': batch_num,
+                        'batch_total': total_batches,
+                    })
                 # Continue with next batch - don't fail entire operation
                 
             except Exception as e:
@@ -724,6 +768,13 @@ class SpacetimeClient:
                 }
                 errors.append(error_info)
                 logger.error(f"Unexpected error in batch {batch_num}: {e}")
+                if progress_callback:
+                    progress_callback({
+                        'current': min(i + len(batch), len(valid_assets)),
+                        'total': len(valid_assets),
+                        'batch_current': batch_num,
+                        'batch_total': total_batches,
+                    })
         
         duration = (time.monotonic() - start_time) * 1000
         
@@ -956,7 +1007,9 @@ class SpacetimeClient:
         self,
         category: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        limit: int = 1000
+        limit: int = 1000,
+        scope_folders: Optional[List[str]] = None,
+        verify_on_disk: bool = False,
     ) -> QueryResult:
         """Query assets with optional filters.
         
@@ -1014,13 +1067,48 @@ class SpacetimeClient:
                     conversion_errors += 1
                     logger.warning(f"Failed to convert record to asset: {e}")
                     continue
+
+            if scope_folders:
+                assets = [
+                    asset for asset in assets
+                    if self._matches_scope(asset.file_path, scope_folders)
+                ]
+
+            stale_ids: List[str] = []
+            if verify_on_disk:
+                verified_assets: List[MediaAsset] = []
+                for asset in assets:
+                    try:
+                        if asset.file_path.exists() and asset.file_path.is_file():
+                            verified_assets.append(asset)
+                        else:
+                            stale_ids.append(asset.id)
+                    except OSError:
+                        stale_ids.append(asset.id)
+                assets = verified_assets
+
+                if stale_ids:
+                    try:
+                        await self.delete_assets(stale_ids)
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to delete stale assets during query cleanup: {cleanup_error}")
             
             if conversion_errors > 0:
                 logger.warning(
                     f"Query returned {len(results)} records but {conversion_errors} "
                     f"failed conversion. {len(assets)} assets returned."
-                )
+                    )
             
+            if query_params.get('tags'):
+                required_tags = {tag.lower() for tag in query_params['tags']}
+                assets = [
+                    asset for asset in assets
+                    if required_tags.issubset({tag.lower() for tag in asset.ai_tags})
+                ]
+
+            if len(assets) > limit:
+                assets = assets[:limit]
+
             logger.debug(f"Query returned {len(assets)} assets")
             return QueryResult(assets=assets, total_count=len(assets))
             
@@ -1119,7 +1207,7 @@ class SpacetimeClient:
                 if isinstance(sub_data, tuple) and len(sub_data) > 1:
                     ws_subscription_id = sub_data[1]
                     # Try to unsubscribe from WebSocket if we have the ID
-                    if ws_subscription_id and self._client:
+                    if ws_subscription_id and self._client and hasattr(self._client, 'unsubscribe'):
                         try:
                             await self._client.unsubscribe(ws_subscription_id)
                         except Exception as e:
@@ -1144,45 +1232,311 @@ class SpacetimeClient:
     
     # Private helper methods for database operations
     
+    def _server_url(self) -> str:
+        """Return the HTTP base URL for the configured SpacetimeDB runtime."""
+        host = self.config.host.strip()
+        connect_host = "127.0.0.1" if host == "localhost" else host
+        return f"http://{connect_host}:{self.config.port}"
+
+    def _is_local_runtime(self) -> bool:
+        """Return True when the configured runtime is on the local machine."""
+        return self.config.host.strip().lower() in LOCAL_SPACETIMEDB_HOSTS
+
+    def _build_http_headers(self, content_type: Optional[str] = None) -> Dict[str, str]:
+        """Build headers for SpacetimeDB HTTP requests.
+
+        Local standalone runtimes intentionally avoid bearer auth because RoughCut
+        does not currently refresh a matching identity token for the managed local
+        server. Remote runtimes still use the configured token when one is present.
+        """
+        headers = {"Accept": "application/json"}
+        if content_type:
+            headers["Content-Type"] = content_type
+
+        token = (self.config.identity_token or "").strip()
+        if token and not self._is_local_runtime():
+            headers["Authorization"] = f"Bearer {token}"
+
+        return headers
+
+    def _escape_sql_literal(self, value: str) -> str:
+        """Escape a string for use inside a single-quoted SQL literal."""
+        return value.replace("'", "''")
+
+    def _coerce_datetime(self, value: Any) -> datetime:
+        """Normalize supported timestamp encodings to a timezone-aware datetime."""
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+        if isinstance(value, (dict, list, int, float)):
+            return self._decode_timestamp_value(value)
+
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("Timestamp value cannot be empty")
+            if normalized.endswith("Z"):
+                normalized = f"{normalized[:-1]}+00:00"
+            parsed = datetime.fromisoformat(normalized)
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+        raise ValueError(f"Unsupported timestamp value: {value!r}")
+
+    def _encode_timestamp_value(self, value: Any) -> Dict[str, int]:
+        """Encode a datetime into the SATS JSON timestamp product format."""
+        dt_value = self._coerce_datetime(value)
+        micros = int(dt_value.timestamp() * 1_000_000)
+        return {TIMESTAMP_FIELD: micros}
+
+    def _decode_timestamp_value(self, value: Any) -> datetime:
+        """Decode SpacetimeDB timestamp representations into UTC datetimes."""
+        raw_value: Any = value
+        if isinstance(value, dict):
+            raw_value = value.get(TIMESTAMP_FIELD)
+        elif isinstance(value, list) and len(value) == 1:
+            raw_value = value[0]
+
+        if isinstance(raw_value, datetime):
+            return raw_value if raw_value.tzinfo is not None else raw_value.replace(tzinfo=timezone.utc)
+
+        if isinstance(raw_value, str):
+            normalized = raw_value[:-1] + "+00:00" if raw_value.endswith("Z") else raw_value
+            parsed = datetime.fromisoformat(normalized)
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+        if not isinstance(raw_value, (int, float)):
+            raise ValueError(f"Unsupported SpacetimeDB timestamp value: {value!r}")
+
+        return datetime.fromtimestamp(raw_value / 1_000_000, tz=timezone.utc)
+
+    def _is_timestamp_algebraic_type(self, algebraic_type: Any) -> bool:
+        """Return True when a SQL schema type represents SpacetimeDB Timestamp."""
+        if not isinstance(algebraic_type, dict):
+            return False
+
+        product = algebraic_type.get("Product")
+        if not isinstance(product, dict):
+            return False
+
+        elements = product.get("elements")
+        if not isinstance(elements, list) or len(elements) != 1:
+            return False
+
+        element = elements[0]
+        if not isinstance(element, dict):
+            return False
+
+        name = element.get("name")
+        if not isinstance(name, dict) or name.get("some") != TIMESTAMP_FIELD:
+            return False
+
+        nested_type = element.get("algebraic_type")
+        return isinstance(nested_type, dict) and "I64" in nested_type
+
+    def _decode_sql_value(self, value: Any, algebraic_type: Any) -> Any:
+        """Decode a SQL row value using the schema-provided algebraic type."""
+        if self._is_timestamp_algebraic_type(algebraic_type):
+            return self._decode_timestamp_value(value)
+        return value
+
+    def _statement_rows_to_dicts(self, statement: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Convert a single SQL statement payload into row dictionaries."""
+        if not isinstance(statement, dict):
+            return []
+
+        schema = statement.get("schema", {})
+        schema_elements = schema.get("elements", []) if isinstance(schema, dict) else []
+        rows = statement.get("rows", [])
+        if not isinstance(rows, list):
+            return []
+
+        columns: List[Tuple[str, Any]] = []
+        for index, element in enumerate(schema_elements):
+            if not isinstance(element, dict):
+                columns.append((f"column_{index}", None))
+                continue
+            name = element.get("name")
+            column_name = name.get("some") if isinstance(name, dict) else None
+            columns.append((column_name or f"column_{index}", element.get("algebraic_type")))
+
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            if isinstance(row, dict):
+                records.append(row)
+                continue
+
+            if not isinstance(row, list):
+                continue
+
+            record: Dict[str, Any] = {}
+            for index, raw_value in enumerate(row):
+                column_name, algebraic_type = (
+                    columns[index] if index < len(columns) else (f"column_{index}", None)
+                )
+                record[column_name] = self._decode_sql_value(raw_value, algebraic_type)
+            records.append(record)
+
+        return records
+
+    def _parse_sql_response(self, payload: Any) -> List[Dict[str, Any]]:
+        """Parse the SpacetimeDB SQL response payload into dictionaries."""
+        if isinstance(payload, dict):
+            return self._statement_rows_to_dicts(payload)
+
+        if not isinstance(payload, list):
+            raise SpacetimeDBError("SpacetimeDB SQL response did not contain statement rows.")
+
+        records: List[Dict[str, Any]] = []
+        for statement in payload:
+            records.extend(self._statement_rows_to_dicts(statement))
+        return records
+
+    def _http_error_message(self, method: str, path: str, exc: urllib_error.HTTPError) -> str:
+        """Build a readable error from a failed HTTP request."""
+        response_body = ""
+        try:
+            response_body = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            response_body = ""
+
+        detail = response_body or exc.reason or f"HTTP {exc.code}"
+        return f"{method.upper()} {path} failed with HTTP {exc.code}: {detail}"
+
+    def _http_request_sync(
+        self,
+        method: str,
+        path: str,
+        body: Optional[Any] = None,
+        content_type: Optional[str] = None,
+        expect_json: bool = True,
+    ) -> Any:
+        """Execute a blocking HTTP request against the SpacetimeDB HTTP API."""
+        normalized_path = path if path.startswith("/") else f"/{path}"
+        url = f"{self._server_url()}{normalized_path}"
+
+        request_body: Optional[bytes]
+        if body is None:
+            request_body = None
+        elif isinstance(body, (dict, list)):
+            request_body = json.dumps(body).encode("utf-8")
+            content_type = content_type or "application/json"
+        elif isinstance(body, str):
+            request_body = body.encode("utf-8")
+        else:
+            raise TypeError(f"Unsupported HTTP body type: {type(body).__name__}")
+
+        headers = self._build_http_headers(content_type)
+        request = urllib_request.Request(
+            url,
+            data=request_body,
+            headers=headers,
+            method=method.upper(),
+        )
+
+        try:
+            with urllib_request.urlopen(request, timeout=self.config.request_timeout) as response:
+                response_text = response.read().decode("utf-8", errors="replace").strip()
+                if not response_text:
+                    return None
+
+                if expect_json or response_text.startswith(("{", "[")):
+                    return json.loads(response_text)
+                return response_text
+        except urllib_error.HTTPError as exc:
+            raise SpacetimeDBError(self._http_error_message(method, normalized_path, exc)) from exc
+        except urllib_error.URLError as exc:
+            raise STDBConnectionError(
+                f"{method.upper()} {normalized_path} failed to reach SpacetimeDB: {exc.reason}"
+            ) from exc
+
+    async def _http_request(
+        self,
+        method: str,
+        path: str,
+        body: Optional[Any] = None,
+        content_type: Optional[str] = None,
+        expect_json: bool = True,
+    ) -> Any:
+        """Execute an HTTP request in a worker thread."""
+        return await asyncio.to_thread(
+            self._http_request_sync,
+            method,
+            path,
+            body,
+            content_type,
+            expect_json,
+        )
+
+    async def _execute_sql(self, query: str) -> List[Dict[str, Any]]:
+        """Execute a SQL query against the SpacetimeDB HTTP API."""
+        database_name = quote(self.config.database_name, safe="")
+        payload = await self._http_request(
+            "POST",
+            f"/v1/database/{database_name}/sql",
+            body=query,
+            content_type="text/plain",
+            expect_json=True,
+        )
+        return self._parse_sql_response(payload)
+
+    async def _call_reducer(self, reducer_name: str, args: List[Any]) -> Any:
+        """Call a reducer through the SpacetimeDB HTTP API."""
+        database_name = quote(self.config.database_name, safe="")
+        reducer_path = quote(reducer_name, safe="")
+        return await self._http_request(
+            "POST",
+            f"/v1/database/{database_name}/call/{reducer_path}",
+            body=args,
+            content_type="application/json",
+            expect_json=False,
+        )
+
+    def _apply_updates_to_asset(self, asset: MediaAsset, updates: Dict[str, Any]) -> None:
+        """Apply validated update fields onto an existing MediaAsset instance."""
+        for field_name, value in updates.items():
+            if field_name in {"asset_id", "id"}:
+                continue
+
+            if field_name == "file_path":
+                asset.file_path = Path(value)
+            elif field_name in {"modified_time", "created_at", "updated_at"}:
+                setattr(asset, field_name, self._coerce_datetime(value))
+            elif field_name == "file_size":
+                asset.file_size = int(value)
+            elif field_name == "ai_tags":
+                asset.ai_tags = list(dict.fromkeys(str(tag) for tag in value or [] if tag))
+            elif hasattr(asset, field_name):
+                setattr(asset, field_name, value)
+
+    async def _count_for_query(self, query: str) -> int:
+        """Execute a count query and return the integer result."""
+        rows = await self._execute_sql(query)
+        if not rows:
+            return 0
+
+        total = rows[0].get("total", 0)
+        return int(total or 0)
+
     def _asset_to_db_format(self, asset: MediaAsset) -> Dict[str, Any]:
         """Convert MediaAsset to SpacetimeDB record format.
         
-        The owner_identity is set to the current user's identity derived from
-        their authentication token. This enables row-level security in Rust.
-        
-        NOTE: This is an MVP implementation. The identity derivation should be
-        replaced with actual SpacetimeDB identity handling when integrating
-        with the official SpacetimeDB SDK. Currently uses SHA256 hash of the
-        identity token for consistency, which will need updating for production
-        use with real SpacetimeDB identity claims.
+        The Rust module now derives ownership from the active SpacetimeDB
+        connection instead of trusting a client-supplied identity value.
         """
         now = datetime.now(timezone.utc)
-        
-        # Get identity from token - MVP implementation
-        # TODO: Replace with proper SpacetimeDB identity derivation when
-        # integrating with official SDK. Currently uses SHA256 of token
-        # for consistent identity per user session.
-        if self.config.identity_token:
-            # Create a consistent identity string from the token
-            identity_hash = hashlib.sha256(
-                self.config.identity_token.encode()
-            ).hexdigest()[:64]
-            owner_identity = f"0x{identity_hash}"
-        else:
-            owner_identity = "0x" + "0" * 64  # Anonymous/unauthenticated
-        
+
         return {
             'asset_id': asset.id,
-            'owner_identity': owner_identity,
+            'owner_identity': '',
             'file_path': str(asset.file_path),
             'file_name': asset.file_name,
             'category': asset.category.lower(),
-            'file_size': asset.file_size,
+            'file_size': int(asset.file_size),
             'file_hash': asset.file_hash,
             'ai_tags': list(dict.fromkeys(asset.ai_tags or [])),  # Deduplicate
-            'modified_time': asset.modified_time.isoformat(),
-            'created_at': (asset.created_at or now).isoformat(),
-            'updated_at': (asset.updated_at or now).isoformat()
+            'modified_time': self._encode_timestamp_value(asset.modified_time),
+            'created_at': self._encode_timestamp_value(asset.created_at or now),
+            'updated_at': self._encode_timestamp_value(asset.updated_at or now),
         }
     
     def _db_record_to_asset(self, record: Dict[str, Any]) -> MediaAsset:
@@ -1194,11 +1548,11 @@ class SpacetimeClient:
                 file_name=record['file_name'],
                 category=record['category'],
                 file_size=record['file_size'],
-                modified_time=datetime.fromisoformat(record['modified_time']),
+                modified_time=self._coerce_datetime(record['modified_time']),
                 file_hash=record['file_hash'],
                 ai_tags=list(dict.fromkeys(record.get('ai_tags', []))),
-                created_at=datetime.fromisoformat(record['created_at']),
-                updated_at=datetime.fromisoformat(record['updated_at'])
+                created_at=self._coerce_datetime(record['created_at']),
+                updated_at=self._coerce_datetime(record['updated_at'])
             )
         except (KeyError, ValueError, TypeError) as e:
             raise ValueError(f"Invalid database record: {e}") from e
@@ -1213,154 +1567,88 @@ class SpacetimeClient:
                 Number of assets actually inserted
                 
             Raises:
-                SpacetimeDBError: If WebSocket unavailable or insert fails
+                SpacetimeDBError: If the reducer call fails
         """
         if not assets:
             return 0
         
-        if HAS_WEBSOCKET_CLIENT and self._client:
-            try:
-                # Call the Rust reducer for batch insert via WebSocket
-                result = await self._client.call_reducer(
-                    "insert_assets_batch",
-                    {"assets": assets}
-                )
-                return result.inserted_count if result.success else 0
-            except Exception as e:
-                logger.error(f"Database insert failed: {e}")
-                raise SpacetimeDBError(f"Insert failed: {e}") from e
-        else:
-            raise SpacetimeDBError("WebSocket client not available")
+        try:
+            await self._call_reducer("insert_assets_batch", [assets])
+            return len(assets)
+        except Exception as e:
+            logger.error(f"Database insert failed: {e}")
+            raise SpacetimeDBError(f"Insert failed: {e}") from e
     
     async def _update_record(
         self,
         asset_id: str,
         updates: Dict[str, Any]
     ) -> bool:
-        """Update a record in SpacetimeDB via WebSocket."""
-        if HAS_WEBSOCKET_CLIENT and self._client:
-            try:
-                result = await self._client.call_reducer(
-                    "update_asset",
-                    {"asset_id": asset_id, "updates": updates}
-                )
-                return result.success
-            except Exception as e:
-                logger.error(f"Database update failed: {e}")
-                raise SpacetimeDBError(f"Update failed: {e}") from e
-        else:
-            logger.warning(f"WebSocket unavailable - cannot update asset {asset_id}")
-            return False
+        """Update a record in SpacetimeDB via the HTTP reducer API."""
+        try:
+            query_asset_id = self._escape_sql_literal(asset_id)
+            rows = await self._execute_sql(
+                f"SELECT * FROM media_assets WHERE asset_id = '{query_asset_id}' LIMIT 1"
+            )
+            if not rows:
+                return False
+
+            existing_asset = self._db_record_to_asset(rows[0])
+            self._apply_updates_to_asset(existing_asset, updates)
+            await self._call_reducer(
+                "update_asset",
+                [asset_id, self._asset_to_db_format(existing_asset)],
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Database update failed: {e}")
+            raise SpacetimeDBError(f"Update failed: {e}") from e
     
     async def _delete_records(self, asset_ids: List[str]) -> int:
-        """Delete records from SpacetimeDB via WebSocket."""
+        """Delete records from SpacetimeDB via the HTTP reducer API."""
         if not asset_ids:
             return 0
         
-        if HAS_WEBSOCKET_CLIENT and self._client:
-            try:
-                result = await self._client.call_reducer(
-                    "delete_assets_batch",
-                    {"asset_ids": asset_ids}
-                )
-                return result.deleted_count if result.success else 0
-            except Exception as e:
-                logger.error(f"Database delete failed: {e}")
-                raise SpacetimeDBError(f"Delete failed: {e}") from e
-        else:
-            raise SpacetimeDBError("WebSocket client not available")
+        try:
+            await self._call_reducer("delete_assets_batch", [asset_ids])
+            return len(asset_ids)
+        except Exception as e:
+            logger.error(f"Database delete failed: {e}")
+            raise SpacetimeDBError(f"Delete failed: {e}") from e
     
     async def _execute_query(
         self,
         params: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Execute database query via WebSocket with proper result collection.
-        
-        Uses asyncio.Queue to collect results from subscription callbacks.
-        
-        NOTE: MVP implementation uses query building with validation.
-        Production should use proper parameterized queries when integrating
-        with official SpacetimeDB SDK.
-        """
-        if HAS_WEBSOCKET_CLIENT and self._client:
-            try:
-                category = params.get('category')
-                tags = params.get('tags')
-                limit = params.get('limit', 1000)
-                
-                # MVP: Build query with strict validation (safer than raw interpolation)
-                # Production TODO: Use proper parameterized query API
-                query = self._build_safe_query(category, tags, limit)
-                
-                # Use asyncio.Queue with maxsize to prevent unbounded growth
-                results_queue: asyncio.Queue = asyncio.Queue(maxsize=limit * 2)
-                results_received = asyncio.Event()
-                
-                def on_update(update):
-                    if update.row:
-                        try:
-                            results_queue.put_nowait(update.row)
-                            results_received.set()  # Signal that results are arriving
-                        except asyncio.QueueFull:
-                            logger.warning("Query results queue full, dropping row")
-                
-                # Subscribe to get results
-                subscription_id = await self._client.subscribe(query, on_update)
-                
-                # Wait for results with configurable timeout
-                # Use results_received event for early exit if results arrive quickly
-                try:
-                    await asyncio.wait_for(
-                        results_received.wait(),
-                        timeout=min(0.5, self.config.request_timeout / 10)
-                    )
-                except asyncio.TimeoutError:
-                    pass  # Continue to collect whatever results we have
-                
-                # Collect results with overall timeout
-                results = []
-                collection_deadline = time.monotonic() + self.config.request_timeout
-                
-                while time.monotonic() < collection_deadline and len(results) < limit:
-                    try:
-                        # Short timeout to check for more results
-                        timeout_remaining = collection_deadline - time.monotonic()
-                        if timeout_remaining <= 0:
-                            break
-                        row = await asyncio.wait_for(
-                            results_queue.get(),
-                            timeout=min(0.1, timeout_remaining)
-                        )
-                        results.append(row)
-                        results_queue.task_done()
-                    except asyncio.TimeoutError:
-                        break  # No more results arriving
-                
-                # Unsubscribe
-                await self._client.unsubscribe(subscription_id)
-                
-                return results
-                
-            except Exception as e:
-                logger.error(f"Database query failed: {e}")
-                raise SpacetimeDBError(f"Query failed: {e}") from e
-        else:
-            logger.warning("WebSocket unavailable - cannot execute query")
-            raise SpacetimeDBError("WebSocket client not available")
+        """Execute a database query via the SpacetimeDB SQL HTTP API."""
+        try:
+            category = params.get('category')
+            tags = params.get('tags')
+            limit = params.get('limit', 1000)
+            query_limit = 10000 if tags else limit
+            query = self._build_safe_query(category, None, query_limit)
+            return await self._execute_sql(query)
+        except Exception as e:
+            logger.error(f"Database query failed: {e}")
+            raise SpacetimeDBError(f"Query failed: {e}") from e
     
     async def _execute_count_query(self) -> Dict[str, int]:
-        """Execute count query via WebSocket."""
-        if HAS_WEBSOCKET_CLIENT and self._client:
-            try:
-                result = await self._client.call_reducer("get_asset_counts", {})
-                if result.success and result.return_value:
-                    return result.return_value
-                return {'music': 0, 'sfx': 0, 'vfx': 0}
-            except Exception as e:
-                logger.error(f"Database count query failed: {e}")
-                raise SpacetimeDBError(f"Count query failed: {e}") from e
-        else:
-            return {'music': 0, 'sfx': 0, 'vfx': 0}
+        """Execute category count queries via the SpacetimeDB SQL HTTP API."""
+        try:
+            return {
+                'music': await self._count_for_query(
+                    "SELECT COUNT(*) AS total FROM media_assets WHERE category = 'music'"
+                ),
+                'sfx': await self._count_for_query(
+                    "SELECT COUNT(*) AS total FROM media_assets WHERE category = 'sfx'"
+                ),
+                'vfx': await self._count_for_query(
+                    "SELECT COUNT(*) AS total FROM media_assets WHERE category = 'vfx'"
+                ),
+            }
+        except Exception as e:
+            logger.error(f"Database count query failed: {e}")
+            raise SpacetimeDBError(f"Count query failed: {e}") from e
     
     async def _handle_subscription(
         self,
@@ -1376,7 +1664,7 @@ class SpacetimeClient:
         ws_subscription_id: Optional[str] = None
         
         try:
-            if HAS_WEBSOCKET_CLIENT and self._client:
+            if HAS_WEBSOCKET_CLIENT and self._client and hasattr(self._client, 'subscribe'):
                 # Real WebSocket subscription via client's subscription handler
                 def on_table_update(update: TableUpdate):
                     # Check if still subscribed
@@ -1417,7 +1705,7 @@ class SpacetimeClient:
             logger.error(f"Subscription {subscription_id} error: {e}")
         finally:
             # Cleanup WebSocket subscription if we have one
-            if ws_subscription_id and self._client:
+            if ws_subscription_id and self._client and hasattr(self._client, 'unsubscribe'):
                 try:
                     await self._client.unsubscribe(ws_subscription_id)
                 except Exception as e:

@@ -531,11 +531,13 @@ class AppConfig:
         notion: Notion integration configuration
         ai: AI service configuration
         media_folders: Media folder configuration
+        onboarding_completed: Whether first-run media setup is finished
         version: Configuration format version
     """
     notion: NotionConfig = field(default_factory=NotionConfig)
     ai: 'AIConfig' = field(default_factory=lambda: AIConfig())
     media_folders: MediaFolderConfig = field(default_factory=MediaFolderConfig)
+    onboarding_completed: bool = False
     version: str = "1.0"
     
     def to_dict(self) -> dict:
@@ -544,7 +546,8 @@ class AppConfig:
             'version': self.version,
             'notion': self.notion.to_dict(encrypt_token=True),
             'ai': self.ai.to_dict(encrypt_token=True),
-            'media_folders': self.media_folders.to_dict()
+            'media_folders': self.media_folders.to_dict(),
+            'onboarding_completed': self.onboarding_completed,
         }
     
     @classmethod
@@ -563,5 +566,6 @@ class AppConfig:
             notion=notion_config,
             ai=ai_config,
             media_folders=media_folders_config,
+            onboarding_completed=data.get('onboarding_completed', False),
             version=data.get('version', '1.0')
         )

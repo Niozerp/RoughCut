@@ -1,33 +1,45 @@
-import { Play, SkipBack, SkipForward, Scissors, Wand2 } from 'lucide-react'
+import { Play, Scissors, SkipBack, SkipForward, Wand2 } from 'lucide-react'
+
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import type { ResolveConnectionStatus } from '@/lib/roughcut-types'
 
-export function TimelineWorkspace() {
+interface TimelineWorkspaceProps {
+  resolveStatus: ResolveConnectionStatus
+  onConnectResolve: () => void
+}
+
+export function TimelineWorkspace({ resolveStatus, onConnectResolve }: TimelineWorkspaceProps) {
+  const isConnected = resolveStatus.connected
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Timeline Preview Area */}
+    <div className="flex h-full flex-col">
       <div className="flex-1 p-4">
-        <Card className="h-full flex flex-col">
+        <Card className="flex h-full flex-col">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-lg">Rough Cut Preview</CardTitle>
-              <Badge variant="outline">AI Generated</Badge>
+              {isConnected ? (
+                <Badge variant="outline">Attached to DaVinci</Badge>
+              ) : (
+                <Badge variant="secondary">Standalone Preview</Badge>
+              )}
             </div>
           </CardHeader>
-          <CardContent className="flex-1 flex flex-col">
-            {/* Video Preview Placeholder */}
-            <div className="flex-1 bg-black rounded-md flex items-center justify-center min-h-[200px]">
+          <CardContent className="flex flex-1 flex-col">
+            <div className="flex min-h-[200px] flex-1 items-center justify-center rounded-md bg-black">
               <div className="text-center text-muted-foreground">
-                <Play className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <Play className="mx-auto mb-2 h-12 w-12 opacity-50" />
                 <p className="text-sm">Timeline preview will appear here</p>
-                <p className="text-xs mt-1">AI is analyzing your transcript...</p>
+                <p className="mt-1 text-xs">
+                  RoughCut stays usable without DaVinci, but timeline send requires an active attach.
+                </p>
               </div>
             </div>
 
-            {/* Playback Controls */}
-            <div className="flex items-center justify-center gap-2 mt-4">
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
               <Button variant="outline" size="icon">
                 <SkipBack className="h-4 w-4" />
               </Button>
@@ -37,19 +49,25 @@ export function TimelineWorkspace() {
               <Button variant="outline" size="icon">
                 <SkipForward className="h-4 w-4" />
               </Button>
-              <div className="w-px h-6 bg-border mx-2" />
+              <div className="mx-2 h-6 w-px bg-border" />
               <Button variant="outline" size="icon">
                 <Scissors className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={isConnected ? 'default' : 'outline'}
+                disabled={isConnected}
+                onClick={onConnectResolve}
+              >
+                {isConnected ? 'Ready to Push to DaVinci' : 'Connect to DaVinci'}
               </Button>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* AI Suggestions Panel */}
-      <div className="border-t border-border p-4 bg-card/30">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold flex items-center gap-2">
+      <div className="border-t border-border bg-card/30 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
             <Wand2 className="h-4 w-4 text-secondary" />
             AI Asset Suggestions
           </h3>
@@ -98,19 +116,19 @@ function SuggestionItem({ type, name, reason, confidence }: SuggestionItemProps)
   }
 
   const typeLabels = {
-    music: '🎵',
-    sfx: '🔊',
-    vfx: '🎬',
+    music: 'Music',
+    sfx: 'SFX',
+    vfx: 'VFX',
   }
 
   return (
-    <div className="flex items-center gap-3 p-2 rounded-md bg-card hover:bg-accent cursor-pointer transition-colors">
-      <span className="text-lg">{typeLabels[type]}</span>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{name}</p>
+    <div className="flex cursor-pointer items-center gap-3 rounded-md bg-card p-2 transition-colors hover:bg-accent">
+      <Badge className={typeColors[type]}>{typeLabels[type]}</Badge>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{name}</p>
         <p className="text-xs text-muted-foreground">{reason}</p>
       </div>
-      <Badge className={typeColors[type]}>{confidence}%</Badge>
+      <Badge variant="outline">{confidence}%</Badge>
       <Button size="sm" variant="ghost" className="h-7">
         Use
       </Button>

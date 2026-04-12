@@ -1,6 +1,6 @@
 # RoughCut Installation Guide
 
-> **Prerequisites**: DaVinci Resolve 18.5+ (Studio or Free), Python 3.10+, Windows/macOS/Linux
+> **Prerequisites**: DaVinci Resolve 18.5+ (Studio or Free), Python 3.10+, Node.js 20+, Windows/macOS/Linux
 
 ## Quick Start (2 Minutes) — One-Click Install ⭐
 
@@ -24,7 +24,10 @@ Double-click install.bat
 The installer will automatically:
 - Find your DaVinci Resolve installation
 - Copy the script to the right folder
-- Install Python dependencies (or will auto-install on first run)
+- Install Python dependencies
+- Build the Electron app
+- Install SpacetimeDB
+- Verify the Rust toolchain and `wasm32-unknown-unknown` target needed for the bundled database module
 
 **macOS/Linux:**
 ```bash
@@ -42,7 +45,8 @@ chmod +x install.sh
 
 1. **Restart DaVinci Resolve** (required after first install)
 2. Navigate to: **Workspace > Scripts > Utility > RoughCut**
-3. The RoughCut main window should appear!
+3. On first launch, RoughCut runs a blocking preflight bootstrap before any GUI appears.
+4. Once bootstrap finishes, the RoughCut main window should appear.
 
 ---
 
@@ -107,6 +111,23 @@ pip install poetry
 
 # Install dependencies
 poetry install
+```
+
+### Install Standalone Runtime Dependencies
+
+The standalone app also needs:
+
+- **Node.js 20+** for the Electron shell and frontend build
+- **SpacetimeDB CLI** for the embedded local database runtime
+- **Rust + rustup + `wasm32-unknown-unknown`** because RoughCut ships a Rust SpacetimeDB module that is compiled to WebAssembly on first publish
+
+After bootstrap succeeds, RoughCut launches Electron from the direct packaged binary inside `node_modules/electron/dist`, so Node.js is only needed when bootstrap must install or rebuild the app.
+
+If the one-click installer did not complete these steps, install them manually:
+
+```bash
+# Install the Rust toolchain and wasm target
+rustup target add wasm32-unknown-unknown
 ```
 
 ---
@@ -237,6 +258,20 @@ Verify the backend folder is accessible:
 - The installer should set this up automatically
 - The Lua script will also try to auto-install on first run
 
+### "wasm32-unknown-unknown target is not installed"
+
+RoughCut starts a local SpacetimeDB instance and publishes a bundled Rust module into it. That publish step needs the Rust WebAssembly target.
+
+On current builds, RoughCut checks and installs this target during the blocking prelaunch bootstrap before the GUI opens. If bootstrap still stops here, the console output should include the exact failing install step.
+
+Try this first:
+
+1. Re-run `install.bat` on Windows or `./install.sh` on macOS/Linux.
+2. If the error persists, install Rust manually from [rustup.rs](https://rustup.rs/).
+3. Run `rustup target add wasm32-unknown-unknown`.
+
+If `cargo` or `rustup` still are not found after installation, restart your terminal so the Rust bin directory is on `PATH`.
+
 ### "Permission denied during install"
 
 **Windows**: 
@@ -357,6 +392,8 @@ Once installed:
 |-----------|---------|-------------|
 | DaVinci Resolve | 18.5+ | 19.0+ |
 | Python | 3.10 | 3.11+ |
+| Node.js | 20.0+ | Latest LTS |
+| Rust toolchain | rustup + stable | rustup + stable |
 | RAM | 16 GB | 32 GB |
 | Storage | 500 MB | 2 GB (for media cache) |
 | Internet | Required for AI features | Stable connection |

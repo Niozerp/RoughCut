@@ -7,7 +7,6 @@ media files with support for different categories and file types.
 import asyncio
 from pathlib import Path
 from typing import List, Set, Optional, AsyncIterator
-import aiofiles
 
 
 # Supported media file extensions by category

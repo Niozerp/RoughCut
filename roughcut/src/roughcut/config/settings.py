@@ -21,6 +21,25 @@ else:
     import msvcrt
     import ctypes
     from ctypes import wintypes
+
+    _kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    _kernel32.LockFileEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+    ]
+    _kernel32.LockFileEx.restype = wintypes.BOOL
+    _kernel32.UnlockFileEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+    ]
+    _kernel32.UnlockFileEx.restype = wintypes.BOOL
     
     # Define OVERLAPPED structure for Windows file locking
     class _OVERLAPPED(ctypes.Structure):
@@ -48,11 +67,12 @@ else:
             flags |= LOCKFILE_EXCLUSIVE_LOCK
         
         # Lock the entire file (max range)
-        kernel32 = ctypes.windll.kernel32
-        success = kernel32.LockFileEx(
+        success = _kernel32.LockFileEx(
             handle,
             flags,
-            0, 0, 0xFFFFFFFF, 0xFFFFFFFF,
+            0,
+            0xFFFFFFFF,
+            0xFFFFFFFF,
             ctypes.byref(overlapped)
         )
         return success != 0
@@ -60,8 +80,7 @@ else:
     def _unlock_file_windows(handle):
         """Unlock file on Windows."""
         overlapped = _OVERLAPPED()
-        kernel32 = ctypes.windll.kernel32
-        success = kernel32.UnlockFileEx(
+        success = _kernel32.UnlockFileEx(
             handle, 0, 0xFFFFFFFF, 0xFFFFFFFF,
             ctypes.byref(overlapped)
         )
@@ -455,6 +474,44 @@ class ConfigManager:
         """
         media_config = self.get_media_folders_config()
         return media_config.is_configured()
+
+    def is_onboarding_complete(self) -> bool:
+        """Check whether first-run onboarding has been completed."""
+        return self._config_data.get('onboarding_completed', False) is True
+
+    def set_onboarding_complete(self, completed: bool = True) -> tuple[bool, str]:
+        """Persist the onboarding completion flag."""
+        self._config_data['onboarding_completed'] = completed is True
+
+        if self._save():
+            if completed:
+                return True, "Onboarding marked complete"
+            return True, "Onboarding reset"
+        return False, "Failed to update onboarding state"
+
+    def get_onboarding_state(self) -> dict:
+        """Get onboarding completion and current media-folder coverage."""
+        media_config = self.get_media_folders_config()
+        validation_errors = media_config.validate()
+        raw_folders = media_config.get_configured_folders()
+        invalid_folders = {
+            category: validation_errors[category]
+            for category, path in raw_folders.items()
+            if path and category in validation_errors
+        }
+        folders = {
+            category: bool(path) and category not in invalid_folders
+            for category, path in raw_folders.items()
+        }
+        has_invalid_folders = bool(invalid_folders)
+
+        return {
+            'completed': self.is_onboarding_complete() and not has_invalid_folders,
+            'folders': folders,
+            'configured_count': sum(1 for value in folders.values() if value),
+            'has_invalid_folders': has_invalid_folders,
+            'invalid_folders': invalid_folders,
+        }
     
     def get_spacetime_config(self) -> dict:
         """Get SpacetimeDB configuration.
@@ -469,7 +526,15 @@ class ConfigManager:
             'port': 3000,
             'database_name': 'roughcut',
             'identity_token': None,
-            'module_path': None
+            'module_path': None,
+            'data_dir': None,
+            'binary_path': None,
+            'binary_version': None,
+            'module_published': False,
+            'module_fingerprint': None,
+            'published_fingerprint': None,
+            'last_ready_at': None,
+            'last_health_check_at': None,
         }).copy()
         
         # Decrypt identity token if present
@@ -494,7 +559,15 @@ class ConfigManager:
         port: int = 3000,
         database_name: str = 'roughcut',
         identity_token: Optional[str] = None,
-        module_path: Optional[str] = None
+        module_path: Optional[str] = None,
+        data_dir: Optional[str] = None,
+        binary_path: Optional[str] = None,
+        binary_version: Optional[str] = None,
+        module_published: bool = False,
+        module_fingerprint: Optional[str] = None,
+        published_fingerprint: Optional[str] = None,
+        last_ready_at: Optional[str] = None,
+        last_health_check_at: Optional[str] = None,
     ) -> tuple[bool, str]:
         """Save SpacetimeDB configuration.
         
@@ -538,7 +611,15 @@ class ConfigManager:
             'port': port,
             'database_name': database_name,
             'identity_token': encrypted_token,  # Now encrypted per NFR6
-            'module_path': module_path
+            'module_path': module_path,
+            'data_dir': data_dir,
+            'binary_path': binary_path,
+            'binary_version': binary_version,
+            'module_published': module_published is True,
+            'module_fingerprint': module_fingerprint,
+            'published_fingerprint': published_fingerprint,
+            'last_ready_at': last_ready_at,
+            'last_health_check_at': last_health_check_at,
         }
         
         if self._save():
@@ -546,6 +627,75 @@ class ConfigManager:
             return True, "SpacetimeDB configuration saved successfully"
         else:
             return False, "Failed to save SpacetimeDB configuration"
+
+    def update_spacetime_runtime_state(
+        self,
+        *,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        database_name: Optional[str] = None,
+        module_path: Optional[str] = None,
+        data_dir: Optional[str] = None,
+        binary_path: Optional[str] = None,
+        binary_version: Optional[str] = None,
+        module_published: Optional[bool] = None,
+        module_fingerprint: Optional[str] = None,
+        published_fingerprint: Optional[str] = None,
+        last_ready_at: Optional[str] = None,
+        last_health_check_at: Optional[str] = None
+    ) -> tuple[bool, str]:
+        """Update non-secret SpacetimeDB runtime metadata in place."""
+        current = self.get_spacetime_config()
+
+        if host is not None:
+            current['host'] = host
+        if port is not None:
+            current['port'] = port
+        if database_name is not None:
+            current['database_name'] = database_name
+        if module_path is not None:
+            current['module_path'] = module_path
+        if data_dir is not None:
+            current['data_dir'] = data_dir
+        if binary_path is not None:
+            current['binary_path'] = binary_path
+        if binary_version is not None:
+            current['binary_version'] = binary_version
+        if module_published is not None:
+            current['module_published'] = module_published is True
+        if module_fingerprint is not None:
+            current['module_fingerprint'] = module_fingerprint
+        if published_fingerprint is not None:
+            current['published_fingerprint'] = published_fingerprint
+        if last_ready_at is not None:
+            current['last_ready_at'] = last_ready_at
+        if last_health_check_at is not None:
+            current['last_health_check_at'] = last_health_check_at
+
+        # Preserve any existing encrypted token by updating raw config directly.
+        stored = self._config_data.get('spacetime', {}).copy()
+        stored.update({
+            'host': current.get('host', 'localhost'),
+            'port': current.get('port', 3000),
+            'database_name': current.get('database_name', 'roughcut'),
+            'module_path': current.get('module_path'),
+            'data_dir': current.get('data_dir'),
+            'binary_path': current.get('binary_path'),
+            'binary_version': current.get('binary_version'),
+            'module_published': current.get('module_published', False) is True,
+            'module_fingerprint': current.get('module_fingerprint'),
+            'published_fingerprint': current.get('published_fingerprint'),
+            'last_ready_at': current.get('last_ready_at'),
+            'last_health_check_at': current.get('last_health_check_at'),
+        })
+
+        if 'identity_token' not in stored:
+            stored['identity_token'] = None
+
+        self._config_data['spacetime'] = stored
+        if self._save():
+            return True, "SpacetimeDB runtime state updated successfully"
+        return False, "Failed to update SpacetimeDB runtime state"
     
     def clear_spacetime_config(self) -> tuple[bool, str]:
         """Clear SpacetimeDB configuration.
@@ -677,5 +827,7 @@ def get_settings() -> dict:
         settings["music_folder"] = media_config.music_folder
         settings["sfx_folder"] = media_config.sfx_folder
         settings["vfx_folder"] = media_config.vfx_folder
-    
+
+    settings["onboarding_completed"] = config_manager.is_onboarding_complete()
+
     return settings

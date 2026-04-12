@@ -16,11 +16,13 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import unittest
+from unittest.mock import AsyncMock, Mock
 from roughcut.backend.indexing.hash_cache import HashCache
 from roughcut.backend.indexing.scanner import FileScanner, MEDIA_EXTENSIONS, get_category_for_extension
 from roughcut.backend.indexing.incremental import IncrementalScanner
 from roughcut.backend.indexing.indexer import MediaIndexer
 from roughcut.backend.database.models import MediaAsset, IndexState, IndexResult, ScanResult
+from roughcut.backend.database.spacetime_client import DeleteResult, QueryResult
 
 
 class TestHashCache(unittest.TestCase):
@@ -460,6 +462,74 @@ class TestMediaIndexer(unittest.TestCase):
             self.assertEqual(last_update['operation'], 'complete')
         finally:
             loop.close()
+
+    def test_index_media_is_idempotent_with_database_state(self):
+        """Repeated indexing should not reinsert unchanged assets."""
+        from roughcut.config.models import MediaFolderConfig
+
+        music_file = Path(self.temp_dir) / "song.mp3"
+        music_file.write_text("audio", encoding="utf-8")
+        existing_asset = MediaAsset.from_file_path(music_file, 'music')
+
+        mock_db_client = Mock()
+        mock_db_client.query_assets = AsyncMock(
+            return_value=QueryResult(assets=[existing_asset], total_count=1)
+        )
+        mock_db_client.insert_assets = AsyncMock()
+        mock_db_client.update_asset = AsyncMock()
+        mock_db_client.delete_assets = AsyncMock(return_value=DeleteResult(deleted_count=0))
+        self.indexer._db_client = mock_db_client
+
+        folder_config = MediaFolderConfig(music_folder=self.temp_dir)
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(self.indexer.index_media(folder_config))
+
+            self.assertEqual(result.indexed_count, 0)
+            self.assertEqual(result.new_count, 0)
+            self.assertEqual(result.modified_count, 0)
+            self.assertEqual(result.deleted_count, 0)
+            mock_db_client.insert_assets.assert_not_awaited()
+            mock_db_client.update_asset.assert_not_awaited()
+        finally:
+            loop.close()
+
+    def test_index_media_deletes_out_of_scope_database_assets(self):
+        """Reconciliation should purge category rows outside the configured folder."""
+        from roughcut.config.models import MediaFolderConfig
+
+        current_file = Path(self.temp_dir) / "song.mp3"
+        current_file.write_text("audio", encoding="utf-8")
+
+        outside_dir = tempfile.mkdtemp()
+        try:
+            stale_file = Path(outside_dir) / "stale.mp3"
+            stale_file.write_text("stale", encoding="utf-8")
+            stale_asset = MediaAsset.from_file_path(stale_file, 'music')
+
+            mock_db_client = Mock()
+            mock_db_client.query_assets = AsyncMock(
+                return_value=QueryResult(assets=[stale_asset], total_count=1)
+            )
+            mock_db_client.insert_assets = AsyncMock()
+            mock_db_client.update_asset = AsyncMock()
+            mock_db_client.delete_assets = AsyncMock(return_value=DeleteResult(deleted_count=1))
+            self.indexer._db_client = mock_db_client
+
+            folder_config = MediaFolderConfig(music_folder=self.temp_dir)
+
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(self.indexer.index_media(folder_config))
+            finally:
+                loop.close()
+
+            self.assertEqual(result.deleted_count, 1)
+            mock_db_client.delete_assets.assert_awaited_once_with([stale_asset.id])
+        finally:
+            import shutil
+            shutil.rmtree(outside_dir, ignore_errors=True)
     
     def test_index_state(self):
         """Test index state management."""
@@ -481,6 +551,42 @@ class TestMediaIndexer(unittest.TestCase):
         # Should be cleared
         self.assertEqual(self.indexer.index_state.total_assets_indexed, 0)
         self.assertEqual(len(self.indexer.hash_cache._cache), 0)
+
+    def test_send_progress_includes_phase_and_store_metadata(self):
+        """Progress payloads should expose explicit phase and DB write state."""
+        self.indexer._send_progress(
+            current=5,
+            total=10,
+            message="Writing assets",
+            operation="store",
+            database_writing=True,
+            batch_current=1,
+            batch_total=3,
+        )
+
+        update = self.progress_updates[-1]
+        self.assertEqual(update['phase'], 'store')
+        self.assertTrue(update['databaseWriting'])
+        self.assertEqual(update['batchCurrent'], 1)
+        self.assertEqual(update['batchTotal'], 3)
+
+    def test_handle_store_batch_progress_emits_store_update(self):
+        """Store batch callback should map Spacetime progress to index progress payloads."""
+        self.indexer._handle_store_batch_progress({
+            'current': 500,
+            'total': 1200,
+            'batch_current': 1,
+            'batch_total': 3,
+        })
+
+        update = self.progress_updates[-1]
+        self.assertEqual(update['operation'], 'store')
+        self.assertEqual(update['phase'], 'store')
+        self.assertTrue(update['databaseWriting'])
+        self.assertEqual(update['current'], 500)
+        self.assertEqual(update['total'], 1200)
+        self.assertEqual(update['batchCurrent'], 1)
+        self.assertEqual(update['batchTotal'], 3)
 
 
 class TestDatabaseModels(unittest.TestCase):

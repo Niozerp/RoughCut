@@ -63,9 +63,9 @@ After installation:
 2. Go to **Workspace > Scripts** menu
 3. Open **Utility** and select **RoughCut**
 4. On first launch, RoughCut will:
-   - Check for Python backend
-   - Install dependencies if needed (shows progress dialog)
-   - Transition directly into the main RoughCut window after installation finishes
+   - Run a blocking prelaunch bootstrap before any RoughCut GUI appears
+   - Repair missing Python, Electron, SpacetimeDB, Rust, and wasm prerequisites when possible
+   - Launch the Electron app only after local storage startup checks pass
 
 ## Getting Started
 
@@ -73,10 +73,8 @@ After installation:
 
 When you first run RoughCut:
 1. **Launcher Handoff**: `RoughCut.lua` finds `roughcut/lua/roughcut_main.lua`, connects to Resolve, and hands control to the packaged app
-2. **Backend Check**: RoughCut checks local config state and whether the `roughcut` Python package is already importable globally
-3. **Install Branch**:
-   - If the backend is already available, RoughCut skips the install dialog and goes straight to the home screen
-   - If the backend is missing, RoughCut shows the install dialog, installs the backend, and then opens the same home screen
+2. **Prelaunch Bootstrap**: RoughCut verifies Python, Poetry, Electron dependencies, SpacetimeDB, Rust, and the `wasm32-unknown-unknown` target before creating any GUI
+3. **Direct Electron Launch**: After bootstrap completes, RoughCut launches Electron from the packaged binary under `roughcut/electron/node_modules/electron/dist`
 4. **Home Screen**: The first reachable UI is the main RoughCut window with three options:
    - `Manage Media`
    - `Manage Formats`
@@ -180,7 +178,8 @@ Future stories will add:
 
 - DaVinci Resolve 17+ (Studio or Free version)
 - Python 3.10+ (for backend features)
-- Poetry 2.0+ (for development)
+- Poetry 2.0+ (installed automatically for bootstrap when needed)
+- Node.js 20+ (needed for bootstrap/build work; not required for steady-state runtime after bootstrap succeeds)
 
 ## Development
 

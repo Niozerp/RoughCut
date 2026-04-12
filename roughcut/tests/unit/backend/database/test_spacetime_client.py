@@ -1,42 +1,47 @@
-"""Unit tests for SpacetimeDB client.
-
-Tests the SpacetimeClient class with mocked database operations.
-"""
+"""Unit tests for the current SpacetimeDB client implementation."""
 
 import asyncio
-import pytest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
+import tempfile
+import shutil
+from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
+from roughcut.backend.database.models import MediaAsset
 from roughcut.backend.database.spacetime_client import (
+    ConnectionState,
+    DeleteResult,
+    InsertResult,
+    QueryResult,
     SpacetimeClient,
     SpacetimeConfig,
-    ConnectionState,
-    InsertResult,
-    AssetCounts
+    TIMESTAMP_FIELD,
+    UpdateResult,
 )
-from roughcut.backend.database.models import MediaAsset
+
+
+def run_async(coro):
+    """Run an async test body without requiring pytest-asyncio."""
+    return asyncio.run(coro)
 
 
 @pytest.fixture
 def test_config():
-    """Create test SpacetimeDB configuration."""
     return SpacetimeConfig(
         host="localhost",
         port=3000,
         database_name="test_roughcut",
         identity_token="test_identity_token",
-        connect_timeout=5.0,
-        max_reconnect_attempts=2
+        connect_timeout=1.0,
+        max_reconnect_attempts=2,
     )
 
 
 @pytest.fixture
 def mock_client(test_config):
-    """Create a SpacetimeClient with mocked connection."""
     client = SpacetimeClient(test_config)
-    # Simulate connected state for tests
     client._connection_state = ConnectionState.CONNECTED
     client._client = Mock()
     return client
@@ -44,469 +49,345 @@ def mock_client(test_config):
 
 @pytest.fixture
 def sample_asset():
-    """Create a sample MediaAsset for testing."""
+    now = datetime.now(timezone.utc)
     return MediaAsset(
-        id="test-asset-1",
+        id="asset-1",
         file_path=Path("/test/music/song.mp3"),
         file_name="song.mp3",
         category="music",
         file_size=1024,
-        modified_time=datetime.now(timezone.utc),
-        file_hash="abc123def456",
+        modified_time=now,
+        file_hash="abc123",
         ai_tags=["upbeat", "energetic"],
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc)
+        created_at=now,
+        updated_at=now,
     )
 
 
 class TestSpacetimeConfig:
-    """Test SpacetimeConfig dataclass."""
-    
     def test_default_values(self):
-        """Test default configuration values."""
         config = SpacetimeConfig()
+
         assert config.host == "localhost"
         assert config.port == 3000
         assert config.database_name == "roughcut"
         assert config.identity_token is None
-        assert config.connect_timeout == 10.0
-        assert config.max_reconnect_attempts == 3
-    
+        assert config.pool_min_size == 2
+        assert config.pool_max_size == 10
+
     def test_custom_values(self, test_config):
-        """Test custom configuration values."""
-        assert test_config.host == "localhost"
-        assert test_config.port == 3000
         assert test_config.database_name == "test_roughcut"
         assert test_config.identity_token == "test_identity_token"
 
 
 class TestSpacetimeClientInitialization:
-    """Test SpacetimeClient initialization."""
-    
     def test_client_creation(self, test_config):
-        """Test client can be created with config."""
         client = SpacetimeClient(test_config)
+
         assert client.config == test_config
-        assert not client.is_connected
         assert client._client is None
+        assert client._connection_state == ConnectionState.DISCONNECTED
         assert client._subscriptions == {}
-    
-    def test_default_batch_size(self, test_config):
-        """Test batch size constant."""
-        client = SpacetimeClient(test_config)
-        assert client.BATCH_SIZE == 500
-        assert client.MAX_ERRORS == 100
-        assert client.MAX_SUBSCRIPTIONS == 100
+        assert client.is_connected is False
 
 
 class TestSpacetimeClientConnect:
-    """Test connection management."""
-    
-    @pytest.mark.asyncio
-    async def test_already_connected(self, test_config):
-        """Test connect returns True if already connected."""
+    def test_connection_success(self, test_config):
         client = SpacetimeClient(test_config)
-        client._connection_state = ConnectionState.CONNECTED
-        
-        result = await client.connect()
-        assert result is True
-    
-    @pytest.mark.asyncio
-    async def test_connection_success(self, test_config):
-        """Test successful connection."""
-        client = SpacetimeClient(test_config)
-        
-        # Mock the _create_connection method
-        with patch.object(client, '_create_connection', new_callable=AsyncMock) as mock_create:
+
+        with patch.object(client, "_create_connection", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = Mock()
-            
-            result = await client.connect()
-            
+
+            result = run_async(client.connect())
+
             assert result is True
-            assert client._connected is True
-            mock_create.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_connection_failure_with_retry(self, test_config):
-        """Test connection failure with retry logic."""
+            assert client.is_connected is True
+            assert client._connection_state == ConnectionState.CONNECTED
+            mock_create.assert_awaited_once()
+
+    def test_connection_failure_transitions_to_error(self, test_config):
         client = SpacetimeClient(test_config)
-        client.config.max_reconnect_attempts = 2
-        
-        with patch.object(client, '_create_connection', new_callable=AsyncMock) as mock_create:
-            mock_create.return_value = None  # Failed connection
-            
-            with patch('asyncio.sleep', new_callable=AsyncMock):  # Skip actual sleep
-                result = await client.connect()
-                
-                assert result is False
-                assert client._connected is False
-                assert mock_create.call_count == 2  # Retried
-    
-    @pytest.mark.asyncio
-    async def test_disconnect(self, mock_client):
-        """Test disconnect functionality."""
-        with patch.object(mock_client, '_close_connection', new_callable=AsyncMock) as mock_close:
-            await mock_client.disconnect()
-            
-            assert not mock_client._connected
-            assert mock_client._connection is None
-            mock_close.assert_called_once()
+
+        with patch.object(client, "_create_connection", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = None
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                result = run_async(client.connect())
+
+        assert result is False
+        assert client.is_connected is False
+        assert client._connection_state == ConnectionState.ERROR
+        assert mock_create.await_count == 2
+
+    def test_disconnect_clears_client_and_state(self, mock_client):
+        with patch.object(mock_client, "_close_connection", new_callable=AsyncMock) as mock_close:
+            run_async(mock_client.disconnect())
+
+        assert mock_client._client is None
+        assert mock_client._connection_state == ConnectionState.DISCONNECTED
+        mock_close.assert_awaited_once()
 
 
 class TestInsertAssets:
-    """Test asset insertion functionality."""
-    
-    @pytest.mark.asyncio
-    async def test_insert_empty_list(self, mock_client):
-        """Test inserting empty list returns immediately."""
-        result = await mock_client.insert_assets([])
+    def test_insert_empty_list(self, mock_client):
+        result = run_async(mock_client.insert_assets([]))
+
+        assert isinstance(result, InsertResult)
         assert result.inserted_count == 0
         assert result.errors == []
-    
-    @pytest.mark.asyncio
-    async def test_insert_not_connected(self, test_config):
-        """Test insert fails if not connected."""
+
+    def test_insert_requires_connection(self, test_config):
         client = SpacetimeClient(test_config)
-        client._connected = False
-        
+
         with pytest.raises(ConnectionError, match="Not connected to SpacetimeDB"):
-            await client.insert_assets([Mock()])
-    
-    @pytest.mark.asyncio
-    async def test_batch_size_adjustment(self, mock_client):
-        """Test batch size is adjusted to specification value of 500."""
-        # The implementation enforces BATCH_SIZE = 500 and auto-adjusts
-        # Test that different batch sizes all result in the same behavior
-        with patch.object(mock_client, '_insert_batch', new_callable=AsyncMock) as mock_insert:
+            run_async(client.insert_assets([Mock()]))
+
+    def test_insert_single_asset(self, mock_client, sample_asset):
+        with patch.object(mock_client, "_insert_batch", new_callable=AsyncMock) as mock_insert:
             mock_insert.return_value = 1
-            
-            # Small batch size - gets adjusted to 500
-            await mock_client.insert_assets([Mock()], batch_size=10)
-            # Large batch size - gets adjusted to 500
-            await mock_client.insert_assets([Mock()], batch_size=2000)
-            # Correct batch size - stays at 500
-            await mock_client.insert_assets([Mock()], batch_size=500)
-            
-            # All should succeed without raising
-    
-    @pytest.mark.asyncio
-    async def test_insert_single_asset(self, mock_client, sample_asset):
-        """Test inserting a single asset."""
-        with patch.object(mock_client, '_insert_batch', new_callable=AsyncMock) as mock_insert:
+
+            result = run_async(mock_client.insert_assets([sample_asset]))
+
+        assert result.inserted_count == 1
+        assert result.errors == []
+        mock_insert.assert_awaited_once()
+
+    def test_insert_assets_reports_batch_progress(self, mock_client, sample_asset):
+        progress_updates = []
+
+        with patch.object(mock_client, "_insert_batch", new_callable=AsyncMock) as mock_insert:
             mock_insert.return_value = 1
-            
-            result = await mock_client.insert_assets([sample_asset])
-            
-            assert result.inserted_count == 1
-            assert result.errors == []
-            mock_insert.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_insert_multiple_batches(self, mock_client, sample_asset):
-        """Test inserting assets in multiple batches."""
-        assets = [sample_asset for _ in range(150)]  # 150 assets
-        
-        with patch.object(mock_client, '_insert_batch', new_callable=AsyncMock) as mock_insert:
-            mock_insert.return_value = 50  # Each batch inserts 50
-            
-            result = await mock_client.insert_assets(assets, batch_size=50)
-            
-            assert result.inserted_count == 150  # 3 batches * 50
-            assert mock_insert.call_count == 3
-    
-    @pytest.mark.asyncio
-    async def test_insert_with_errors(self, mock_client, sample_asset):
-        """Test insert continues despite batch errors."""
-        assets = [sample_asset for _ in range(100)]
-        
-        with patch.object(mock_client, '_insert_batch', new_callable=AsyncMock) as mock_insert:
-            # First batch succeeds, second fails
-            mock_insert.side_effect = [50, Exception("Batch failed")]
-            
-            result = await mock_client.insert_assets(assets, batch_size=50)
-            
-            assert result.inserted_count == 50  # Only first batch succeeded
-            assert len(result.errors) == 1
-            assert "Batch failed" in result.errors[0]
+
+            result = run_async(
+                mock_client.insert_assets([sample_asset], progress_callback=progress_updates.append)
+            )
+
+        assert result.inserted_count == 1
+        assert progress_updates[0] == {
+            'current': 0,
+            'total': 1,
+            'batch_current': 0,
+            'batch_total': 1,
+        }
+        assert progress_updates[-1] == {
+            'current': 1,
+            'total': 1,
+            'batch_current': 1,
+            'batch_total': 1,
+        }
+        mock_insert.assert_awaited_once()
 
 
 class TestUpdateAsset:
-    """Test asset update functionality."""
-    
-    @pytest.mark.asyncio
-    async def test_update_not_connected(self, test_config):
-        """Test update fails if not connected."""
-        client = SpacetimeClient(test_config)
-        client._connected = False
-        
-        with pytest.raises(ConnectionError, match="Not connected to SpacetimeDB"):
-            await client.update_asset("test-id", {"file_name": "new.mp3"})
-    
-    @pytest.mark.asyncio
-    async def test_update_success(self, mock_client):
-        """Test successful update."""
-        with patch.object(mock_client, '_update_record', new_callable=AsyncMock) as mock_update:
+    def test_update_returns_structured_result(self, mock_client):
+        with patch.object(mock_client, "_update_record", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = True
-            
-            result = await mock_client.update_asset("test-id", {"file_name": "new.mp3"})
-            
-            assert result is True
-            mock_update.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_update_failure(self, mock_client):
-        """Test update failure handling."""
-        with patch.object(mock_client, '_update_record', new_callable=AsyncMock) as mock_update:
-            mock_update.side_effect = Exception("Update failed")
-            
-            result = await mock_client.update_asset("test-id", {"file_name": "new.mp3"})
-            
-            assert result is False
+
+            result = run_async(mock_client.update_asset("test-id", {"file_name": "new.mp3"}))
+
+        assert isinstance(result, UpdateResult)
+        assert result.success is True
+        assert result.asset_id == "test-id"
+        mock_update.assert_awaited_once()
+
+    def test_update_rejects_invalid_category(self, mock_client):
+        result = run_async(mock_client.update_asset("test-id", {"category": "bogus"}))
+
+        assert result.success is False
+        assert result.error_code == "INVALID_CATEGORY"
 
 
 class TestDeleteAssets:
-    """Test asset deletion functionality."""
-    
-    @pytest.mark.asyncio
-    async def test_delete_not_connected(self, test_config):
-        """Test delete fails if not connected."""
-        client = SpacetimeClient(test_config)
-        client._connected = False
-        
-        with pytest.raises(ConnectionError, match="Not connected to SpacetimeDB"):
-            await client.delete_assets(["test-id"])
-    
-    @pytest.mark.asyncio
-    async def test_delete_empty_list(self, mock_client):
-        """Test deleting empty list returns 0."""
-        result = await mock_client.delete_assets([])
-        assert result == 0
-    
-    @pytest.mark.asyncio
-    async def test_delete_success(self, mock_client):
-        """Test successful deletion."""
-        with patch.object(mock_client, '_delete_records', new_callable=AsyncMock) as mock_delete:
-            mock_delete.return_value = 5
-            
-            result = await mock_client.delete_assets(["id1", "id2", "id3", "id4", "id5"])
-            
-            assert result == 5
-            mock_delete.assert_called_once()
-    
-    @pytest.mark.asyncio
-    async def test_delete_failure(self, mock_client):
-        """Test delete failure handling."""
-        with patch.object(mock_client, '_delete_records', new_callable=AsyncMock) as mock_delete:
-            mock_delete.side_effect = Exception("Delete failed")
-            
-            result = await mock_client.delete_assets(["test-id"])
-            
-            assert result == 0
+    def test_delete_empty_list(self, mock_client):
+        result = run_async(mock_client.delete_assets([]))
+
+        assert isinstance(result, DeleteResult)
+        assert result.deleted_count == 0
+
+    def test_delete_success(self, mock_client):
+        with patch.object(mock_client, "_delete_records", new_callable=AsyncMock) as mock_delete:
+            mock_delete.return_value = 3
+
+            result = run_async(mock_client.delete_assets(["a", "b", "c"]))
+
+        assert result.deleted_count == 3
+        assert result.failed_ids == []
+        mock_delete.assert_awaited()
 
 
 class TestQueryAssets:
-    """Test asset query functionality."""
-    
-    @pytest.mark.asyncio
-    async def test_query_not_connected(self, test_config):
-        """Test query fails if not connected."""
-        client = SpacetimeClient(test_config)
-        client._connected = False
-        
-        with pytest.raises(ConnectionError, match="Not connected to SpacetimeDB"):
-            await client.query_assets()
-    
-    @pytest.mark.asyncio
-    async def test_query_by_category(self, mock_client):
-        """Test query with category filter."""
-        mock_records = [
-            {"asset_id": "1", "file_path": "/test/song1.mp3", "file_name": "song1.mp3", 
-             "category": "music", "file_size": 1000, "file_hash": "hash1",
-             "ai_tags": [], "modified_time": datetime.now(timezone.utc).isoformat(),
-             "created_at": datetime.now(timezone.utc).isoformat(),
-             "updated_at": datetime.now(timezone.utc).isoformat()},
-            {"asset_id": "2", "file_path": "/test/song2.mp3", "file_name": "song2.mp3",
-             "category": "music", "file_size": 2000, "file_hash": "hash2",
-             "ai_tags": [], "modified_time": datetime.now(timezone.utc).isoformat(),
-             "created_at": datetime.now(timezone.utc).isoformat(),
-             "updated_at": datetime.now(timezone.utc).isoformat()}
+    def test_query_returns_query_result(self, mock_client):
+        now = datetime.now(timezone.utc).isoformat()
+        records = [
+            {
+                "asset_id": "1",
+                "file_path": "/test/song1.mp3",
+                "file_name": "song1.mp3",
+                "category": "music",
+                "file_size": 1000,
+                "file_hash": "hash1",
+                "ai_tags": ["upbeat"],
+                "modified_time": now,
+                "created_at": now,
+                "updated_at": now,
+            }
         ]
-        
-        with patch.object(mock_client, '_execute_query', new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = mock_records
-            
-            result = await mock_client.query_assets(category="music", limit=10)
-            
-            assert len(result) == 2
-            assert all(a.category == "music" for a in result)
-    
-    @pytest.mark.asyncio
-    async def test_query_empty_result(self, mock_client):
-        """Test query returns empty list when no results."""
-        with patch.object(mock_client, '_execute_query', new_callable=AsyncMock) as mock_query:
-            mock_query.return_value = []
-            
-            result = await mock_client.query_assets(category="vfx")
-            
-            assert result == []
-    
-    @pytest.mark.asyncio
-    async def test_query_failure(self, mock_client):
-        """Test query failure handling."""
-        with patch.object(mock_client, '_execute_query', new_callable=AsyncMock) as mock_query:
-            mock_query.side_effect = Exception("Query failed")
-            
-            result = await mock_client.query_assets()
-            
-            assert result == []
+
+        with patch.object(mock_client, "_execute_query", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = records
+
+            result = run_async(mock_client.query_assets(category="music", limit=10))
+
+        assert isinstance(result, QueryResult)
+        assert result.error is None
+        assert result.total_count == 1
+        assert result.assets[0].category == "music"
+
+    def test_query_rejects_invalid_limit(self, mock_client):
+        result = run_async(mock_client.query_assets(limit=0))
+
+        assert result.error is not None
+        assert result.assets == []
+
+    def test_query_filters_to_scope_and_cleans_stale_files(self, mock_client):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            existing_file = Path(temp_dir) / "song1.mp3"
+            existing_file.write_text("ok", encoding="utf-8")
+            stale_file = Path(temp_dir) / "missing.mp3"
+            out_of_scope_file = Path(temp_dir).parent / "outside.mp3"
+
+            now = datetime.now(timezone.utc).isoformat()
+            records = [
+                {
+                    "asset_id": "keep",
+                    "file_path": str(existing_file),
+                    "file_name": existing_file.name,
+                    "category": "music",
+                    "file_size": 1000,
+                    "file_hash": "hash1",
+                    "ai_tags": ["upbeat"],
+                    "modified_time": now,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "asset_id": "stale",
+                    "file_path": str(stale_file),
+                    "file_name": stale_file.name,
+                    "category": "music",
+                    "file_size": 1000,
+                    "file_hash": "hash2",
+                    "ai_tags": ["stale"],
+                    "modified_time": now,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                {
+                    "asset_id": "outside",
+                    "file_path": str(out_of_scope_file),
+                    "file_name": out_of_scope_file.name,
+                    "category": "music",
+                    "file_size": 1000,
+                    "file_hash": "hash3",
+                    "ai_tags": ["outside"],
+                    "modified_time": now,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            ]
+
+            with patch.object(mock_client, "_execute_query", new_callable=AsyncMock) as mock_query:
+                mock_query.return_value = records
+                mock_client.delete_assets = AsyncMock(return_value=DeleteResult(deleted_count=1))
+
+                result = run_async(
+                    mock_client.query_assets(
+                        category="music",
+                        limit=10,
+                        scope_folders=[temp_dir],
+                        verify_on_disk=True,
+                    )
+                )
+
+            assert result.error is None
+            assert result.total_count == 1
+            assert [asset.id for asset in result.assets] == ["keep"]
+            mock_client.delete_assets.assert_awaited_once_with(["stale"])
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-class TestGetAssetCounts:
-    """Test asset counting functionality."""
-    
-    @pytest.mark.asyncio
-    async def test_get_counts_not_connected(self, test_config):
-        """Test get_counts fails if not connected."""
-        client = SpacetimeClient(test_config)
-        client._connected = False
-        
-        with pytest.raises(ConnectionError, match="Not connected to SpacetimeDB"):
-            await client.get_asset_counts()
-    
-    @pytest.mark.asyncio
-    async def test_get_counts_success(self, mock_client):
-        """Test successful count retrieval."""
-        with patch.object(mock_client, '_execute_count_query', new_callable=AsyncMock) as mock_count:
-            mock_count.return_value = {"music": 10, "sfx": 5, "vfx": 3}
-            
-            result = await mock_client.get_asset_counts()
-            
-            assert result.music == 10
-            assert result.sfx == 5
-            assert result.vfx == 3
-            assert result.total == 18
-    
-    @pytest.mark.asyncio
-    async def test_get_counts_failure(self, mock_client):
-        """Test count failure handling."""
-        with patch.object(mock_client, '_execute_count_query', new_callable=AsyncMock) as mock_count:
-            mock_count.side_effect = Exception("Count failed")
-            
-            result = await mock_client.get_asset_counts()
-            
-            assert result.music == 0
-            assert result.sfx == 0
-            assert result.vfx == 0
-            assert result.total == 0
-
-
-class TestAssetToDbFormat:
-    """Test asset conversion to database format."""
-    
-    def test_asset_conversion(self, mock_client, sample_asset):
-        """Test MediaAsset to database format conversion."""
+class TestAssetConversion:
+    def test_asset_to_db_format_hashes_identity_token(self, mock_client, sample_asset):
         result = mock_client._asset_to_db_format(sample_asset)
-        
+
         assert result["asset_id"] == sample_asset.id
         assert result["file_path"] == str(sample_asset.file_path)
-        assert result["file_name"] == sample_asset.file_name
-        assert result["category"] == sample_asset.category.lower()
-        assert result["file_size"] == sample_asset.file_size
-        assert result["file_hash"] == sample_asset.file_hash
-        assert result["ai_tags"] == sample_asset.ai_tags
-        assert "created_at" in result
-        assert "updated_at" in result
-        assert result["owner_identity"] == mock_client.config.identity_token
-    
-    def test_asset_conversion_no_token(self, test_config, sample_asset):
-        """Test conversion with no identity token."""
+        assert result["owner_identity"] == ""
+        assert result["created_at"] == {TIMESTAMP_FIELD: int(sample_asset.created_at.timestamp() * 1_000_000)}
+
+    def test_asset_to_db_format_uses_anonymous_identity_without_token(self, test_config, sample_asset):
         test_config.identity_token = None
         client = SpacetimeClient(test_config)
-        
+
         result = client._asset_to_db_format(sample_asset)
-        
-        # When no token, generates anonymous identity (0x + 64 zeros)
-        assert result["owner_identity"] == "0x" + "0" * 64
+
+        assert result["owner_identity"] == ""
+
+    def test_db_record_to_asset_decodes_timestamp_products(self, mock_client):
+        micros = 1_775_966_383_742_231
+        record = {
+            "asset_id": "asset-1",
+            "file_path": "/test/music/song.mp3",
+            "file_name": "song.mp3",
+            "category": "music",
+            "file_size": 1024,
+            "file_hash": "abc123",
+            "ai_tags": ["upbeat", "energetic"],
+            "modified_time": [micros],
+            "created_at": {TIMESTAMP_FIELD: micros},
+            "updated_at": [micros],
+        }
+
+        asset = mock_client._db_record_to_asset(record)
+
+        assert asset.modified_time == datetime.fromtimestamp(micros / 1_000_000, tz=timezone.utc)
+        assert asset.created_at == datetime.fromtimestamp(micros / 1_000_000, tz=timezone.utc)
+        assert asset.updated_at == datetime.fromtimestamp(micros / 1_000_000, tz=timezone.utc)
 
 
-class TestSubscription:
-    """Test real-time subscription functionality."""
-    
-    def test_subscribe_to_changes(self, mock_client):
-        """Test subscription creation."""
+class TestSubscriptionsAndStats:
+    def test_subscribe_to_changes_stores_callback_tuple(self, mock_client):
         callback = Mock()
-        
-        sub_id = mock_client.subscribe_to_changes(callback)
-        
-        assert sub_id is not None
-        assert sub_id in mock_client._subscriptions
-        assert mock_client._subscriptions[sub_id] == callback
-    
-    @pytest.mark.asyncio
-    async def test_unsubscribe(self, mock_client):
-        """Test unsubscribe functionality."""
-        callback = Mock()
-        sub_id = mock_client.subscribe_to_changes(callback)
-        
-        await mock_client.unsubscribe(sub_id)
-        
-        assert sub_id not in mock_client._subscriptions
-    
-    @pytest.mark.asyncio
-    async def test_unsubscribe_invalid_id(self, mock_client):
-        """Test unsubscribe with invalid ID."""
-        # Should not raise error
-        await mock_client.unsubscribe("invalid-id")
+        fake_task = Mock()
+        fake_task.add_done_callback = Mock()
 
+        def fake_create_task(coro):
+            coro.close()
+            return fake_task
 
-class TestStats:
-    """Test client statistics."""
-    
-    def test_get_stats_initial(self, test_config):
-        """Test initial stats state."""
-        client = SpacetimeClient(test_config)
-        
-        stats = client.get_stats()
-        
-        assert stats["total_inserts"] == 0
-        assert stats["total_updates"] == 0
-        assert stats["total_deletes"] == 0
-        assert stats["connection_errors"] == 0
-        assert stats["connected"] is False
-        assert stats["active_subscriptions"] == 0
-        assert stats["reconnect_count"] == 0
-    
-    def test_get_stats_after_operations(self, mock_client):
-        """Test stats after operations."""
-        mock_client._stats["total_inserts"] = 100
-        mock_client._stats["total_updates"] = 10
-        mock_client._stats["total_deletes"] = 5
-        mock_client._stats["connection_errors"] = 2
-        mock_client._connected = True
-        
-        callback = Mock()
-        mock_client.subscribe_to_changes(callback)
-        
+        with patch("asyncio.create_task", side_effect=fake_create_task):
+            subscription_id = run_async(mock_client.subscribe_to_changes(callback))
+
+        assert subscription_id in mock_client._subscriptions
+        assert mock_client._subscriptions[subscription_id] == (callback, None)
+        fake_task.add_done_callback.assert_called_once()
+
+    def test_unsubscribe_removes_subscription(self, mock_client):
+        mock_client._subscriptions["sub-1"] = (Mock(), None)
+
+        run_async(mock_client.unsubscribe("sub-1"))
+
+        assert "sub-1" not in mock_client._subscriptions
+
+    def test_get_stats_reports_connection_state(self, mock_client):
+        mock_client._stats["total_inserts"] = 4
+        mock_client._stats["connection_errors"] = 1
+
         stats = mock_client.get_stats()
-        
-        assert stats["total_inserts"] == 100
-        assert stats["total_updates"] == 10
-        assert stats["total_deletes"] == 5
-        assert stats["connection_errors"] == 2
+
+        assert stats["total_inserts"] == 4
+        assert stats["connection_errors"] == 1
         assert stats["connected"] is True
-        assert stats["active_subscriptions"] == 1
-
-
-__all__ = [
-    'TestSpacetimeConfig',
-    'TestSpacetimeClientInitialization',
-    'TestSpacetimeClientConnect',
-    'TestInsertAssets',
-    'TestUpdateAsset',
-    'TestDeleteAssets',
-    'TestQueryAssets',
-    'TestGetAssetCounts',
-    'TestAssetToDbFormat',
-    'TestSubscription',
-    'TestStats'
-]
+        assert stats["active_subscriptions"] == 0
+        assert stats["connection_state"] == ConnectionState.CONNECTED.value

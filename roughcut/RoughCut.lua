@@ -1,100 +1,89 @@
--- RoughCut Launcher for DaVinci Resolve (Electron UI)
--- Merged version - electron app is in same folder
--- Version: 2.0.0
+-- RoughCut launcher for DaVinci Resolve.
+-- Launches the built Electron app in Resolve attach mode.
 
-print("[RoughCut] Starting...")
-
--- Get Resolve
-local resolve = nil
-for i = 1, 5 do
-    if _G.fusion and _G.fusion.GetResolve then
-        local ok, r = pcall(function() return _G.fusion:GetResolve() end)
-        if ok and r then resolve = r break end
+local function file_exists(path)
+    local handle = io.open(path, "r")
+    if handle then
+        handle:close()
+        return true
     end
-    local s = os.clock()
-    while os.clock() - s < 0.2 do end
+    return false
+end
+
+local function shell_escape_unix(value)
+    return tostring(value):gsub("'", [["'"']])
+end
+
+print("[RoughCut] Starting Resolve launcher...")
+
+local resolve = nil
+for _ = 1, 5 do
+    if _G.fusion and _G.fusion.GetResolve then
+        local ok, result = pcall(function()
+            return _G.fusion:GetResolve()
+        end)
+        if ok and result then
+            resolve = result
+            break
+        end
+    end
 end
 
 if not resolve then
-    print("[RoughCut] ERROR: Cannot connect to Resolve")
+    print("[RoughCut] Resolve scripting API is not available.")
     return
 end
 
--- Find this script's directory
-local scriptPath = debug.getinfo(1, "S").source
-if scriptPath:sub(1, 1) == "@" then scriptPath = scriptPath:sub(2) end
-scriptPath = scriptPath:gsub("\\", "/")
+local script_path = debug.getinfo(1, "S").source
+if script_path:sub(1, 1) == "@" then
+    script_path = script_path:sub(2)
+end
 
--- Remove filename to get directory
-local scriptsDir = scriptPath:match("^(.+)/[^/]+$") or "."
-print("[RoughCut] Scripts dir: " .. scriptsDir)
+script_path = script_path:gsub("\\", "/")
+local scripts_dir = script_path:match("^(.+)/[^/]+$") or "."
+local package_root = scripts_dir .. "/roughcut"
+local electron_path = package_root .. "/electron"
+local bootstrap_script = package_root .. "/scripts/bootstrap_launch.py"
 
--- Electron app is in roughcut/electron/ subfolder
-local electronPath = scriptsDir .. "/roughcut/electron"
+local package_json = electron_path .. "/package.json"
 
--- Check for package.json
-local f = io.open(electronPath .. "/package.json", "r")
-if not f then
-    print("[RoughCut] ERROR: Cannot find roughcut/electron/package.json")
-    print("[RoughCut] Looked in: " .. electronPath)
+if not file_exists(package_json) then
+    print("[RoughCut] Cannot find roughcut/electron/package.json")
+    print("[RoughCut] Re-run install.bat or install.sh to bootstrap RoughCut.")
     return
 end
-f:close()
 
-print("[RoughCut] Found electron app")
+if not file_exists(bootstrap_script) then
+    print("[RoughCut] Cannot find roughcut/scripts/bootstrap_launch.py")
+    print("[RoughCut] Re-run install.bat or install.sh to restore the launch bootstrap.")
+    return
+end
 
--- Get project name
-local projectName = "Unknown"
+local project_name = "Unknown Project"
 pcall(function()
-    projectName = resolve:GetProjectManager():GetCurrentProject():GetName()
+    project_name = resolve:GetProjectManager():GetCurrentProject():GetName()
 end)
-print("[RoughCut] Project: " .. projectName)
 
--- Convert to Windows path
-local winPath = electronPath:gsub("/", "\\")
-local tempDir = (os.getenv("TEMP") or "C:\\Windows\\Temp"):gsub("/", "\\")
-local timestamp = tostring(os.time())
-local batchFile = tempDir .. "\\roughcut_" .. timestamp .. ".bat"
+local path_separator = package.config:sub(1, 1)
+local is_windows = path_separator == "\\"
 
--- Delete any old batch files
-os.execute('del "' .. tempDir .. '\\roughcut_*.bat" >nul 2>&1')
+if is_windows then
+    local working_dir = package_root:gsub("/", "\\")
+    local bootstrap_path = bootstrap_script:gsub("/", "\\")
+    local safe_project = tostring(project_name):gsub('"', "'")
+    local command = 'cd /d "' .. working_dir .. '" && ' ..
+        '(py -3 "' .. bootstrap_path .. '" --mode resolve --project-name "' .. safe_project .. '" ' ..
+        '|| python "' .. bootstrap_path .. '" --mode resolve --project-name "' .. safe_project .. '")'
 
--- Create batch
-local batchLines = {
-    "@echo off",
-    "echo [RC] Starting RoughCut...",
-    "cd /d \"" .. winPath .. "\"",
-    "if errorlevel 1 (echo [RC] ERROR: Cannot cd & pause & exit /b 1)",
-    "echo [RC] In: %cd%",
-    "if not exist node_modules\\.bin\\electron.cmd (",
-    "  echo [RC] Installing deps...",
-    "  call npm install",
-    "  if errorlevel 1 (echo [RC] Install failed & pause & exit /b 1)",
-    ")",
-    "set ROUGHCUT_RESOLVE=1",
-    "set ROUGHCUT_PROJECT=" .. projectName,
-    "set PATH=%cd%\\node_modules\\.bin;%PATH%",
-    "echo [RC] Launching...",
-    "call npm run dev",
-    "if errorlevel 1 (echo [RC] Failed & pause)",
-    "exit"
-}
+    os.execute(command)
+else
+    local command = 'cd "' .. package_root .. '" && ' ..
+        '(python3 "' .. bootstrap_script .. '" --mode resolve --project-name \'' ..
+        shell_escape_unix(project_name) .. '\' ' ..
+        '|| python "' .. bootstrap_script .. '" --mode resolve --project-name \'' ..
+        shell_escape_unix(project_name) .. '\')'
 
-local f = io.open(batchFile, "w")
-if not f then
-    print("[RoughCut] ERROR: Cannot write batch")
-    return
+    os.execute(command)
 end
-for _, line in ipairs(batchLines) do
-    f:write(line .. "\n")
-end
-f:close()
 
-print("[RoughCut] Launching from: " .. batchFile)
-
--- Launch
-os.execute('start "RoughCut" cmd /c "' .. batchFile .. '"')
-print("[RoughCut] Window should appear")
-
--- Cleanup
-os.execute('start /MIN cmd /c "ping -n 61 127.0.0.1 >nul & del \"' .. batchFile .. '\" 2>nul"')
+print("[RoughCut] Launch request sent.")

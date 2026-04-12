@@ -1,53 +1,71 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import fs from 'fs'
-import { executePythonCommand, cancelIndexing, getActiveIndexingOperations, cleanupAllProcesses } from './pythonBridge.js'
+
+import {
+  cancelIndexing,
+  cleanupAllProcesses,
+  executePythonCommand,
+  getActiveIndexingOperations,
+} from './pythonBridge.js'
+import { bootstrapAndCreateWindow } from './appBootstrap.js'
+import { getSpacetimeManager } from './spacetimeManager.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-let mainWindow: BrowserWindow | null
+type ResolveUiStatus = 'connected' | 'connecting' | 'disconnected'
 
-// Track Resolve connection status
-let resolveStatus: 'connected' | 'connecting' | 'disconnected' = 'connecting'
+interface ResolveConnectionStatus {
+  status: ResolveUiStatus
+  connected: boolean
+  available: boolean
+  attached: boolean
+  project_name: string | null
+  version: unknown
+  module_error: string | null
+  search_paths: string[]
+}
+
+interface MediaFolderPayload {
+  music_folder?: string | null
+  sfx_folder?: string | null
+  vfx_folder?: string | null
+}
+
+let mainWindow: BrowserWindow | null = null
+const launchMode = process.env.ROUGHCUT_LAUNCH_MODE === 'resolve' ? 'resolve' : 'standalone'
+let resolveAttached = launchMode === 'resolve'
+
+const spacetimeManager = getSpacetimeManager()
+
+spacetimeManager.onHealthChanged((status) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('storage:health-changed', status)
+  }
+})
 
 function createWindow() {
-  // Resolve preload script path - check multiple possible locations
   const possiblePreloadPaths = [
     path.join(__dirname, 'preload.js'),
     path.join(__dirname, 'electron', 'preload.js'),
     path.join(app.getAppPath(), 'electron', 'preload.js'),
     path.join(process.cwd(), 'electron', 'preload.js'),
   ]
-  
-  let preloadPath: string | null = null
-  for (const testPath of possiblePreloadPaths) {
-    console.log('[RoughCut Electron] Checking preload path:', testPath)
-    if (fs.existsSync(testPath)) {
-      preloadPath = testPath
-      console.log('[RoughCut Electron] Found preload script at:', preloadPath)
-      break
-    }
-  }
-  
+
+  const preloadPath = possiblePreloadPaths.find((candidate) => fs.existsSync(candidate)) ?? null
+
   if (!preloadPath) {
-    console.error('[RoughCut Electron] ERROR: preload.js not found in any of the expected locations:')
-    possiblePreloadPaths.forEach(p => console.error('  -', p))
-    console.error('[RoughCut Electron] __dirname:', __dirname)
-    console.error('[RoughCut Electron] app.getAppPath():', app.getAppPath())
-    console.error('[RoughCut Electron] process.cwd():', process.cwd())
+    console.error('[RoughCut Electron] preload.js not found in expected locations:', possiblePreloadPaths)
   }
-  
+
   const webPreferences: Electron.WebPreferences = {
     contextIsolation: true,
     nodeIntegration: false,
+    preload: preloadPath ?? undefined,
   }
-  
-  if (preloadPath) {
-    webPreferences.preload = preloadPath
-  }
-  
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -58,51 +76,87 @@ function createWindow() {
     show: false,
   })
 
-  // Log all console messages from the renderer (including preload script logs/errors)
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
     const levelName = ['debug', 'info', 'warn', 'error'][level] || 'log'
     console.log(`[Renderer ${levelName.toUpperCase()}] ${message}`)
   })
 
-  // Load the app
   if (process.env.VITE_DEV_SERVER_URL) {
-    console.log('[RoughCut Electron] Loading from dev server:', process.env.VITE_DEV_SERVER_URL)
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
     mainWindow.webContents.openDevTools()
   } else {
-    const indexPath = path.join(__dirname, '../index.html')
-    console.log('[RoughCut Electron] Loading from file:', indexPath)
-    mainWindow.loadFile(indexPath)
+    mainWindow.loadFile(path.join(__dirname, '../index.html'))
   }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
-    console.log('[RoughCut Electron] Window ready')
-    
-    // Check if preload script loaded successfully by executing JavaScript in the renderer
-    mainWindow?.webContents.executeJavaScript('typeof window.electronAPI !== "undefined"')
-      .then((hasAPI) => {
-        console.log('[RoughCut Electron] Preload script check - window.electronAPI available:', hasAPI)
-        if (!hasAPI) {
-          console.error('[RoughCut Electron] WARNING: Preload script did not expose window.electronAPI!')
-        }
-      })
-      .catch((err) => {
-        console.error('[RoughCut Electron] Error checking preload script:', err)
-      })
   })
 
   mainWindow.on('closed', () => {
     mainWindow = null
-    console.log('[RoughCut Electron] Window closed')
   })
 }
 
-app.whenReady().then(() => {
-  console.log('[RoughCut Electron] App starting...')
-  console.log('[RoughCut Electron] Launched from DaVinci Resolve')
-  
-  createWindow()
+function normalizeResolveStatus(result: any): ResolveConnectionStatus {
+  const available = Boolean(result?.available ?? result?.connected)
+  if (!available) {
+    resolveAttached = false
+  }
+
+  const attached = available ? resolveAttached : false
+  return {
+    status: attached ? 'connected' : 'disconnected',
+    connected: attached,
+    available,
+    attached,
+    project_name: result?.project_name ?? null,
+    version: result?.version ?? null,
+    module_error: result?.module_error ?? null,
+    search_paths: Array.isArray(result?.search_paths) ? result.search_paths : [],
+  }
+}
+
+async function getResolveStatus(command: 'resolve_status' | 'resolve_connect' = 'resolve_status') {
+  const result = await executePythonCommand(command, {})
+  if (command === 'resolve_connect') {
+    resolveAttached = Boolean(result?.available ?? result?.connected)
+  }
+  return normalizeResolveStatus(result)
+}
+
+async function ensureStorageReady() {
+  const status = await spacetimeManager.ensureReady()
+  if (status.status !== 'ready') {
+    throw new Error(status.error || status.message)
+  }
+
+  return status
+}
+
+function mapFolder(category: string, folderPath: string) {
+  return {
+    id: `${category}-${Date.now()}`,
+    path: folderPath,
+    category,
+  }
+}
+
+app.whenReady().then(async () => {
+  console.log(`[RoughCut Electron] App starting in ${launchMode} mode...`)
+  const launched = await bootstrapAndCreateWindow({
+    createWindow,
+    ensureReady: () => spacetimeManager.ensureReady(),
+    logFailure: (message) => {
+      console.error('[RoughCut Electron] Prelaunch bootstrap failed:', message)
+    },
+    quit: () => {
+      app.quit()
+    },
+  })
+
+  if (!launched) {
+    return
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -117,279 +171,349 @@ app.on('window-all-closed', () => {
   }
 })
 
-// IPC handlers for Python/Resolve communication
-ipcMain.handle('resolve:check-connection', async () => {
-  // Simulate connection check - in real implementation would communicate with Python backend
-  // Wait a moment to simulate checking
-  await new Promise(resolve => setTimeout(resolve, 500))
-  
-  // For now, simulate successful connection
-  resolveStatus = 'connected'
-  return { status: resolveStatus }
+ipcMain.handle('bootstrap:get-status', async () => {
+  return spacetimeManager.ensureReady()
 })
 
-ipcMain.handle('resolve:send-timeline', async (_, data) => {
-  console.log('[RoughCut Electron] Sending timeline to Resolve:', data)
-  // Placeholder - will integrate with Python backend
-  return { success: true }
+ipcMain.handle('bootstrap:retry', async () => {
+  return spacetimeManager.retry()
 })
 
-ipcMain.handle('media:select-folder', async () => {
-  console.log('[RoughCut Electron] Opening folder selection dialog')
-  
-  if (!mainWindow) {
-    console.error('[RoughCut Electron] ERROR: mainWindow is null, cannot open dialog')
-    return { canceled: true, filePath: null, error: 'Main window not available' }
-  }
-  
-  // Check if mainWindow is destroyed
-  if (mainWindow.isDestroyed()) {
-    console.error('[RoughCut Electron] ERROR: mainWindow is destroyed, cannot open dialog')
-    return { canceled: true, filePath: null, error: 'Main window destroyed' }
-  }
-  
+ipcMain.handle('storage:get-health', async () => {
+  return spacetimeManager.getStorageHealth()
+})
+
+ipcMain.handle('storage:retry-recovery', async () => {
+  return spacetimeManager.retryRecovery()
+})
+
+ipcMain.handle('resolve:get-status', async () => {
   try {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openDirectory'],
-      title: 'Select Media Folder',
-      buttonLabel: 'Select Folder'
+    return await getResolveStatus()
+  } catch (error: any) {
+    resolveAttached = false
+    return normalizeResolveStatus({
+      available: false,
+      connected: false,
+      module_error: error?.message || String(error),
+      search_paths: [],
     })
-    
-    console.log('[RoughCut Electron] Folder selection result:', result.canceled ? 'canceled' : result.filePaths[0])
-    
-    return {
-      canceled: result.canceled,
-      filePath: result.canceled ? null : result.filePaths[0]
-    }
-  } catch (error) {
-    console.error('[RoughCut Electron] ERROR: Failed to open folder dialog:', error)
-    return { canceled: true, filePath: null, error: String(error) }
   }
+})
+
+ipcMain.handle('resolve:connect', async () => {
+  try {
+    return await getResolveStatus('resolve_connect')
+  } catch (error: any) {
+    resolveAttached = false
+    return normalizeResolveStatus({
+      available: false,
+      connected: false,
+      module_error: error?.message || String(error),
+      search_paths: [],
+    })
+  }
+})
+
+ipcMain.handle('resolve:disconnect', async () => {
+  resolveAttached = false
+
+  try {
+    await executePythonCommand('resolve_disconnect', {})
+  } catch (error) {
+    console.warn('[RoughCut Electron] Resolve disconnect command failed:', error)
+  }
+
+  return normalizeResolveStatus({
+    available: false,
+    connected: false,
+    project_name: null,
+    version: null,
+    module_error: null,
+    search_paths: [],
+  })
+})
+
+ipcMain.handle('resolve:send-timeline', async (_event, data) => {
+  if (!resolveAttached) {
+    return {
+      success: false,
+      error: 'Not connected to DaVinci Resolve.',
+    }
+  }
+
+  try {
+    const result = await executePythonCommand('resolve_send_timeline', data ?? {})
+    return {
+      success: true,
+      ...result,
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error?.message || String(error),
+    }
+  }
+})
+
+ipcMain.handle('config:get-state', async () => {
+  return executePythonCommand('config_state', {})
+})
+
+ipcMain.handle('config:save-media-folders', async (_event, payload: MediaFolderPayload) => {
+  return executePythonCommand('save_media_folders', payload)
+})
+
+ipcMain.handle('config:set-onboarding-complete', async (_event, payload: { completed: boolean }) => {
+  return executePythonCommand('set_onboarding_complete', payload)
 })
 
 ipcMain.handle('app:get-info', async () => {
   return {
     version: app.getVersion(),
     mode: 'electron',
-    launchedFromResolve: true
+    launchMode,
+    launchedFromResolve: launchMode === 'resolve',
+    projectName: process.env.ROUGHCUT_PROJECT ?? null,
   }
 })
 
-// ==========================================
-// INDEXING IPC HANDLERS
-// ==========================================
+ipcMain.handle('media:select-folder', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePath: null, error: 'Main window not available' }
+  }
 
-/**
- * Index folders - performs incremental indexing
- * Params: { folders: [{ id, path, category }], incremental: boolean }
- */
-ipcMain.handle('media:index-folders', async (_, params: { folders: Array<{ id: string; path: string; category: string }>; incremental?: boolean }) => {
-  console.log('[RoughCut Electron] Starting folder indexing:', params)
-  
   try {
-    const operationId = `index_${Date.now()}`
-    
-    // Set up progress tracking
-    const progressUpdates: any[] = []
-    
-    const result: any = await executePythonCommand(
-      'index',
-      {
-        folders: params.folders || [],
-        incremental: params.incremental !== false
-      },
-      (progress: any) => {
-        progressUpdates.push(progress)
-        // Send progress to renderer via mainWindow
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('media:index-progress', {
-            operationId,
-            ...progress
-          })
-        }
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Media Folder',
+      buttonLabel: 'Select Folder',
+    })
+
+    return {
+      canceled: result.canceled,
+      filePath: result.canceled ? null : result.filePaths[0],
+    }
+  } catch (error) {
+    return { canceled: true, filePath: null, error: String(error) }
+  }
+})
+
+ipcMain.handle(
+  'media:index-folders',
+  async (
+    _event,
+    params: {
+      folders: Array<{ id: string; path: string; category: string }>
+      incremental?: boolean
+      operationId?: string
+    }
+  ) => {
+    try {
+      await ensureStorageReady()
+
+      const folder = (params.folders || [])[0]
+      if (!folder) {
+        throw new Error('No folder was provided for indexing.')
       }
-    )
-    
-    // Include all progress updates in result
-    result.progress_updates = progressUpdates
-    result.operation_id = operationId
-    
-    console.log('[RoughCut Electron] Indexing complete:', result)
-    return { success: true, ...result }
-    
-  } catch (error: any) {
-    console.error('[RoughCut Electron] Indexing failed:', error)
-    return { 
-      success: false, 
-      error: error.message || String(error),
-      error_type: 'INDEXING_FAILED'
+
+      const operationId = params.operationId || `index_${folder.category}_${Date.now()}`
+      const progressUpdates: any[] = []
+      const result: any = await executePythonCommand(
+        'index',
+        {
+          folders: [folder],
+          incremental: params.incremental !== false,
+        },
+        (progress: any) => {
+          progressUpdates.push(progress)
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('media:index-progress', {
+              operationId,
+              category: folder.category,
+              ...progress,
+            })
+          }
+        },
+        operationId
+      )
+
+      result.progress_updates = progressUpdates
+      result.operation_id = operationId
+      result.category = folder.category
+      return { success: true, ...result }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error?.message || String(error),
+        error_type: 'INDEXING_FAILED',
+      }
     }
   }
-})
+)
 
-/**
- * Reindex folders - performs full reindexing (scans all files)
- * Params: { folders: [{ id, path, category }] }
- */
-ipcMain.handle('media:reindex-folders', async (_, params: { folders: Array<{ id: string; path: string; category: string }> }) => {
-  console.log('[RoughCut Electron] Starting full reindexing:', params)
-  
-  try {
-    const operationId = `reindex_${Date.now()}`
-    
-    const progressUpdates: any[] = []
-    
-    const result: any = await executePythonCommand(
-      'reindex',
-      {
-        folders: params.folders || []
-      },
-      (progress: any) => {
-        progressUpdates.push(progress)
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('media:index-progress', {
-            operationId,
-            ...progress
-          })
-        }
+ipcMain.handle(
+  'media:reindex-folders',
+  async (
+    _event,
+    params: {
+      folders: Array<{ id: string; path: string; category: string }>
+      operationId?: string
+    }
+  ) => {
+    try {
+      await ensureStorageReady()
+
+      const folder = (params.folders || [])[0]
+      if (!folder) {
+        throw new Error('No folder was provided for reindexing.')
       }
-    )
-    
-    result.progress_updates = progressUpdates
-    result.operation_id = operationId
-    
-    console.log('[RoughCut Electron] Reindexing complete:', result)
-    return { success: true, ...result }
-    
-  } catch (error: any) {
-    console.error('[RoughCut Electron] Reindexing failed:', error)
-    return { 
-      success: false, 
-      error: error.message || String(error),
-      error_type: 'REINDEXING_FAILED'
+
+      const operationId = params.operationId || `reindex_${folder.category}_${Date.now()}`
+      const progressUpdates: any[] = []
+      const result: any = await executePythonCommand(
+        'reindex',
+        {
+          folders: [folder],
+        },
+        (progress: any) => {
+          progressUpdates.push(progress)
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('media:index-progress', {
+              operationId,
+              category: folder.category,
+              ...progress,
+            })
+          }
+        },
+        operationId
+      )
+
+      result.progress_updates = progressUpdates
+      result.operation_id = operationId
+      result.category = folder.category
+      return { success: true, ...result }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error?.message || String(error),
+        error_type: 'REINDEXING_FAILED',
+      }
     }
   }
-})
+)
 
-/**
- * Query assets from SpacetimeDB
- * Params: { category: 'music'|'sfx'|'vfx', limit: number }
- */
-ipcMain.handle('media:query-assets', async (_, params: { category: string; limit?: number }) => {
-  console.log('[RoughCut Electron] Querying assets:', params)
-  
+ipcMain.handle('media:query-assets', async (_event, params: { category: string; limit?: number; folderPath?: string; verifyOnDisk?: boolean }) => {
   try {
+    await ensureStorageReady()
     const result: any = await executePythonCommand('query', {
       category: params.category,
-      limit: params.limit || 1000
+      limit: params.limit || 1000,
+      folder_path: params.folderPath,
+      verify_on_disk: params.verifyOnDisk === true,
     })
-    
-    console.log(`[RoughCut Electron] Query returned ${result.total_count} assets`)
+
     return { success: true, ...result }
-    
   } catch (error: any) {
-    console.error('[RoughCut Electron] Asset query failed:', error)
-    return { 
-      success: false, 
-      error: error.message || String(error),
+    return {
+      success: false,
+      error: error?.message || String(error),
       assets: [],
-      total_count: 0
+      total_count: 0,
+      database_connected: false,
     }
   }
 })
 
-/**
- * Get database status and asset counts
- */
-ipcMain.handle('media:database-status', async () => {
-  console.log('[RoughCut Electron] Getting database status')
-  
+ipcMain.handle('media:purge-category', async (_event, params: { category: string }) => {
   try {
-    const result: any = await executePythonCommand('status', {})
+    await ensureStorageReady()
+    const result: any = await executePythonCommand('purge_category', {
+      category: params.category,
+    })
     return { success: true, ...result }
-    
   } catch (error: any) {
-    console.error('[RoughCut Electron] Database status check failed:', error)
-    return { 
-      success: false, 
-      error: error.message || String(error),
+    return {
+      success: false,
+      deleted_count: 0,
+      error: error?.message || String(error),
+    }
+  }
+})
+
+ipcMain.handle('media:database-status', async () => {
+  try {
+    const bootstrap = await ensureStorageReady()
+    const result = spacetimeManager.getDatabaseStatus()
+
+    return {
+      bootstrap,
+      ...result,
+    }
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error?.message || String(error),
       connected: false,
       music_count: 0,
       sfx_count: 0,
       vfx_count: 0,
-      total_count: 0
+      total_count: 0,
     }
   }
 })
 
-/**
- * Get active indexing operations
- */
 ipcMain.handle('media:indexing-operations', async () => {
   const operations = getActiveIndexingOperations()
   return { success: true, operations }
 })
 
-/**
- * Cancel an indexing operation
- */
-ipcMain.handle('media:cancel-indexing', async (_, params: { operationId: string }) => {
-  const { operationId } = params
-  console.log('[RoughCut Electron] Cancelling indexing:', operationId)
-  
-  const cancelled = cancelIndexing(operationId)
-  return { success: cancelled, operation_id: operationId }
+ipcMain.handle('media:cancel-indexing', async (_event, params: { operationId: string }) => {
+  return {
+    success: cancelIndexing(params.operationId),
+    operation_id: params.operationId,
+  }
 })
 
-// ==========================================
-// UPDATED ASSET HANDLER (uses real DB)
-// ==========================================
-
-ipcMain.handle('media:get-assets', async (_, category: string) => {
-  console.log('[RoughCut Electron] Getting assets for category:', category)
-  
+ipcMain.handle('media:get-assets', async (_event, category: string) => {
   try {
+    await ensureStorageReady()
     const result: any = await executePythonCommand('query', {
-      category: category,
-      limit: 10000
+      category,
+      limit: 10000,
     })
-    
-    if (result.success !== false) {
-      // Transform assets to frontend format
-      const assets = result.assets.map((asset: any) => ({
-        id: asset.id,
-        name: asset.file_name,
-        tags: asset.ai_tags || [],
-        duration: asset.duration || '0:00',
-        used: asset.used || false,
-        folderId: `folder-${asset.category}` // Simplified mapping
-      }))
-      
-      return assets
+
+    if (!Array.isArray(result.assets)) {
+      return []
     }
-    
-    return []
-    
+
+    return result.assets.map((asset: any) => ({
+      id: asset.id,
+      name: asset.file_name,
+      tags: asset.ai_tags || [],
+      duration: asset.duration || '0:00',
+      used: asset.used || false,
+      folderId: mapFolder(category, asset.file_path).id,
+    }))
   } catch (error) {
     console.error('[RoughCut Electron] Failed to get assets:', error)
     return []
   }
 })
 
-// Handle graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('[RoughCut Electron] SIGTERM received, shutting down...')
   cleanupAllProcesses()
+  spacetimeManager.stop()
   app.quit()
 })
 
 process.on('SIGINT', () => {
-  console.log('[RoughCut Electron] SIGINT received, shutting down...')
   cleanupAllProcesses()
+  spacetimeManager.stop()
   app.quit()
 })
 
-// Cleanup on window close
 app.on('before-quit', () => {
   cleanupAllProcesses()
+  spacetimeManager.stop()
 })

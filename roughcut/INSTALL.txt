@@ -7,6 +7,7 @@ This folder contains the files needed to install RoughCut in DaVinci Resolve.
 1. Copy **ONLY** these items to Resolve's Scripts folder:
    - `RoughCut.lua` (the launcher)
    - `roughcut/` folder (the actual plugin)
+   - On first launch, RoughCut will run a blocking prelaunch bootstrap before showing any GUI
 
 2. Do NOT copy individual files from inside `roughcut/lua/` - they should stay inside the folder.
 
@@ -41,4 +42,5 @@ Utility/
 **Solution**: 
 1. Check the Resolve console (Workspace > Console) for error messages
 2. Verify the `roughcut/` folder is in the same directory as `RoughCut.lua`
-3. Check that Python 3.10+ is installed for the backend features
+3. Check that Python 3.10+ is installed so the prelaunch bootstrap can run
+4. If bootstrap fails, fix the exact dependency reported in the console before relaunching
