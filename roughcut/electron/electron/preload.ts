@@ -102,13 +102,19 @@ interface IndexProgressData {
   category: 'music' | 'sfx' | 'vfx'
   type: string
   operation: string
-  phase: 'scan' | 'index' | 'store' | 'cleanup' | 'complete'
+  phase: 'discovery' | 'cataloguing' | 'writing' | 'cleanup' | 'complete'
   current: number
   total: number
   message: string
   databaseWriting: boolean
   batchCurrent?: number
   batchTotal?: number
+}
+
+interface StreamingAssetData {
+  operationId: string
+  category: 'music' | 'sfx' | 'vfx'
+  asset: IndexedAsset
 }
 
 interface IndexedAsset {
@@ -197,6 +203,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeStorageHealthListener: (callback: (event: unknown, data: StorageHealthStatus) => void) => {
     ipcRenderer.removeListener('storage:health-changed', callback)
   },
+  onPythonLog: (callback: (event: unknown, data: { type: 'stdout' | 'stderr', message: string }) => void) => {
+    ipcRenderer.on('python:log', callback)
+  },
+  removePythonLogListener: (callback: (event: unknown, data: { type: 'stdout' | 'stderr', message: string }) => void) => {
+    ipcRenderer.removeListener('python:log', callback)
+  },
+  onStreamingAsset: (callback: (event: unknown, data: StreamingAssetData) => void) => {
+    ipcRenderer.on('media:streaming-asset', callback)
+  },
+  removeStreamingAssetListener: (callback: (event: unknown, data: StreamingAssetData) => void) => {
+    ipcRenderer.removeListener('media:streaming-asset', callback)
+  },
 })
 
 declare global {
@@ -234,6 +252,10 @@ declare global {
       removeIndexProgressListener: (callback: (event: unknown, data: IndexProgressData) => void) => void
       onStorageHealthChanged: (callback: (event: unknown, data: StorageHealthStatus) => void) => void
       removeStorageHealthListener: (callback: (event: unknown, data: StorageHealthStatus) => void) => void
+      onPythonLog: (callback: (event: unknown, data: { type: 'stdout' | 'stderr', message: string }) => void) => void
+      removePythonLogListener: (callback: (event: unknown, data: { type: 'stdout' | 'stderr', message: string }) => void) => void
+      onStreamingAsset: (callback: (event: unknown, data: StreamingAssetData) => void) => void
+      removeStreamingAssetListener: (callback: (event: unknown, data: StreamingAssetData) => void) => void
     }
   }
 }

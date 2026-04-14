@@ -62,8 +62,55 @@ const REQUIRED_DEPENDENCY_NAMES = REQUIRED_DEPENDENCIES.map(({ installName }) =>
 const POETRY_STALE_LOCK_MESSAGE = 'pyproject.toml changed significantly since poetry.lock was last generated'
 let cachedPythonEnvironment: PythonEnvironment | null = null
 
+// Mapping of commands to their Python script files
+const COMMAND_SCRIPT_MAP: Record<string, string> = {
+  'index': 'indexing.py',
+  'reindex': 'indexing.py',
+  'query': 'query.py',
+  'purge_category': 'config.py',
+  'status': 'config.py',
+  'config_state': 'config.py',
+  'save_media_folders': 'config.py',
+  'set_onboarding_complete': 'config.py',
+  'save_spacetime_runtime': 'config.py',
+  'resolve_status': 'resolve.py',
+  'resolve_connect': 'resolve.py',
+  'resolve_disconnect': 'resolve.py',
+  'resolve_send_timeline': 'resolve.py',
+}
+
 export function resolveOperationId(operationId?: string): string {
   return operationId || `index_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+}
+
+/**
+ * Get the path to the Python scripts directory
+ */
+function getPythonScriptsPath(): string {
+  // Check multiple locations for the scripts
+  const possiblePaths = [
+    // Packaged app locations
+    path.join(app.getAppPath(), '..', 'python'),
+    path.join(app.getAppPath(), '..', '..', 'python'),
+    path.join(app.getAppPath(), 'python'),
+    path.join(process.resourcesPath || '', 'python'),
+    // Development locations
+    path.join(__dirname, '..', 'python'),
+    path.join(__dirname, 'python'),
+    path.join(process.cwd(), 'python'),
+  ]
+
+  for (const testPath of possiblePaths) {
+    if (fs.existsSync(testPath)) {
+      const commonPath = path.join(testPath, 'common.py')
+      if (fs.existsSync(commonPath)) {
+        return testPath
+      }
+    }
+  }
+
+  // Fallback: return the most likely location
+  return path.join(__dirname, '..', 'python')
 }
 
 /**
@@ -916,374 +963,85 @@ async function ensurePythonRuntime(environment: PythonEnvironment): Promise<Pyth
 }
 
 /**
- * Build the Python script for indexing
+ * Get the path to the Python script for a given command
  */
-function buildPythonScript(command: string, params: Record<string, any>, roughcutPath: string): string {
-  const paramsJson = JSON.stringify(params)
+function getScriptPathForCommand(command: string): string {
+  const scriptName = COMMAND_SCRIPT_MAP[command]
+  if (!scriptName) {
+    throw new Error(`Unknown command: ${command}. Available commands: ${Object.keys(COMMAND_SCRIPT_MAP).join(', ')}`)
+  }
 
-  // Escape backslashes for Python raw string
-  const escapedPath = roughcutPath.replace(/\\/g, '\\\\')
+  const scriptsPath = getPythonScriptsPath()
+  const scriptPath = path.join(scriptsPath, scriptName)
 
-  return `
-import sys
-import json
-import asyncio
-import os
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Python script not found: ${scriptPath}. Please ensure the scripts are properly installed.`)
+  }
 
-# Add roughcut to path
-sys.path.insert(0, r'${escapedPath}')
-
-from roughcut.backend.indexing.indexer import MediaIndexer
-from roughcut.config.models import MediaFolderConfig
-
-async def main():
-    try:
-        params = json.loads(r'''${paramsJson}''')
-        category = None
-        if params.get('folders'):
-            category = params['folders'][0].get('category')
-
-        if '${command}' == 'index' or '${command}' == 'reindex':
-            # Create folder config
-            config = MediaFolderConfig()
-            if params.folders:
-                for folder in params.folders:
-                    if folder['category'] == 'music':
-                        config.music_folder = folder['path']
-                    elif folder['category'] == 'sfx':
-                        config.sfx_folder = folder['path']
-                    elif folder['category'] == 'vfx':
-                        config.vfx_folder = folder['path']
-
-            indexer = MediaIndexer()
-
-            # Connect to database
-            connected = await indexer.connect_database()
-            if not connected:
-                raise RuntimeError('Could not connect to SpacetimeDB')
-
-            progress_updates = []
-            def progress_callback(update):
-                if category and 'category' not in update:
-                    update['category'] = category
-                progress_updates.append(update)
-                print(f"PROGRESS:{json.dumps(update)}", flush=True)
-
-            indexer.progress_callback = progress_callback
-
-            if '${command}' == 'reindex':
-                result = await indexer.reindex_folders(config)
-            else:
-                result = await indexer.index_media(config)
-
-            # Build result dict
-            result_dict = {
-                'category': category,
-                'indexed_count': result.indexed_count,
-                'new_count': result.new_count,
-                'modified_count': result.modified_count,
-                'deleted_count': result.deleted_count,
-                'moved_count': getattr(result, 'moved_count', 0),
-                'total_scanned': getattr(result, 'total_scanned', 0),
-                'duration_ms': result.duration_ms,
-                'errors': result.errors,
-                'progress_updates': progress_updates,
-                'database_connected': connected
-            }
-
-            print(f"RESULT:{json.dumps(result_dict)}", flush=True)
-
-            await indexer.disconnect_database()
-
-        elif '${command}' == 'query':
-            from roughcut.backend.database.spacetime_client import SpacetimeClient, SpacetimeConfig
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            spacetime_cfg = config_manager.get_spacetime_config()
-
-            db_config = SpacetimeConfig(
-                host=spacetime_cfg.get('host', 'localhost'),
-                port=spacetime_cfg.get('port', 3000),
-                database_name=spacetime_cfg.get('database_name', 'roughcut'),
-                identity_token=spacetime_cfg.get('identity_token')
-            )
-
-            client = SpacetimeClient(db_config)
-            connected = await client.connect()
-            if not connected:
-                raise RuntimeError('Could not connect to SpacetimeDB')
-
-            assets = await client.query_assets(
-                category=params.get('category'),
-                limit=params.get('limit', 1000),
-                scope_folders=[params.get('folder_path')] if params.get('folder_path') else None,
-                verify_on_disk=params.get('verify_on_disk', False),
-            )
-
-            # Convert assets to JSON-serializable format
-            asset_list = []
-            for asset in assets.assets:
-                asset_list.append({
-                    'id': asset.id,
-                    'file_path': str(asset.file_path),
-                    'file_name': asset.file_name,
-                    'category': asset.category,
-                    'file_size': asset.file_size,
-                    'ai_tags': asset.ai_tags,
-                    'duration': getattr(asset, 'duration', None),
-                    'used': getattr(asset, 'used', False)
-                })
-
-            result = {
-                'assets': asset_list,
-                'total_count': assets.total_count,
-                'database_connected': True
-            }
-
-            print(f"RESULT:{json.dumps(result)}", flush=True)
-            await client.disconnect()
-
-        elif '${command}' == 'purge_category':
-            from roughcut.backend.database.spacetime_client import SpacetimeClient, SpacetimeConfig
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            spacetime_cfg = config_manager.get_spacetime_config()
-
-            db_config = SpacetimeConfig(
-                host=spacetime_cfg.get('host', 'localhost'),
-                port=spacetime_cfg.get('port', 3000),
-                database_name=spacetime_cfg.get('database_name', 'roughcut'),
-                identity_token=spacetime_cfg.get('identity_token')
-            )
-
-            client = SpacetimeClient(db_config)
-            connected = await client.connect()
-            if not connected:
-                raise RuntimeError('Could not connect to SpacetimeDB')
-
-            assets = await client.query_assets(
-                category=params.get('category'),
-                limit=100000,
-            )
-            delete_result = await client.delete_assets([asset.id for asset in assets.assets])
-
-            print(f"RESULT:{json.dumps({
-                'deleted_count': delete_result.deleted_count,
-                'database_connected': True,
-            })}", flush=True)
-            await client.disconnect()
-
-        elif '${command}' == 'status':
-            from roughcut.backend.database.spacetime_client import SpacetimeClient, SpacetimeConfig
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            spacetime_cfg = config_manager.get_spacetime_config()
-
-            db_config = SpacetimeConfig(
-                host=spacetime_cfg.get('host', 'localhost'),
-                port=spacetime_cfg.get('port', 3000),
-                database_name=spacetime_cfg.get('database_name', 'roughcut'),
-                identity_token=spacetime_cfg.get('identity_token')
-            )
-
-            client = SpacetimeClient(db_config)
-            connected = await client.connect()
-            if not connected:
-                raise RuntimeError('Could not connect to SpacetimeDB')
-
-            counts = await client.get_asset_counts()
-            result = {
-                'connected': True,
-                'music_count': counts.music,
-                'sfx_count': counts.sfx,
-                'vfx_count': counts.vfx,
-                'total_count': counts.total
-            }
-
-            print(f"RESULT:{json.dumps(result)}", flush=True)
-            await client.disconnect()
-
-        elif '${command}' == 'config_state':
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            media_config = config_manager.get_media_folders_config()
-            onboarding_state = config_manager.get_onboarding_state()
-            spacetime_cfg = config_manager.get_spacetime_config()
-
-            print(f"RESULT:{json.dumps({
-                'media_folders': {
-                    'music_folder': media_config.music_folder,
-                    'sfx_folder': media_config.sfx_folder,
-                    'vfx_folder': media_config.vfx_folder,
-                },
-                'onboarding': onboarding_state,
-                'spacetime': {
-                    'host': spacetime_cfg.get('host', 'localhost'),
-                    'port': spacetime_cfg.get('port', 3000),
-                    'database_name': spacetime_cfg.get('database_name', 'roughcut'),
-                    'module_path': spacetime_cfg.get('module_path'),
-                    'data_dir': spacetime_cfg.get('data_dir'),
-                    'binary_path': spacetime_cfg.get('binary_path'),
-                    'binary_version': spacetime_cfg.get('binary_version'),
-                    'module_published': spacetime_cfg.get('module_published', False),
-                    'module_fingerprint': spacetime_cfg.get('module_fingerprint'),
-                    'published_fingerprint': spacetime_cfg.get('published_fingerprint'),
-                    'last_ready_at': spacetime_cfg.get('last_ready_at'),
-                    'last_health_check_at': spacetime_cfg.get('last_health_check_at'),
-                }
-            })}", flush=True)
-
-        elif '${command}' == 'save_media_folders':
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            success, message, errors = config_manager.save_media_folders_config(
-                music_folder=params.get('music_folder'),
-                sfx_folder=params.get('sfx_folder'),
-                vfx_folder=params.get('vfx_folder'),
-            )
-
-            if not success:
-                raise RuntimeError(message if not errors else json.dumps(errors))
-
-            onboarding_state = config_manager.get_onboarding_state()
-            media_config = config_manager.get_media_folders_config()
-            print(f"RESULT:{json.dumps({
-                'success': True,
-                'message': message,
-                'media_folders': {
-                    'music_folder': media_config.music_folder,
-                    'sfx_folder': media_config.sfx_folder,
-                    'vfx_folder': media_config.vfx_folder,
-                },
-                'onboarding': onboarding_state,
-            })}", flush=True)
-
-        elif '${command}' == 'set_onboarding_complete':
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            success, message = config_manager.set_onboarding_complete(
-                params.get('completed', True)
-            )
-            if not success:
-                raise RuntimeError(message)
-
-            print(f"RESULT:{json.dumps({
-                'success': True,
-                'message': message,
-                'onboarding': config_manager.get_onboarding_state(),
-            })}", flush=True)
-
-        elif '${command}' == 'save_spacetime_runtime':
-            from roughcut.config.settings import get_config_manager
-
-            config_manager = get_config_manager()
-            success, message = config_manager.update_spacetime_runtime_state(
-                host=params.get('host'),
-                port=params.get('port'),
-                database_name=params.get('database_name'),
-                module_path=params.get('module_path'),
-                data_dir=params.get('data_dir'),
-                binary_path=params.get('binary_path'),
-                binary_version=params.get('binary_version'),
-                module_published=params.get('module_published'),
-                module_fingerprint=params.get('module_fingerprint'),
-                published_fingerprint=params.get('published_fingerprint'),
-                last_ready_at=params.get('last_ready_at'),
-                last_health_check_at=params.get('last_health_check_at'),
-            )
-            if not success:
-                raise RuntimeError(message)
-
-            print(f"RESULT:{json.dumps({
-                'success': True,
-                'message': message,
-                'spacetime': config_manager.get_spacetime_config(),
-            })}", flush=True)
-
-        elif '${command}' == 'resolve_status' or '${command}' == 'resolve_connect':
-            from roughcut.backend.timeline.resolve_api import ResolveApi
-
-            api = ResolveApi()
-            if '${command}' == 'resolve_connect':
-                api.connect()
-            print(f"RESULT:{json.dumps(api.get_connection_status())}", flush=True)
-
-        elif '${command}' == 'resolve_disconnect':
-            from roughcut.backend.timeline.resolve_api import ResolveApi
-
-            api = ResolveApi()
-            api.disconnect()
-            print(f"RESULT:{json.dumps({
-                'connected': False,
-                'available': False,
-                'project_name': None,
-                'version': None,
-                'module_error': None,
-                'search_paths': [],
-            })}", flush=True)
-
-        elif '${command}' == 'resolve_send_timeline':
-            from roughcut.backend.timeline.resolve_api import ResolveApi
-
-            api = ResolveApi()
-            if not api.connect():
-                raise RuntimeError('DaVinci Resolve is not available')
-
-            print(f"RESULT:{json.dumps({
-                'success': True,
-                'connected': True,
-                'project_name': api.get_connection_status().get('project_name'),
-                'payload': params,
-            })}", flush=True)
-
-        else:
-            print(f"ERROR:Unknown command: ${command}", flush=True)
-
-    except Exception as e:
-        import traceback
-        error_msg = f"{str(e)}\\n{traceback.format_exc()}"
-        print(f"ERROR:{error_msg}", flush=True)
-        sys.exit(1)
-
-asyncio.run(main())
-`
+  return scriptPath
 }
 
 /**
- * Execute a Python indexing command
+ * Execute a Python command
  */
 export async function executePythonCommand(
   command: string,
   params: Record<string, any> = {},
   onProgress: ((progress: any) => void) | null = null,
+  onLog: ((log: { type: 'stdout' | 'stderr', message: string }) => void) | null = null,
+  onStreamingAsset: ((asset: any) => void) | null = null,
   operationId?: string
 ): Promise<any> {
   const environment = getPythonEnvironment()
   const runtime = await ensurePythonRuntime(environment)
   const { roughcutPath, pythonPath: actualPythonPath } = runtime
 
+  // Get the script path for this command
+  let scriptPath: string
+  try {
+    scriptPath = getScriptPathForCommand(command)
+  } catch (error: any) {
+    console.error(`[PythonBridge] Script path error: ${error.message}`)
+    throw error
+  }
+
+  // Build command arguments
+  const scriptArgs = [
+    '--roughcut-path', roughcutPath,
+    '--params', JSON.stringify(params),
+  ]
+
+  // For multi-command scripts, pass the specific command
+  if (['purge_category', 'status', 'config_state', 'save_media_folders',
+       'set_onboarding_complete', 'save_spacetime_runtime'].includes(command)) {
+    scriptArgs.push('--command', command)
+  }
+
+  // For resolve commands
+  if (['resolve_status', 'resolve_connect', 'resolve_disconnect',
+       'resolve_send_timeline'].includes(command)) {
+    scriptArgs.push('--command', command)
+  }
+
+  // For reindex, add the reindex flag to params
+  if (command === 'reindex') {
+    const reindexParams = { ...params, reindex: true }
+    // Replace the params argument
+    const paramsIndex = scriptArgs.indexOf('--params')
+    if (paramsIndex !== -1 && paramsIndex + 1 < scriptArgs.length) {
+      scriptArgs[paramsIndex + 1] = JSON.stringify(reindexParams)
+    }
+  }
+
   return new Promise((resolve, reject) => {
-    // Build Python script
-    const scriptContent = buildPythonScript(command, params, roughcutPath)
-
-    // Write script to temp file
-    const tmpFile = path.join(os.tmpdir(), `roughcut_index_${Date.now()}.py`)
-    fs.writeFileSync(tmpFile, scriptContent)
-
     console.log(`[PythonBridge] ============================================`)
     console.log(`[PythonBridge] Spawning Python: ${actualPythonPath}`)
     console.log(`[PythonBridge] Command: ${command}`)
-    console.log(`[PythonBridge] Script: ${tmpFile}`)
+    console.log(`[PythonBridge] Script: ${scriptPath}`)
     console.log(`[PythonBridge] Roughcut path: ${roughcutPath}`)
     console.log(`[PythonBridge] ============================================`)
 
-    const proc = spawn(actualPythonPath, [tmpFile], {
+    const proc = spawn(actualPythonPath, [scriptPath, ...scriptArgs], {
       env: {
         ...process.env,
         PYTHONPATH: roughcutPath
@@ -1291,11 +1049,14 @@ export async function executePythonCommand(
     })
 
     const processId = resolveOperationId(operationId)
-    activeProcesses.set(processId, { proc, tmpFile, command })
+    // Note: We don't have a temp file anymore, but we need to track the process
+    // Use the script path as a placeholder for tmpFile in the tracking structure
+    activeProcesses.set(processId, { proc, tmpFile: scriptPath, command })
 
     let result: any = null
     let errorOutput = ''
     let hasOutput = false
+    let lastIndexingLog = ''  // Track last [INDEXING_LOG] for crash diagnostics
 
     proc.stdout.on('data', (data: Buffer) => {
       hasOutput = true
@@ -1312,6 +1073,17 @@ export async function executePythonCommand(
           } catch (e: any) {
             console.log('[PythonBridge] Progress parse error:', e.message)
           }
+        } else if (trimmed.startsWith('STREAM_ASSET:')) {
+          // Real-time asset streaming for immediate GUI display
+          try {
+            const asset = JSON.parse(trimmed.substring(13))
+            console.log('[PythonBridge] Streaming asset:', asset.file_name || asset.id)
+            if (onStreamingAsset) {
+              onStreamingAsset(asset)
+            }
+          } catch (e: any) {
+            console.log('[PythonBridge] Streaming asset parse error:', e.message)
+          }
         } else if (trimmed.startsWith('RESULT:')) {
           try {
             result = JSON.parse(trimmed.substring(7))
@@ -1322,10 +1094,27 @@ export async function executePythonCommand(
         } else if (trimmed.startsWith('ERROR:')) {
           errorOutput = trimmed.substring(6)
           console.error('[PythonBridge] Python error:', errorOutput.substring(0, 500))
+        } else if (trimmed.startsWith('[INDEXING_LOG]')) {
+          // Capture indexing log messages
+          console.log('[Indexing]', trimmed)
+          // Forward to web console via IPC
+          if (onLog) {
+            onLog({ type: 'stdout', message: trimmed })
+          }
+          // Store last log for crash diagnostics
+          lastIndexingLog = trimmed
         } else if (trimmed && trimmed.includes('[Python]')) {
           console.log(trimmed)
+          // Forward to web console via IPC
+          if (onLog) {
+            onLog({ type: 'stdout', message: trimmed })
+          }
         } else if (trimmed) {
           console.log('[Python stdout]', trimmed.substring(0, 200))
+          // Forward to web console via IPC
+          if (onLog) {
+            onLog({ type: 'stdout', message: trimmed.substring(0, 500) })
+          }
         }
       }
     })
@@ -1335,44 +1124,63 @@ export async function executePythonCommand(
       if (line) {
         console.error('[Python stderr]', line)
         errorOutput += line + '\n'
+        // Forward to web console via IPC
+        if (onLog) {
+          onLog({ type: 'stderr', message: line.substring(0, 500) })
+        }
+        // Also capture indexing log messages from stderr
+        if (line.includes('[INDEXING_LOG]')) {
+          console.log('[Indexing-Stderr]', line)
+          // Store last log for crash diagnostics
+          lastIndexingLog = line
+        }
       }
     })
 
     // Timeout after 5 minutes
     const timeout = setTimeout(() => {
       console.error('[PythonBridge] Operation timed out after 5 minutes')
+      console.error(`[PythonBridge] Last indexing log before timeout: ${lastIndexingLog || 'None captured'}`)
       proc.kill('SIGTERM')
     }, 5 * 60 * 1000)
 
     proc.on('close', (code: number | null) => {
       clearTimeout(timeout)
       console.log(`[PythonBridge] Process closed with code: ${code}`)
+      console.log(`[PythonBridge] Process had output: ${hasOutput}`)
+      console.log(`[PythonBridge] Error output length: ${errorOutput.length}`)
 
       // Clean up
-      const procInfo = activeProcesses.get(processId)
-      if (procInfo) {
-        activeProcesses.delete(processId)
-        try {
-          fs.unlinkSync(procInfo.tmpFile)
-        } catch (e: any) {
-          // Ignore cleanup errors
-        }
-      }
+      activeProcesses.delete(processId)
 
       if (code !== 0 && !result) {
-        if (!hasOutput) {
-          reject(new Error(
-            `Python process failed (code ${code}) with no output. ` +
-            `Python may not be installed or roughcut module not found. ` +
-            `Error: ${errorOutput || 'Unknown error'}`
-          ))
+        // Process failed - provide detailed error information
+        let errorMessage: string
+        
+        if (code === null) {
+          // Code null means process was killed or crashed
+          const lastLogContext = lastIndexingLog ? `\nLast log before crash: ${lastIndexingLog}` : ''
+          errorMessage = `Indexing failed: Out of memory or process crashed (exit code null). ` +
+            `This typically happens when indexing large folders or when the system is low on memory. ` +
+            `Try:\n` +
+            `1. Close other applications to free memory\n` +
+            `2. Index smaller folders at a time\n` +
+            `3. Restart the application and try again${lastLogContext}`
+        } else if (!hasOutput) {
+          errorMessage = `Python process failed (code ${code}) with no output. ` +
+            `Python may not be installed or roughcut module not found.`
         } else {
-          reject(new Error(`Python process failed (code ${code}): ${errorOutput || 'Unknown error'}`))
+          errorMessage = `Python process failed (code ${code})` +
+            (errorOutput ? `: ${errorOutput.substring(0, 500)}` : ': No error output captured')
         }
+        
+        console.error('[PythonBridge] Rejecting with error:', errorMessage.substring(0, 200))
+        reject(new Error(errorMessage))
       } else if (result) {
+        console.log('[PythonBridge] Resolving with result')
         resolve(result)
       } else {
-        reject(new Error('No result from Python process'))
+        reject(new Error('No result from Python process - process may have crashed before producing output'))
       }
     })
 
@@ -1380,12 +1188,8 @@ export async function executePythonCommand(
       clearTimeout(timeout)
       console.error('[PythonBridge] Process error:', err)
       activeProcesses.delete(processId)
-      try {
-        fs.unlinkSync(tmpFile)
-      } catch (e) {}
       reject(new Error(`Failed to spawn Python: ${err.message}. Is Python installed?`))
     })
-
   })
 }
 
@@ -1408,11 +1212,6 @@ export function cancelIndexing(processId: string): boolean {
         // Ignore errors
       }
     }, 5000)
-
-    // Clean up temp file
-    try {
-      fs.unlinkSync(procInfo.tmpFile)
-    } catch (e) {}
 
     activeProcesses.delete(processId)
     return true
@@ -1439,7 +1238,6 @@ export function cleanupAllProcesses(): void {
   for (const [, procInfo] of activeProcesses) {
     try {
       procInfo.proc.kill('SIGTERM')
-      fs.unlinkSync(procInfo.tmpFile)
     } catch (e) {
       // Ignore errors during cleanup
     }

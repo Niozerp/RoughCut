@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Clapperboard,
   Database,
+  FileSearch,
   Filter,
   FolderOpen,
   Heart,
@@ -373,6 +374,40 @@ export function MediaBrowser({
     }
   }, [])
 
+  // Real-time asset streaming - assets appear immediately as they're written to DB
+  useEffect(() => {
+    const handleStreamingAsset = (_event: unknown, data: { category: Category; asset: BrowserAsset }) => {
+      console.log('[MediaBrowser] Streaming asset received:', data.asset.name, 'for category:', data.category)
+      
+      setAssetsByCategory((current) => {
+        const categoryAssets = current[data.category] || []
+        
+        // Check if asset already exists (avoid duplicates)
+        const exists = categoryAssets.some((a) => a.id === data.asset.id)
+        if (exists) {
+          return current
+        }
+        
+        // Add new asset at the beginning of the list for immediate visibility
+        return {
+          ...current,
+          [data.category]: [data.asset, ...categoryAssets],
+        }
+      })
+      
+      // Update database status count
+      setDatabaseStatus((current) => ({
+        ...current,
+        totalCount: current.totalCount + 1,
+      }))
+    }
+
+    window.electronAPI.onStreamingAsset(handleStreamingAsset)
+    return () => {
+      window.electronAPI.removeStreamingAssetListener(handleStreamingAsset)
+    }
+  }, [])
+
   useEffect(() => {
     if (!storageReady) {
       setDatabaseStatus({ connected: false, totalCount: 0 })
@@ -402,9 +437,12 @@ export function MediaBrowser({
   const activeStoreCategories = useMemo(
     () =>
       (['music', 'sfx', 'vfx'] as Category[]).filter(
-        (category) => indexingProgress[category]?.databaseWriting === true
+        (category) =>
+          indexingState[category] === 'indexing' &&
+          indexingProgress[category] !== null &&
+          indexingProgress[category]?.phase !== 'complete'
       ),
-    [indexingProgress]
+    [indexingState, indexingProgress]
   )
 
   const currentAssets = useMemo(() => {
@@ -462,8 +500,17 @@ export function MediaBrowser({
             </span>
             {activeStoreCategories.length > 0 && (
               <Badge variant="secondary" className="ml-1 text-[10px] uppercase tracking-wide">
-                Writing to SpacetimeDB
-                {activeStoreCategories.length > 1 ? ` (${activeStoreCategories.length})` : ''}
+                {(() => {
+                  const phases = activeStoreCategories.map((cat) => indexingProgress[cat]?.phase)
+                  const hasDiscovery = phases.includes('discovery')
+                  const hasCataloguing = phases.includes('cataloguing')
+                  const hasWriting = phases.includes('writing') || phases.some((_, i) => indexingProgress[activeStoreCategories[i]]?.databaseWriting)
+                  if (hasDiscovery) return 'Phase 1: Discovering'
+                  if (hasCataloguing) return 'Phase 2: Cataloguing'
+                  if (hasWriting) return 'Phase 3: Writing to DB'
+                  return 'Indexing in progress'
+                })()}
+                {activeStoreCategories.length > 1 ? ` (${activeStoreCategories.length} categories)` : ''}
               </Badge>
             )}
           </div>
@@ -500,8 +547,19 @@ export function MediaBrowser({
                   {indexingState[category] === 'indexing' && (
                     <span
                       className={`ml-2 h-2 w-2 rounded-full ${
-                        indexingProgress[category]?.databaseWriting ? 'bg-sky-500' : 'bg-primary animate-pulse'
+                        indexingProgress[category]?.phase === 'writing' || indexingProgress[category]?.databaseWriting
+                          ? 'bg-sky-500'
+                          : 'bg-primary animate-pulse'
                       }`}
+                      title={
+                        indexingProgress[category]?.phase === 'discovery'
+                          ? 'Phase 1: Discovering'
+                          : indexingProgress[category]?.phase === 'cataloguing'
+                            ? 'Phase 2: Cataloguing'
+                            : indexingProgress[category]?.phase === 'writing'
+                              ? 'Phase 3: Writing to DB'
+                              : 'Indexing in progress'
+                      }
                     />
                   )}
                 </TabsTrigger>
@@ -604,9 +662,19 @@ export function MediaBrowser({
                         </div>
                       </div>
                       {progress && (
-                        <p className="mt-3 text-xs text-muted-foreground">
-                          {progress.message} ({progress.current}/{progress.total || '?'})
-                        </p>
+                        <div className="mt-3 text-xs">
+                          <p className="font-medium text-primary">
+                            {progress.phase === 'discovery' && 'Phase 1: Discovering files...'}
+                            {progress.phase === 'cataloguing' && 'Phase 2: Cataloguing assets...'}
+                            {progress.phase === 'writing' && 'Phase 3: Writing to database...'}
+                            {progress.phase === 'cleanup' && 'Cleaning up stale assets...'}
+                            {progress.phase === 'complete' && 'Indexing complete!'}
+                          </p>
+                          <p className="mt-1 text-muted-foreground">
+                            {progress.message}
+                            {progress.total > 0 && ` (${progress.current}/${progress.total})`}
+                          </p>
+                        </div>
                       )}
                     </div>
 
@@ -695,12 +763,26 @@ function AssetList({
   }
 
   if (indexingState === 'indexing' && assets.length === 0) {
+    const phaseDisplay =
+      indexingProgress?.phase === 'discovery'
+        ? 'Phase 1: Discovering files...'
+        : indexingProgress?.phase === 'cataloguing'
+          ? 'Phase 2: Cataloguing assets...'
+          : indexingProgress?.phase === 'writing'
+            ? 'Phase 3: Writing to database...'
+            : `Indexing ${label}...`
     return (
       <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-        <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
-        <h3 className="text-sm font-medium">Indexing {label}...</h3>
+        {indexingProgress?.phase === 'discovery' ? (
+          <FileSearch className="mb-4 h-8 w-8 text-amber-500 animate-pulse" />
+        ) : indexingProgress?.phase === 'writing' || indexingProgress?.databaseWriting ? (
+          <Database className="mb-4 h-8 w-8 text-sky-500" />
+        ) : (
+          <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
+        )}
+        <h3 className="text-sm font-medium">{phaseDisplay}</h3>
         <p className="mt-2 text-xs text-muted-foreground">
-          {indexingProgress?.message || 'Scanning the selected folder.'}
+          {indexingProgress?.message || 'Scanning the selected folder for media files...'}
         </p>
       </div>
     )
@@ -728,21 +810,26 @@ function AssetList({
         {indexingProgress && (
           <div className="rounded-md border border-border/60 bg-muted/40 p-3">
             <div className="flex items-center gap-2">
-              {indexingProgress.databaseWriting ? (
-                <Database className="h-4 w-4 text-sky-500" />
-              ) : (
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-              )}
+              {indexingProgress.phase === 'discovery' && <FileSearch className="h-4 w-4 text-amber-500 animate-pulse" />}
+              {indexingProgress.phase === 'cataloguing' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {(indexingProgress.phase === 'writing' || indexingProgress.databaseWriting) && <Database className="h-4 w-4 text-sky-500" />}
+              {indexingProgress.phase === 'cleanup' && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {indexingProgress.phase === 'complete' && <RefreshCw className="h-4 w-4 text-green-500" />}
               <p className="text-xs font-medium">
-                {indexingProgress.databaseWriting ? 'Writing to SpacetimeDB' : 'Indexing in progress'}
+                {indexingProgress.phase === 'discovery' && 'Phase 1: Discovering files...'}
+                {indexingProgress.phase === 'cataloguing' && 'Phase 2: Cataloguing assets...'}
+                {indexingProgress.phase === 'writing' && 'Phase 3: Writing to database...'}
+                {indexingProgress.phase === 'cleanup' && 'Cleaning up stale assets...'}
+                {indexingProgress.phase === 'complete' && 'Indexing complete'}
               </p>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              {indexingProgress.message} ({indexingProgress.current}/{indexingProgress.total || '?'})
+              {indexingProgress.message}
+              {indexingProgress.total > 0 && ` (${indexingProgress.current}/${indexingProgress.total})`}
             </p>
-            {indexingProgress.databaseWriting && indexingProgress.batchTotal ? (
+            {indexingProgress.phase === 'writing' && indexingProgress.batchTotal ? (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Batch {indexingProgress.batchCurrent || 0}/{indexingProgress.batchTotal}
+                Database batch {indexingProgress.batchCurrent || 0}/{indexingProgress.batchTotal}
               </p>
             ) : null}
           </div>

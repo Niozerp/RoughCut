@@ -26,4 +26,22 @@
 - **Reason:** Warning only, doesn't stop operation
 - **Context:** If track setup verification fails, only a warning is logged and operation continues. Could lead to timeline with wrong track count. Consider making this an error condition or including verification status in result.
 
+## Deferred from: Fix Media Indexing Crash - Secondary Resilience (2026-04-12)
+
+### Large file handling (>1GB) with skip option
+- **Reason:** Secondary to crash diagnostics; part of broader resilience work
+- **Context:** Files larger than 1GB during hashing can cause OOM. Add size check before hashing with configurable limit.
+
+### File permission error resilience in scanner.py
+- **Reason:** Secondary to crash diagnostics; part of broader resilience work  
+- **Context:** Files with permission errors should be skipped with warning, not crash the entire scan.
+
+### Network drive unavailability handling
+- **Reason:** Secondary to crash diagnostics; part of broader resilience work
+- **Context:** Network drives that become inaccessible during indexing should fail gracefully for that folder only.
+
+### MediaBrowser retry action UI
+- **Reason:** UI enhancement after core crash fixes are in place
+- **Context:** Add a retry button in the MediaBrowser when indexing fails, allowing users to retry without reloading the app.
+
 

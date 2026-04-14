@@ -171,11 +171,30 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // Listen for Python indexer logs and output to web console
+  useEffect(() => {
+    const handlePythonLog = (_event: unknown, data: { type: 'stdout' | 'stderr', message: string }) => {
+      if (data.type === 'stderr') {
+        console.warn(`[Python] ${data.message}`)
+      } else {
+        console.log(`[Python] ${data.message}`)
+      }
+    }
+
+    window.electronAPI.onPythonLog(handlePythonLog)
+    return () => {
+      window.electronAPI.removePythonLogListener(handlePythonLog)
+    }
+  }, [])
+
   useEffect(() => {
     const loadState = async () => {
       try {
         const { appInfo, bootstrapStatus, storageHealth, configState, resolveStatus } =
           await loadInitialAppState()
+
+        // Log version to web console for debugging
+        console.log(`%c[RoughCut] Version: ${appInfo.version}`, 'color: #4CAF50; font-weight: bold; font-size: 14px;')
 
         setAppInfo(appInfo)
         setBootstrapStatus(bootstrapStatus)

@@ -6,10 +6,11 @@ with support for progress updates and performance optimization.
 
 import asyncio
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any, TYPE_CHECKING, Set, Tuple
+from typing import Dict, List, Optional, Callable, Any, TYPE_CHECKING, Set, Tuple, AsyncIterator
 from dataclasses import dataclass, field
 
 from ...config.models import MediaFolderConfig
@@ -49,6 +50,7 @@ class MediaIndexer:
     """
     
     progress_callback: Optional[ProgressCallback] = None
+    streaming_callback: Optional[ProgressCallback] = None  # Real-time asset streaming to GUI
     hash_cache: HashCache = field(default_factory=HashCache)
     file_scanner: FileScanner = field(default_factory=FileScanner)
     incremental_scanner: IncrementalScanner = field(init=False)
@@ -102,14 +104,21 @@ class MediaIndexer:
         Returns:
             True if connected successfully or already connected
         """
+        import logging as _db_logger
+        _db_log = _db_logger.getLogger(__name__)
+        _db_log.info("[INDEXING_LOG] PHASE 0: Connecting to SpacetimeDB...")
+
         # Already connected - check using the client's is_connected property
         if self._db_client and self._db_client.is_connected:
+            _db_log.info("[INDEXING_LOG] PHASE 0: Already connected to SpacetimeDB")
             return True
         
         try:
             # Load configuration
+            _db_log.info("[INDEXING_LOG] PHASE 0: Loading configuration...")
             config_manager = get_config_manager()
             spacetime_cfg = config_manager.get_spacetime_config()
+            _db_log.info(f"[INDEXING_LOG] PHASE 0: Config loaded - host: {spacetime_cfg.get('host', 'localhost')}, port: {spacetime_cfg.get('port', 3000)}")
             
             # Create client config
             db_config = SpacetimeConfig(
@@ -121,16 +130,24 @@ class MediaIndexer:
             )
             
             # Create and connect client
+            _db_log.info("[INDEXING_LOG] PHASE 0: Creating SpacetimeClient...")
             self._db_client = SpacetimeClient(db_config)
+            _db_log.info("[INDEXING_LOG] PHASE 0: Connecting to database...")
             connected = await self._db_client.connect()
+            _db_log.info(f"[INDEXING_LOG] PHASE 0: Connection result: {connected}")
             
             if connected:
                 # Subscribe to remote changes for real-time sync
+                _db_log.info("[INDEXING_LOG] PHASE 0: Subscribing to remote changes...")
                 await self._subscribe_to_remote_changes()
+                _db_log.info("[INDEXING_LOG] PHASE 0: Subscribed to remote changes")
             
             return connected
             
         except Exception as e:
+            _db_log.error(f"[INDEXING_LOG] PHASE 0 ERROR: Failed to connect to SpacetimeDB: {e}")
+            import traceback
+            _db_log.error(f"[INDEXING_LOG] PHASE 0 Traceback: {traceback.format_exc()}")
             import logging
             logging.getLogger(__name__).warning(
                 f"Failed to connect to SpacetimeDB: {e}"
@@ -228,7 +245,8 @@ class MediaIndexer:
             if not folder_path.exists() or not folder_path.is_dir():
                 continue
             
-            files = self.file_scanner.scan_folder(folder_path)
+            # scan_folder now returns a generator - convert to list for this use case
+            files = list(self.file_scanner.scan_folder(folder_path))
             new_files.extend(files)
             total_scanned += len(files)
         
@@ -245,13 +263,29 @@ class MediaIndexer:
     ) -> List[MediaAsset]:
         """Load all assets for a category from durable storage or memory."""
         if self._db_client:
-            query_result = await self._db_client.query_assets(
-                category=category,
-                limit=100000,
-            )
-            if query_result.error:
-                raise RuntimeError(query_result.error)
-            return query_result.assets
+            # Use max allowed limit of 10000 and paginate if needed
+            all_assets: List[MediaAsset] = []
+            offset = 0
+            batch_size = 10000
+            
+            while True:
+                query_result = await self._db_client.query_assets(
+                    category=category,
+                    limit=batch_size,
+                )
+                if query_result.error:
+                    raise RuntimeError(query_result.error)
+                
+                all_assets.extend(query_result.assets)
+                
+                # If we got less than batch_size, we've fetched all
+                if len(query_result.assets) < batch_size:
+                    break
+                
+                # Otherwise continue fetching next batch
+                offset += batch_size
+            
+            return all_assets
 
         return [asset for asset in self._assets.values() if asset.category == category]
 
@@ -354,135 +388,256 @@ class MediaIndexer:
 
         self.index_state.folder_configs = folders_dict
 
+        import logging as _indexing_logger
+        _logger = _indexing_logger.getLogger(__name__)
+        _logger.info(f"[INDEXING_LOG] Starting {operation_name} operation")
+
         try:
-            self._send_progress(
-                current=0,
-                total=0,
-                message=f"{operation_name.capitalize()}: scanning folders...",
-                operation="scan",
-            )
-
-            scanned_files: Dict[Path, FileMetadata] = {}
-            for category, folder_path in folders_dict.items():
-                if not folder_path or not Path(folder_path).exists():
-                    continue
-
-                files_metadata = await self._scan_folder_full(folder_path, category)
-                scanned_files.update(files_metadata)
-                self._send_progress(
-                    current=len(scanned_files),
-                    total=len(scanned_files),
-                    message=f"{operation_name.capitalize()}: scanned {category} ({len(files_metadata)} files)",
-                    operation="scan",
-                )
-
-            result.total_scanned = len(scanned_files)
+            # TRUE STREAMING MODE - No 3-phase accumulation
+            # Scan file -> Hash -> Tags -> Write to DB -> Free memory -> Next file
+            _logger.info(f"[INDEXING_LOG] === TRUE STREAMING MODE === One file at a time to DB")
+            _logger.info(f"[INDEXING_LOG] [VERBOSE] ========================================")
+            _logger.info(f"[INDEXING_LOG] [VERBOSE] STREAMING: Scan -> Hash -> Tags -> DB -> Free")
+            _logger.info(f"[INDEXING_LOG] [VERBOSE] ========================================")
 
             self._send_progress(
                 current=0,
                 total=0,
-                message=f"{operation_name.capitalize()}: reconciling database state...",
-                operation="scan",
+                message=f"{operation_name.capitalize()}: streaming files to database...",
+                operation="streaming",
             )
 
-            from .change_detector import ChangeDetector
+            try:
+                # Process each category with true streaming - no accumulation
+                for category, folder_path in folders_dict.items():
+                    if not folder_path or not Path(folder_path).exists():
+                        continue
 
-            db_assets, pre_delete_ids = await self._load_reconciliation_assets(folders_dict)
-            detector = ChangeDetector()
-            changes = detector.detect_changes(scanned_files, db_assets)
+                    try:
+                        _logger.info(f"[INDEXING_LOG] STREAMING: Starting {category.upper()} from {folder_path}")
+                        
+                        # TRUE STREAMING: Process files one at a time
+                        # No dict accumulation - write immediately to DB
+                        await self._true_streaming_index(folder_path, category, result)
+                        
+                    except Exception as streaming_error:
+                        _logger.error(f"[INDEXING_LOG] STREAMING ERROR: Failed {category}: {streaming_error}")
+                        result.errors.append(f"Failed streaming {category}: {streaming_error}")
+                        # Continue with other categories
 
-            path_lookup = {
-                self._normalize_path(asset.file_path): asset
-                for asset in db_assets
-            }
-            deleted_ids = list(dict.fromkeys(pre_delete_ids + changes.deleted_files))
-            total_changes = (
-                len(changes.new_files) +
-                len(changes.modified_files) +
-                len(changes.moved_files) +
-                len(deleted_ids)
-            )
+                result.indexed_count = result.new_count + result.modified_count
+                _logger.info(f"[INDEXING_LOG] STREAMING COMPLETE: {result.new_count} new, {result.modified_count} modified")
+            except Exception as e:
+                _logger.error(f"[INDEXING_LOG] STREAMING FAILED: {e}")
+                import traceback
+                _logger.error(f"[INDEXING_LOG] STREAMING Traceback: {traceback.format_exc()}")
+                result.errors.append(f"Streaming failed: {e}")
+                raise RuntimeError(f"Streaming failed: {e}") from e
+            
+            _logger.info(f"[INDEXING_LOG] INDEXING COMPLETE: {result.new_count} new, {result.modified_count} modified, {result.moved_count} moved, {result.deleted_count} cleaned up")
 
+            total_indexed = result.new_count + result.modified_count
             self._send_progress(
-                current=0,
-                total=total_changes,
+                current=total_indexed,
+                total=total_indexed,
                 message=(
-                    f"Processing {len(changes.new_files)} new, "
-                    f"{len(changes.modified_files)} modified, "
-                    f"{len(changes.moved_files)} moved, "
-                    f"{len(deleted_ids)} deleted..."
-                ),
-                operation="index",
-            )
-
-            processed = 0
-            if changes.new_files:
-                new_assets = await self._process_new_files(
-                    changes.new_files, folders_dict, processed, total_changes
-                )
-                if new_assets:
-                    self._send_progress(
-                        current=processed,
-                        total=total_changes,
-                        message=f"Storing {len(new_assets)} new assets...",
-                        operation="store",
-                        database_writing=True,
-                    )
-                    await self._store_assets_batch(new_assets)
-                result.new_count = len(new_assets)
-                processed += len(changes.new_files)
-
-            if changes.modified_files:
-                await self._process_modified_files(
-                    changes.modified_files,
-                    folders_dict,
-                    processed,
-                    total_changes,
-                    path_lookup,
-                )
-                result.modified_count = len(changes.modified_files)
-                processed += len(changes.modified_files)
-
-            if changes.moved_files:
-                await self._process_moved_files(changes.moved_files, path_lookup)
-                result.moved_count = len(changes.moved_files)
-                processed += len(changes.moved_files)
-
-            if deleted_ids:
-                self._send_progress(
-                    current=processed,
-                    total=total_changes,
-                    message=f"Removing {len(deleted_ids)} stale assets...",
-                    operation="cleanup",
-                )
-                await self._delete_assets(deleted_ids)
-                result.deleted_count = len(deleted_ids)
-
-            result.indexed_count = result.new_count + result.modified_count
-            self.index_state.total_assets_indexed = max(
-                0,
-                len(db_assets) + result.new_count - result.deleted_count
-            )
-            self.index_state.update_last_index_time()
-
-            self._send_progress(
-                current=total_changes,
-                total=total_changes,
-                message=(
-                    f"{operation_name.capitalize()} complete: {result.new_count} new, "
+                    f"Indexing complete: {result.new_count} new, "
                     f"{result.modified_count} modified, {result.moved_count} moved, "
-                    f"{result.deleted_count} deleted"
+                    f"{result.deleted_count} cleaned up"
                 ),
                 operation="complete",
             )
         except Exception as e:
-            result.errors.append(f"{operation_name.capitalize()} error: {e}")
+            # Only log if not already logged by phase-specific handler
+            if "PHASE" not in str(e):
+                _logger.error(f"[INDEXING_LOG] ERROR during {operation_name}: {str(e)}")
+                import traceback
+                _logger.error(f"[INDEXING_LOG] Traceback: {traceback.format_exc()}")
+            if str(e) not in result.errors:
+                result.errors.append(f"{operation_name.capitalize()} error: {e}")
         finally:
             if progress_callback is not None:
                 self.progress_callback = original_callback
 
         result.duration_ms = int((time.time() - start_time) * 1000)
         return result
+
+    async def _streaming_index_folder(
+        self,
+        folder_path: str,
+        category: str,
+        result: IndexResult,
+    ) -> None:
+        """Stream-process a single folder one file at a time for memory efficiency.
+        
+        For each file:
+        1. Scan file from disk
+        2. Compute hash (or placeholder)
+        3. Create MediaAsset with tags from filename/path
+        4. Check if exists in DB (by path)
+        5. Insert or update immediately
+        6. Free memory
+        7. Move to next file
+        
+        Args:
+            folder_path: Path to folder to index
+            category: Category name (music, sfx, vfx)
+            result: IndexResult to update with counts
+        """
+        import logging
+        import gc
+        from datetime import datetime
+        _stream_logger = logging.getLogger(__name__)
+        category_upper = category.upper()
+        
+        _stream_logger.info(f"[INDEXING_LOG] STREAMING: Starting {category_upper} folder: {folder_path}")
+        
+        if not self._db_client:
+            _stream_logger.error(f"[INDEXING_LOG] STREAMING: No database client available")
+            raise RuntimeError("Database not connected")
+        
+        # Load existing assets for this category into memory-efficient lookup
+        # Store just path -> asset_id mapping to save memory
+        existing_assets = await self._db_client.get_category_assets(category)
+        path_to_id: Dict[str, str] = {}
+        path_to_hash: Dict[str, str] = {}
+        for asset in existing_assets:
+            path_key = self._normalize_path(asset.file_path)
+            path_to_id[path_key] = asset.id
+            path_to_hash[path_key] = asset.file_hash
+        
+        _stream_logger.info(f"[INDEXING_LOG] STREAMING: Loaded {len(existing_assets)} existing {category_upper} assets from DB")
+        
+        processed = 0
+        new_count = 0
+        modified_count = 0
+        error_count = 0
+        
+        # Stream files one at a time
+        async for file_path, metadata in self._scan_folder_streaming(folder_path, category):
+            if self._cancelled:
+                _stream_logger.info(f"[INDEXING_LOG] STREAMING: Cancelled after {processed} files")
+                break
+            
+            try:
+                # Normalize path for lookup
+                path_key = self._normalize_path(file_path)
+                
+                # Check if file already exists in DB
+                existing_id = path_to_id.get(path_key)
+                existing_hash = path_to_hash.get(path_key)
+                
+                # Derive tags from filename and path
+                ai_tags = self._derive_tags_from_path(file_path, category)
+                
+                # Create asset object
+                asset = MediaAsset.from_file_path(
+                    file_path=file_path,
+                    category=category,
+                    file_hash=metadata.file_hash
+                )
+                asset.ai_tags = ai_tags
+                
+                if existing_id:
+                    # File exists - check if modified
+                    if existing_hash != metadata.file_hash:
+                        # Modified - update
+                        _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Updating: {file_path.name}")
+                        asset.id = existing_id
+                        await self._db_client.update_asset(existing_id, {
+                            'file_hash': metadata.file_hash,
+                            'file_size': metadata.file_size,
+                            'modified_time': metadata.modified_time.isoformat(),
+                            'ai_tags': ai_tags,
+                            'updated_at': datetime.now().isoformat(),
+                        })
+                        modified_count += 1
+                        result.modified_count += 1
+                    else:
+                        # Unchanged - skip
+                        _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Unchanged: {file_path.name}")
+                else:
+                    # New file - insert
+                    _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Inserting: {file_path.name}")
+                    await self._db_client.insert_asset(asset)
+                    new_count += 1
+                    result.new_count += 1
+                    # Add to lookup for potential duplicates in same batch
+                    path_to_id[path_key] = asset.id
+                    path_to_hash[path_key] = metadata.file_hash
+                
+                processed += 1
+                result.indexed_count += 1
+                
+                # Send progress every file for streaming visibility
+                if processed % 10 == 0:
+                    self._send_progress(
+                        current=processed,
+                        total=0,  # Unknown total in streaming
+                        message=f"Indexed {processed} {category_upper} files ({new_count} new, {modified_count} modified)",
+                        operation="streaming",
+                    )
+                
+                # Explicitly delete asset to free memory
+                del asset
+                
+                # Force garbage collection every 50 files
+                if processed % 50 == 0:
+                    gc.collect()
+                    _stream_logger.info(f"[INDEXING_LOG] STREAMING: GC at {processed} files")
+                    
+            except Exception as e:
+                error_count += 1
+                result.errors.append(f"Error processing {file_path}: {e}")
+                _stream_logger.error(f"[INDEXING_LOG] STREAMING: Error processing {file_path}: {e}")
+                continue
+        
+        _stream_logger.info(f"[INDEXING_LOG] STREAMING: Complete for {category_upper}. {processed} processed, {new_count} new, {modified_count} modified, {error_count} errors")
+
+    def _derive_tags_from_path(self, file_path: Path, category: str) -> List[str]:
+        """Derive tags from filename and folder path.
+        
+        Args:
+            file_path: Path to the file
+            category: Category (music, sfx, vfx)
+            
+        Returns:
+            List of tags derived from filename and path
+        """
+        tags = []
+        
+        # Add category as tag
+        tags.append(category.lower())
+        
+        # Extract from filename (remove extension, split by common delimiters)
+        file_name = file_path.stem  # Name without extension
+        # Split by common delimiters
+        name_parts = re.split(r'[-_\s\.]+', file_name)
+        for part in name_parts:
+            part = part.strip().lower()
+            if part and len(part) > 2:  # Skip short words
+                tags.append(part)
+        
+        # Extract from parent folder names (useful for organization)
+        for parent in file_path.parents:
+            folder_name = parent.name.strip().lower()
+            if folder_name and len(folder_name) > 2:
+                # Skip generic folder names
+                if folder_name not in ['sfx', 'music', 'vfx', 'audio', 'video', 'assets']:
+                    tags.append(folder_name)
+            # Only use first 2 parent folders to avoid too many tags
+            if len(tags) > 10:
+                break
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_tags = []
+        for tag in tags:
+            if tag not in seen:
+                seen.add(tag)
+                unique_tags.append(tag)
+        
+        return unique_tags[:15]  # Limit to 15 tags
     
     async def _maybe_send_progress(
         self,
@@ -575,8 +730,14 @@ class MediaIndexer:
         Args:
             assets: List of assets to store
         """
+        import logging as _store_logger
+        _store_log = _store_logger.getLogger(__name__)
+
         if not assets:
+            _store_log.info("[INDEXING_LOG] _store_assets_batch: No assets to store")
             return
+        
+        _store_log.info(f"[INDEXING_LOG] _store_assets_batch: Storing {len(assets)} assets")
         
         # Prepare all assets first (validation step)
         new_assets: Dict[str, MediaAsset] = {}
@@ -609,24 +770,32 @@ class MediaIndexer:
         # Persist to SpacetimeDB (outside lock to avoid blocking)
         # Database failures are logged but don't prevent in-memory storage
         if self._db_client:
+            _store_log.info(f"[INDEXING_LOG] _store_assets_batch: Persisting {len(assets)} assets to SpacetimeDB...")
             try:
                 async with self._db_lock:
+                    _store_log.info(f"[INDEXING_LOG] _store_assets_batch: Calling insert_assets with batch_size=500")
                     result = await self._db_client.insert_assets(
                         assets,
                         batch_size=500,  # Optimal batch size per story requirements
                         progress_callback=self._handle_store_batch_progress,
                     )
+                    _store_log.info(f"[INDEXING_LOG] _store_assets_batch: insert_assets complete. Inserted: {result.inserted_count}, Errors: {len(result.errors)}")
                     if result.errors:
                         import logging
                         logging.getLogger(__name__).warning(
                             f"Database insert errors: {result.errors}"
                         )
             except Exception as e:
+                _store_log.error(f"[INDEXING_LOG] _store_assets_batch ERROR: Failed to persist assets to SpacetimeDB: {e}")
+                import traceback
+                _store_log.error(f"[INDEXING_LOG] _store_assets_batch Traceback: {traceback.format_exc()}")
                 import logging
                 logging.getLogger(__name__).error(
                     f"Failed to persist assets to SpacetimeDB: {e}"
                 )
                 # Continue - assets are still in memory
+        else:
+            _store_log.warning("[INDEXING_LOG] _store_assets_batch: No database client available, assets stored in memory only")
         
         # Queue assets for Notion sync (non-blocking, debounced)
         # This runs independently of SpacetimeDB operations
@@ -653,7 +822,7 @@ class MediaIndexer:
             current=current,
             total=total,
             message=message,
-            operation="store",
+            operation="writing",
             database_writing=True,
             batch_current=batch_current,
             batch_total=batch_total,
@@ -753,49 +922,300 @@ class MediaIndexer:
             progress_callback=progress_callback,
         )
     
-    async def _scan_folder_full(
+    async def _scan_folder_streaming(
         self,
         folder_path: str,
         category: str
-    ) -> Dict[Path, 'FileMetadata']:
-        """Full scan of folder - no incremental timestamp filtering.
+    ) -> AsyncIterator[tuple[Path, 'FileMetadata']]:
+        """Stream files one at a time for memory-efficient processing.
+        
+        Yields each file immediately after processing instead of building
+        a complete dictionary in memory first.
         
         Args:
             folder_path: Root folder to scan
             category: Asset category (music, sfx, vfx)
             
-        Returns:
-            Dict mapping file paths to FileMetadata
+        Yields:
+            Tuples of (file_path, FileMetadata) for each media file
         """
         from .change_detector import FileMetadata
         from datetime import datetime
+        import logging
+        import gc  # Garbage collector for memory management
+        _scan_logger = logging.getLogger(__name__)
         
-        files: Dict[Path, FileMetadata] = {}
+        category_upper = category.upper()
+        _scan_logger.info(f"[INDEXING_LOG] STREAMING SCAN: Starting {category_upper} scan of {folder_path}")
+        
         folder = Path(folder_path)
         
+        if not folder.exists():
+            _scan_logger.error(f"[INDEXING_LOG] STREAMING SCAN: Folder does not exist: {folder_path}")
+            return
+            
+        if not folder.is_dir():
+            _scan_logger.error(f"[INDEXING_LOG] STREAMING SCAN: Path is not a directory: {folder_path}")
+            return
+        
         scanner = FileScanner(categories=[category])
+        _scan_logger.info(f"[INDEXING_LOG] STREAMING SCAN: Created scanner for {category_upper}")
 
-        # Scan only the extensions valid for this category
-        for file_path in scanner.scan_folder(folder):
-            try:
-                stat = file_path.stat()
-                file_hash = self.hash_cache.get_file_hash(file_path)
+        # TRUE STREAMING: Iterate over generator directly - no list accumulation
+        processed_count = 0
+        error_count = 0
+        hash_failures = 0
+        files_found = 0
+        
+        try:
+            for file_path in scanner.scan_folder(folder, category):
+                files_found += 1
+                # Check for cancellation
+                if self._cancelled:
+                    _scan_logger.info(f"[INDEXING_LOG] STREAMING SCAN: Cancelled after {processed_count} files")
+                    return
                 
-                metadata = FileMetadata(
-                    file_hash=file_hash,
-                    modified_time=datetime.fromtimestamp(stat.st_mtime),
-                    file_size=stat.st_size,
-                    category=category
+                try:
+                    # VERBOSE: Show file being processed
+                    _scan_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Processing: {file_path}")
+                    
+                    stat = file_path.stat()
+                    
+                    # Try to get hash, but handle failures gracefully
+                    try:
+                        file_hash = self.hash_cache.get_file_hash(file_path, category)
+                    except (OSError, IOError, PermissionError, ValueError) as hash_err:
+                        hash_failures += 1
+                        _scan_logger.warning(f"[INDEXING_LOG] STREAMING SCAN: Hash failed for {file_path.name}, using placeholder")
+                        # Generate placeholder hash
+                        import hashlib
+                        placeholder_input = f"{file_path}|{stat.st_size}|{stat.st_mtime}|UNREADABLE"
+                        file_hash = hashlib.md5(placeholder_input.encode()).hexdigest()
+                    
+                    metadata = FileMetadata(
+                        file_hash=file_hash,
+                        modified_time=datetime.fromtimestamp(stat.st_mtime),
+                        file_size=stat.st_size,
+                        category=category
+                    )
+                    
+                    # YIELD immediately - don't store in dict
+                    yield (file_path, metadata)
+                    processed_count += 1
+                    
+                    # VERBOSE: Show completion
+                    _scan_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Yielded: {file_path.name}")
+                    
+                    # Log progress every 10 files (more frequent for streaming visibility)
+                    if processed_count % 10 == 0:
+                        _scan_logger.info(f"[INDEXING_LOG] STREAMING SCAN: Processed {processed_count}/{files_found} {category_upper} files ({error_count} errors, {hash_failures} hash failures)")
+                        # Force garbage collection every 10 files to free memory
+                        gc.collect()
+                        
+                except (OSError, IOError) as e:
+                    error_count += 1
+                    _scan_logger.warning(f"[INDEXING_LOG] STREAMING SCAN: Failed to process {file_path}: {e}")
+                    continue
+                except Exception as e:
+                    error_count += 1
+                    _scan_logger.error(f"[INDEXING_LOG] STREAMING SCAN: Unexpected error for {file_path}: {e}")
+                    continue
+        except Exception as e:
+            _scan_logger.error(f"[INDEXING_LOG] STREAMING SCAN: Scanner failed: {e}")
+            return
+            
+        _scan_logger.info(f"[INDEXING_LOG] STREAMING SCAN: Complete for {category_upper}. {processed_count} files yielded, {error_count} errors, {hash_failures} hash failures")
+    
+    async def _true_streaming_index(
+        self,
+        folder_path: str,
+        category: str,
+        result: IndexResult,
+    ) -> None:
+        """TRUE STREAMING: Scan one file, write to DB immediately, free memory, repeat.
+        
+        No accumulation - each file is processed and written to database individually.
+        This prevents OOM on large folders.
+        
+        Flow per file:
+        1. Scan from disk
+        2. Compute hash (or placeholder on error)
+        3. Derive tags from filename/path
+        4. Create MediaAsset
+        5. Check if exists in DB by path
+        6. INSERT (new) or UPDATE (modified) immediately
+        7. Log to console (so user sees DB populating)
+        8. Delete asset object
+        9. Force GC every 50 files
+        10. Move to next file
+        
+        Args:
+            folder_path: Path to folder to index
+            category: Category name (music, sfx, vfx)
+            result: IndexResult to update with counts
+        """
+        import logging
+        import gc
+        from datetime import datetime
+        _stream_logger = logging.getLogger(__name__)
+        category_upper = category.upper()
+        
+        _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: Starting {category_upper} from {folder_path}")
+        _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: Loading existing asset paths from DB...")
+        
+        if not self._db_client:
+            _stream_logger.error(f"[INDEXING_LOG] TRUE STREAMING: No database client!")
+            raise RuntimeError("Database not connected")
+        
+        # Load just path->hash lookup from DB (not full objects)
+        existing_assets = await self._db_client.get_category_assets(category)
+        path_to_hash: Dict[str, str] = {}
+        for asset in existing_assets:
+            path_key = self._normalize_path(asset.file_path)
+            path_to_hash[path_key] = asset.file_hash
+        
+        _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: Loaded {len(existing_assets)} existing {category_upper} assets")
+        
+        # Clear list to free memory
+        del existing_assets
+        gc.collect()
+        
+        processed = 0
+        new_count = 0
+        modified_count = 0
+        error_count = 0
+        db_writes = 0
+        
+        # Stream files from disk one at a time
+        scanner = FileScanner(categories=[category])
+        folder = Path(folder_path)
+        
+        if not folder.exists() or not folder.is_dir():
+            _stream_logger.error(f"[INDEXING_LOG] TRUE STREAMING: Invalid folder: {folder_path}")
+            return
+        
+        _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: Scanning {folder_path} for {category_upper} files...")
+        
+        # TRUE STREAMING: Iterate over generator directly - process as we discover
+        total_files = 0
+        for file_path in scanner.scan_folder(folder, category):
+            total_files += 1
+            if self._cancelled:
+                _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: Cancelled after {processed} files")
+                break
+            
+            try:
+                # VERBOSE: Show file being processed
+                _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Processing: {file_path}")
+                
+                # 1. Get file stats
+                stat = file_path.stat()
+                
+                # 2. Compute hash (with error handling)
+                try:
+                    file_hash = self.hash_cache.get_file_hash(file_path, category)
+                except (OSError, IOError, PermissionError, ValueError) as hash_err:
+                    # Use placeholder hash - file will still be indexed
+                    import hashlib
+                    placeholder_input = f"{file_path}|{stat.st_size}|{stat.st_mtime}|UNREADABLE"
+                    file_hash = hashlib.md5(placeholder_input.encode()).hexdigest()
+                    _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Using placeholder hash: {file_path.name}")
+                
+                # 3. Derive tags from filename and path
+                ai_tags = self._derive_tags_from_path(file_path, category)
+                
+                # 4. Create asset
+                asset = MediaAsset.from_file_path(
+                    file_path=file_path,
+                    category=category,
+                    file_hash=file_hash
                 )
-                files[file_path] = metadata
-            except (OSError, IOError) as e:
-                import logging
-                logging.getLogger(__name__).warning(
-                    f"Failed to get metadata for {file_path}: {e}"
-                )
+                asset.ai_tags = ai_tags
+                
+                # 5. Check if exists in DB
+                path_key = self._normalize_path(file_path)
+                existing_hash = path_to_hash.get(path_key)
+                
+                # 6. Write to DB immediately
+                if existing_hash:
+                    # File exists - check if modified
+                    if existing_hash != file_hash:
+                        # Modified - update in DB
+                        _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] UPDATING DB: {file_path.name}")
+                        await self._db_client.update_asset_by_path(str(file_path), {
+                            'file_hash': file_hash,
+                            'file_size': stat.st_size,
+                            'modified_time': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                            'ai_tags': ai_tags,
+                            'updated_at': datetime.now().isoformat(),
+                        })
+                        modified_count += 1
+                        result.modified_count += 1
+                        db_writes += 1
+                    else:
+                        # Unchanged - skip
+                        _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] UNCHANGED (skipping): {file_path.name}")
+                else:
+                    # New file - INSERT to DB immediately
+                    _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] INSERTING TO DB: {file_path.name}")
+                    await self._db_client.insert_asset(asset)
+                    new_count += 1
+                    result.new_count += 1
+                    db_writes += 1
+                    # Add to lookup
+                    path_to_hash[path_key] = file_hash
+                
+                # STREAM TO GUI: Send asset immediately after DB write
+                if self.streaming_callback:
+                    try:
+                        asset_dict = {
+                            'id': asset.id,
+                            'file_name': asset.file_name,
+                            'file_path': str(asset.file_path),
+                            'category': asset.category,
+                            'file_size': asset.file_size,
+                            'file_hash': asset.file_hash,
+                            'ai_tags': asset.ai_tags or [],
+                            'duration': getattr(asset, 'duration', '0:00'),
+                            'used': getattr(asset, 'used', False),
+                            'modified_time': asset.modified_time.isoformat() if asset.modified_time else None,
+                            'created_at': asset.created_at.isoformat() if asset.created_at else None,
+                        }
+                        await self.streaming_callback(asset_dict)
+                        _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] STREAMED to GUI: {file_path.name}")
+                    except Exception as stream_err:
+                        _stream_logger.warning(f"[INDEXING_LOG] Streaming callback failed: {stream_err}")
+                
+                processed += 1
+                result.indexed_count += 1
+                
+                # 7. Progress update every file (user sees DB populating in real-time)
+                if processed % 10 == 0:
+                    self._send_progress(
+                        current=processed,
+                        total=total_files,
+                        message=f"[{category_upper}] {processed}/{total_files} files - DB writes: {db_writes}",
+                        operation="streaming",
+                    )
+                    _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: [{category_upper}] Progress {processed}/{total_files} ({new_count} new, {modified_count} modified, {db_writes} DB writes)")
+                
+                # 8. Delete asset object to free memory
+                del asset
+                
+                # 9. Force garbage collection every 50 files
+                if processed % 50 == 0:
+                    gc.collect()
+                    _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: [{category_upper}] GC at {processed} files")
+                    
+            except Exception as e:
+                error_count += 1
+                result.errors.append(f"Error processing {file_path}: {e}")
+                _stream_logger.error(f"[INDEXING_LOG] TRUE STREAMING: [{category_upper}] Error {file_path}: {e}")
                 continue
         
-        return files
+        # Final GC
+        gc.collect()
+        _stream_logger.info(f"[INDEXING_LOG] TRUE STREAMING: [{category_upper}] COMPLETE. Processed: {processed}, New: {new_count}, Modified: {modified_count}, DB Writes: {db_writes}, Errors: {error_count}")
     
     async def _process_new_files(
         self,
@@ -815,41 +1235,83 @@ class MediaIndexer:
         Returns:
             List of created MediaAsset objects
         """
+        import logging
+        _process_logger = logging.getLogger(__name__)
+        
         new_assets: List[MediaAsset] = []
         processed = current
+        hash_failure_count = 0
+        
+        _process_logger.info(f"[INDEXING_LOG] _process_new_files: Processing {len(new_files)} new files")
         
         for file_path in new_files:
             if self._cancelled:
+                _process_logger.info(f"[INDEXING_LOG] _process_new_files: Cancelled, stopping at {processed} files")
                 break
             
             try:
+                # VERBOSE: Show file being catalogued
+                _process_logger.info(f"[INDEXING_LOG] [VERBOSE] Cataloguing: {file_path}")
+                
                 category = self._get_file_category(file_path, folder_configs)
                 if not category:
+                    _process_logger.warning(f"[INDEXING_LOG] _process_new_files: Could not determine category for {file_path}")
                     continue
+                
+                # Get file hash (from cache or compute) with error handling
+                try:
+                    file_hash = self.hash_cache.get_file_hash(file_path)
+                    _process_logger.info(f"[INDEXING_LOG] _process_new_files: Got hash for {file_path.name}")
+                except (OSError, IOError, PermissionError, ValueError) as hash_err:
+                    hash_failure_count += 1
+                    _process_logger.warning(f"[INDEXING_LOG] _process_new_files: Hash failed for {file_path.name}, using placeholder: {hash_err}")
+                    # VERBOSE: Show hash failure
+                    _process_logger.info(f"[INDEXING_LOG] [VERBOSE] Hash failed for: {file_path}")
+                    # Generate placeholder hash
+                    import hashlib
+                    import os
+                    try:
+                        stat = file_path.stat()
+                        placeholder_input = f"{file_path}|{stat.st_size}|{stat.st_mtime}|UNREADABLE"
+                    except (OSError, IOError):
+                        # If we can't even stat the file, use path-only hash
+                        placeholder_input = f"{file_path}|UNKNOWN|UNKNOWN|UNREADABLE"
+                    file_hash = hashlib.md5(placeholder_input.encode()).hexdigest()
+                    _process_logger.info(f"[INDEXING_LOG] _process_new_files: Using placeholder hash for {file_path.name}")
                 
                 asset = MediaAsset.from_file_path(
                     file_path=file_path,
                     category=category,
-                    file_hash=self.hash_cache.get_file_hash(file_path)
+                    file_hash=file_hash
                 )
                 
                 new_assets.append(asset)
                 processed += 1
                 
+                # VERBOSE: Show successful catalogue
+                _process_logger.info(f"[INDEXING_LOG] [VERBOSE] Catalogued OK: {file_path}")
+                
+                # Log progress every 50 files
+                if processed % 50 == 0:
+                    _process_logger.info(f"[INDEXING_LOG] _process_new_files: Created {processed}/{total} assets ({hash_failure_count} hash failures)")
+                
                 await self._maybe_send_progress(
                     current=processed,
                     total=total,
-                    message=f"Processing new: {file_path.name}",
-                    operation="index"
+                    message=f"Cataloguing new: {file_path.name}",
+                    operation="cataloguing"
                 )
                 
             except (FileNotFoundError, PermissionError, OSError) as e:
-                import logging
-                logging.getLogger(__name__).warning(
-                    f"Error processing new file {file_path}: {e}"
-                )
+                _process_logger.warning(f"[INDEXING_LOG] _process_new_files: Error processing new file {file_path}: {e}")
+                continue
+            except Exception as e:
+                _process_logger.error(f"[INDEXING_LOG] _process_new_files: Unexpected error for {file_path}: {e}")
+                import traceback
+                _process_logger.error(f"[INDEXING_LOG] _process_new_files: Traceback: {traceback.format_exc()}")
                 continue
         
+        _process_logger.info(f"[INDEXING_LOG] _process_new_files: Complete. Created {len(new_assets)} assets ({hash_failure_count} hash failures)")
         return new_assets
     
     async def _process_modified_files(
@@ -868,7 +1330,11 @@ class MediaIndexer:
             current: Current progress count
             total: Total items to process
         """
+        import logging
+        _mod_logger = logging.getLogger(__name__)
+        
         processed = current
+        hash_failure_count = 0
         
         for file_path in modified_files:
             if self._cancelled:
@@ -880,7 +1346,19 @@ class MediaIndexer:
                 
                 if existing_asset:
                     stat = file_path.stat()
-                    existing_asset.file_hash = self.hash_cache.get_file_hash(file_path)
+                    
+                    # Try to get hash, handle failures gracefully
+                    try:
+                        file_hash = self.hash_cache.get_file_hash(file_path)
+                        _mod_logger.info(f"[INDEXING_LOG] _process_modified_files: Got hash for {file_path.name}")
+                    except (OSError, IOError, PermissionError, ValueError) as hash_err:
+                        hash_failure_count += 1
+                        _mod_logger.warning(f"[INDEXING_LOG] _process_modified_files: Hash failed for {file_path.name}, using placeholder: {hash_err}")
+                        import hashlib
+                        placeholder_input = f"{file_path}|{stat.st_size}|{stat.st_mtime}|UNREADABLE"
+                        file_hash = hashlib.md5(placeholder_input.encode()).hexdigest()
+                    
+                    existing_asset.file_hash = file_hash
                     existing_asset.modified_time = datetime.fromtimestamp(stat.st_mtime)
                     existing_asset.file_size = stat.st_size
                     existing_asset.file_name = file_path.name
@@ -905,8 +1383,8 @@ class MediaIndexer:
                 await self._maybe_send_progress(
                     current=processed,
                     total=total,
-                    message=f"Processing modified: {file_path.name}",
-                    operation="index"
+                    message=f"Cataloguing modified: {file_path.name}",
+                    operation="cataloguing"
                 )
                 
             except (FileNotFoundError, PermissionError, OSError) as e:

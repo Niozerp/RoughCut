@@ -81,7 +81,7 @@ export interface AppInfo {
   projectName: string | null
 }
 
-export type IndexPhase = 'scan' | 'index' | 'store' | 'cleanup' | 'complete'
+export type IndexPhase = 'discovery' | 'cataloguing' | 'writing' | 'cleanup' | 'complete'
 export type IndexSource = 'startup' | 'manual'
 
 export interface IndexJob {

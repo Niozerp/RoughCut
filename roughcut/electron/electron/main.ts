@@ -264,13 +264,29 @@ ipcMain.handle('config:save-media-folders', async (_event, payload: MediaFolderP
   return executePythonCommand('save_media_folders', payload)
 })
 
+// Read version from version.md
+function getAppVersion(): string {
+  try {
+    const versionPath = path.join(__dirname, '..', 'version.md')
+    if (fs.existsSync(versionPath)) {
+      const version = fs.readFileSync(versionPath, 'utf-8').trim()
+      return version || '1.0.0'
+    }
+  } catch (e) {
+    console.error('[Main] Failed to read version.md:', e)
+  }
+  return app.getVersion()
+}
+
 ipcMain.handle('config:set-onboarding-complete', async (_event, payload: { completed: boolean }) => {
   return executePythonCommand('set_onboarding_complete', payload)
 })
 
 ipcMain.handle('app:get-info', async () => {
+  const version = getAppVersion()
+  console.log(`[Main] RoughCut version: ${version}`)
   return {
-    version: app.getVersion(),
+    version,
     mode: 'electron',
     launchMode,
     launchedFromResolve: launchMode === 'resolve',
@@ -335,6 +351,22 @@ ipcMain.handle(
             })
           }
         },
+        (log: { type: 'stdout' | 'stderr', message: string }) => {
+          // Forward Python logs to renderer/web console
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('python:log', log)
+          }
+        },
+        (asset: any) => {
+          // Real-time asset streaming - send to renderer immediately as each asset is indexed
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('media:streaming-asset', {
+              operationId,
+              category: folder.category,
+              asset,
+            })
+          }
+        },
         operationId
       )
 
@@ -383,6 +415,22 @@ ipcMain.handle(
               operationId,
               category: folder.category,
               ...progress,
+            })
+          }
+        },
+        (log: { type: 'stdout' | 'stderr', message: string }) => {
+          // Forward Python logs to renderer/web console
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('python:log', log)
+          }
+        },
+        (asset: any) => {
+          // Real-time asset streaming - send to renderer immediately as each asset is indexed
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('media:streaming-asset', {
+              operationId,
+              category: folder.category,
+              asset,
             })
           }
         },

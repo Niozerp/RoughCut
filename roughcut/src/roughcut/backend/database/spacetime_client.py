@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -21,6 +22,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import quote
+
+# Set default socket timeout to prevent hanging on network operations
+socket.setdefaulttimeout(30)
 
 # Configure logger first (before any code that might use it)
 logger = logging.getLogger(__name__)
@@ -399,9 +403,10 @@ class SpacetimeClient:
         for attempt in range(self.config.max_reconnect_attempts):
             try:
                 logger.info(
-                    f"Connecting to SpacetimeDB (attempt {attempt + 1}/"
+                    f"[INDEXING_LOG] Connecting to SpacetimeDB (attempt {attempt + 1}/"
                     f"{self.config.max_reconnect_attempts})..."
                 )
+                logger.info(f"[INDEXING_LOG] Connection config: host={self.config.host}, port={self.config.port}, database={self.config.database_name}")
                 
                 # Create connection with timeout
                 self._client = await asyncio.wait_for(
@@ -412,17 +417,17 @@ class SpacetimeClient:
                 if self._client:
                     await self._set_state(ConnectionState.CONNECTED)
                     self._reconnect_count = 0
-                    logger.info("Successfully connected to SpacetimeDB")
+                    logger.info("[INDEXING_LOG] Successfully connected to SpacetimeDB")
                     return True
                 
             except asyncio.TimeoutError:
-                logger.warning(f"Connection attempt {attempt + 1} timed out")
+                logger.warning(f"[INDEXING_LOG] Connection attempt {attempt + 1} timed out after {self.config.connect_timeout}s")
                 async with self._stats_lock:
                     self._stats['connection_errors'] += 1
             except Exception as e:
                 async with self._stats_lock:
                     self._stats['connection_errors'] += 1
-                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+                logger.warning(f"[INDEXING_LOG] Connection attempt {attempt + 1} failed: {type(e).__name__}: {e}")
                 
                 if attempt < self.config.max_reconnect_attempts - 1:
                     wait_time = min(2 ** attempt, 10)  # Exponential backoff
@@ -482,14 +487,18 @@ class SpacetimeClient:
     
     async def _create_connection(self) -> Optional[Any]:
         """Create a database connection by probing the SpacetimeDB HTTP API."""
+        logger.info(f"[INDEXING_LOG] _create_connection: Probing SpacetimeDB at {self._server_url()}")
         try:
-            await self._execute_sql("SELECT COUNT(*) AS total FROM media_assets")
+            logger.info("[INDEXING_LOG] _create_connection: Executing test SQL query...")
+            result = await self._execute_sql("SELECT COUNT(*) AS total FROM media_assets")
+            logger.info(f"[INDEXING_LOG] _create_connection: Connection successful, test query result: {result}")
             return {
                 "transport": "http",
                 "server_url": self._server_url(),
             }
         except Exception as e:
-            logger.error(f"Failed to create SpacetimeDB HTTP connection: {e}")
+            logger.error(f"[INDEXING_LOG] _create_connection ERROR: Failed to create SpacetimeDB HTTP connection: {e}")
+            logger.error(f"[INDEXING_LOG] _create_connection: Server URL was {self._server_url()}")
             raise
     
     async def _close_connection(self):
@@ -626,6 +635,23 @@ class SpacetimeClient:
             asset.ai_tags = list(dict.fromkeys(asset.ai_tags))  # Preserve order, remove dups
         
         return errors
+    
+    async def insert_asset(self, asset: MediaAsset) -> bool:
+        """Insert a single asset into SpacetimeDB.
+        
+        Convenience wrapper around insert_assets for single asset operations.
+        
+        Args:
+            asset: MediaAsset object to store
+            
+        Returns:
+            True if insertion succeeded, False otherwise
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected to SpacetimeDB")
+        
+        result = await self.insert_assets([asset])
+        return result.inserted_count > 0 and not result.errors
     
     async def insert_assets(
         self,
@@ -882,6 +908,65 @@ class SpacetimeClient:
                 error_message=str(e)
             )
     
+    async def update_asset_by_path(
+        self,
+        file_path: str,
+        updates: Dict[str, Any]
+    ) -> UpdateResult:
+        """Update an asset by its file path.
+        
+        Looks up asset by path, then updates it if found.
+        
+        Args:
+            file_path: Full file path of the asset
+            updates: Dict of field names to new values
+            
+        Returns:
+            UpdateResult with success status and error details
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected to SpacetimeDB")
+        
+        if not file_path:
+            return UpdateResult(
+                success=False,
+                error_code="INVALID_PATH",
+                error_message="File path cannot be empty"
+            )
+        
+        try:
+            # Query for asset by path
+            normalized_path = self._normalize_path(file_path)
+            results = await self._execute_sql(
+                f"SELECT id FROM media_assets WHERE file_path = '{self._escape_sql_literal(normalized_path)}' LIMIT 1"
+            )
+            
+            if not results:
+                return UpdateResult(
+                    success=False,
+                    error_code="NOT_FOUND",
+                    error_message=f"No asset found with path: {file_path}"
+                )
+            
+            asset_id = results[0].get('id')
+            if not asset_id:
+                return UpdateResult(
+                    success=False,
+                    error_code="NOT_FOUND",
+                    error_message=f"Asset found but has no ID for path: {file_path}"
+                )
+            
+            # Update by ID
+            return await self.update_asset(asset_id, updates)
+            
+        except Exception as e:
+            logger.error(f"Failed to update asset by path {file_path}: {e}")
+            return UpdateResult(
+                success=False,
+                error_code="DB_ERROR",
+                error_message=str(e)
+            )
+    
     async def delete_assets(self, asset_ids: List[str]) -> DeleteResult:
         """Delete assets from SpacetimeDB.
         
@@ -1121,6 +1206,44 @@ class SpacetimeClient:
         except Exception as e:
             logger.error(f"Unexpected query error: {e}")
             return QueryResult(assets=[], error=f"Unexpected error: {str(e)}")
+    
+    async def get_category_assets(self, category: str) -> List[MediaAsset]:
+        """Get all assets for a specific category.
+        
+        Convenience method that queries all assets for a given category.
+        Handles pagination internally to return complete results.
+        
+        Args:
+            category: Category to filter by (music, sfx, vfx)
+            
+        Returns:
+            List of MediaAsset objects for the category
+        """
+        if not self.is_connected:
+            raise ConnectionError("Not connected to SpacetimeDB")
+        
+        all_assets: List[MediaAsset] = []
+        offset = 0
+        batch_size = 10000
+        
+        while True:
+            query_result = await self.query_assets(
+                category=category,
+                limit=batch_size,
+            )
+            if query_result.error:
+                raise RuntimeError(query_result.error)
+            
+            all_assets.extend(query_result.assets)
+            
+            # If we got less than batch_size, we've fetched all
+            if len(query_result.assets) < batch_size:
+                break
+            
+            # Otherwise continue fetching next batch
+            offset += batch_size
+        
+        return all_assets
     
     async def get_asset_counts(self) -> AssetCounts:
         """Get asset counts by category for current user.
@@ -1447,6 +1570,15 @@ class SpacetimeClient:
         except urllib_error.URLError as exc:
             raise STDBConnectionError(
                 f"{method.upper()} {normalized_path} failed to reach SpacetimeDB: {exc.reason}"
+            ) from exc
+        except socket.timeout as exc:
+            raise STDBConnectionError(
+                f"{method.upper()} {normalized_path} timed out after {self.config.request_timeout}s"
+            ) from exc
+        except Exception as exc:
+            # Catch any other unexpected errors (including socket errors)
+            raise STDBConnectionError(
+                f"{method.upper()} {normalized_path} failed unexpectedly: {type(exc).__name__}: {exc}"
             ) from exc
 
     async def _http_request(

@@ -6,7 +6,7 @@ media files with support for different categories and file types.
 
 import asyncio
 from pathlib import Path
-from typing import List, Set, Optional, AsyncIterator
+from typing import List, Set, Optional, AsyncIterator, Iterator, Generator
 
 
 # Supported media file extensions by category
@@ -47,29 +47,57 @@ class FileScanner:
         else:
             self.extensions = ALL_EXTENSIONS.copy()
     
-    def scan_folder(self, folder_path: Path) -> List[Path]:
-        """Synchronously scan a folder for media files.
+    def scan_folder(self, folder_path: Path, category: str = "unknown") -> Generator[Path, None, None]:
+        """Stream scan a folder for media files.
+        
+        Yields files as they are discovered for memory-efficient processing.
+        Does not accumulate all files in memory before returning.
         
         Args:
             folder_path: Path to the folder to scan
+            category: Category name (music, sfx, vfx) for verbose logging
             
-        Returns:
-            List of paths to media files found
+        Yields:
+            Paths to media files found (one at a time, streaming)
         """
-        results = []
+        import logging
+        _scan_logger = logging.getLogger(__name__)
         
         if not folder_path.exists() or not folder_path.is_dir():
-            return results
+            _scan_logger.warning(f"[INDEXING_LOG] Scan: Folder does not exist or is not a directory: {folder_path}")
+            return
+        
+        category_upper = category.upper()
+        _scan_logger.info(f"[INDEXING_LOG] Scan: Starting STREAMING scan of {folder_path} for {category_upper}")
+        files_found = 0
+        errors_encountered = 0
         
         try:
             for item in folder_path.rglob('*'):
-                if item.is_file() and item.suffix.lower() in self.extensions:
-                    results.append(item)
-        except (PermissionError, OSError):
+                try:
+                    if item.is_file() and item.suffix.lower() in self.extensions:
+                        files_found += 1
+                        # VERBOSE: Log every file found with full path and category
+                        _scan_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] Scan found: {item}")
+                        # Log progress every 100 files
+                        if files_found % 100 == 0:
+                            _scan_logger.info(f"[INDEXING_LOG] Scan: Streamed {files_found} files so far in {category_upper}...")
+                        # YIELD immediately - don't accumulate in list
+                        yield item
+                except (OSError, PermissionError) as e:
+                    errors_encountered += 1
+                    if errors_encountered <= 5:  # Log first 5 errors
+                        _scan_logger.warning(f"[INDEXING_LOG] Scan: Error accessing {item}: {e}")
+                    continue
+                    
+            _scan_logger.info(f"[INDEXING_LOG] Scan: STREAMING complete. Yielded {files_found} {category_upper} files from {folder_path}")
+            if errors_encountered > 0:
+                _scan_logger.warning(f"[INDEXING_LOG] Scan: {errors_encountered} files could not be accessed")
+                
+        except (PermissionError, OSError) as e:
+            _scan_logger.error(f"[INDEXING_LOG] Scan: Fatal error scanning {folder_path}: {e}")
             # Skip folders we can't access
             pass
-        
-        return results
     
     async def scan_folder_async(self, folder_path: Path) -> AsyncIterator[Path]:
         """Asynchronously scan a folder for media files.
@@ -99,25 +127,44 @@ class FileScanner:
             # Skip folders we can't access
             pass
     
-    def _walk_folder(self, folder_path: Path) -> List[Path]:
+    def _walk_folder(self, folder_path: Path) -> Generator[Path, None, None]:
         """Internal method to walk folder (runs in thread pool).
+        
+        Yields files as they are found for streaming processing.
         
         Args:
             folder_path: Path to the folder to walk
             
-        Returns:
-            List of paths to media files
+        Yields:
+            Paths to media files (one at a time, streaming)
         """
-        results = []
+        import logging
+        _walk_logger = logging.getLogger(__name__)
+        files_found = 0
+        errors_encountered = 0
         
         try:
             for item in folder_path.rglob('*'):
-                if item.is_file() and item.suffix.lower() in self.extensions:
-                    results.append(item)
-        except (PermissionError, OSError):
+                try:
+                    if item.is_file() and item.suffix.lower() in self.extensions:
+                        files_found += 1
+                        if files_found % 1000 == 0:
+                            _walk_logger.info(f"[INDEXING_LOG] Walk: Streamed {files_found} files so far in {folder_path}...")
+                        # YIELD immediately - don't accumulate in list
+                        yield item
+                except (OSError, PermissionError) as e:
+                    errors_encountered += 1
+                    if errors_encountered <= 5:
+                        _walk_logger.warning(f"[INDEXING_LOG] Walk: Error accessing {item}: {e}")
+                    continue
+                    
+            _walk_logger.info(f"[INDEXING_LOG] Walk: STREAMING complete. Yielded {files_found} files from {folder_path}")
+            if errors_encountered > 0:
+                _walk_logger.warning(f"[INDEXING_LOG] Walk: {errors_encountered} files could not be accessed")
+                
+        except (PermissionError, OSError) as e:
+            _walk_logger.error(f"[INDEXING_LOG] Walk: Fatal error walking {folder_path}: {e}")
             pass
-        
-        return results
     
     async def scan_multiple_folders(
         self,
