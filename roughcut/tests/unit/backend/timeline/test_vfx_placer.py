@@ -353,11 +353,11 @@ class TestVfxPlacerResult(unittest.TestCase):
         )
         
         timecode = result.get_total_duration_timecode()
-        self.assertEqual(timecode, "0:00:15")  # 15 seconds
+        self.assertEqual(timecode, "0:15")  # 15 seconds
         
         # Test with different FPS
         timecode_24fps = result.get_total_duration_timecode(fps=24)
-        self.assertEqual(timecode_24fps, "0:00:18")  # 450/24 = 18.75 -> 18
+        self.assertEqual(timecode_24fps, "0:18")  # 450/24 = 18.75 -> 18
     
     def test_timecode_property(self):
         """Test total_duration_timecode property."""
@@ -368,7 +368,7 @@ class TestVfxPlacerResult(unittest.TestCase):
             timeline_positions=[]
         )
         
-        self.assertEqual(result.total_duration_timecode, "0:04:00")
+        self.assertEqual(result.total_duration_timecode, "4:00")
 
 
 class TestVfxPlacerSecondsToFrames(unittest.TestCase):

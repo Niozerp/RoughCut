@@ -317,10 +317,11 @@ class TestContextChunker:
         """Test finding boundary at sentence end."""
         chunker = ContextChunker()
         text = "First sentence. Second sentence. Third sentence."
-        segments = [{"start": 0.0, "end": 10.0, "text": text}]
+        current_segments = [{"start": 0.0, "end": 10.0, "text": text}]
+        next_segments = [{"start": 10.0, "end": 15.0, "text": "Next segment."}]
         
         # Should find a sentence boundary
-        boundary = chunker._find_boundary(text, 25, segments)
+        boundary = chunker._find_boundary(current_segments, 25, next_segments)
         assert boundary is not None
     
     def test_get_provider_token_limit(self):

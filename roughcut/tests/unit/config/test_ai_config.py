@@ -62,7 +62,7 @@ class TestAIConfigValidation:
         is_valid, error = config.validate()
         
         assert is_valid is False
-        assert "openai or openrouter" in error
+        assert "'openai' or 'openrouter'" in error
     
     def test_invalid_missing_api_key(self):
         """Test validation fails without API key."""

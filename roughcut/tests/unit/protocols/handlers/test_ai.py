@@ -44,11 +44,13 @@ class TestInitiateRoughCut:
         session.status = "transcription_reviewed"
         
         # Mock format template
+        from pathlib import Path
         from roughcut.backend.formats.models import FormatTemplate, TemplateSegment, AssetGroup
         template = FormatTemplate(
             slug="test-format",
             name="Test Format",
             description="A test format template",
+            file_path=Path("/tmp/test-format.md"),
             structure={},
             segments=[
                 TemplateSegment(
@@ -77,7 +79,7 @@ class TestInitiateRoughCut:
         """Test initiating rough cut with valid session and data."""
         # Mock settings
         with patch('roughcut.protocols.handlers.ai.get_settings') as mock_settings:
-            mock_settings.return_value = {"openai_api_key": "test-key"}
+            mock_settings.return_value = {"ai_api_key": "test-key", "ai_provider": "openai"}
             
             # Mock OpenAIClient
             with patch('roughcut.protocols.handlers.ai.OpenAIClient') as mock_client:
@@ -214,11 +216,13 @@ class TestInitiateRoughCutWithProgress:
         }
         session.status = "transcription_reviewed"
         
+        from pathlib import Path
         from roughcut.backend.formats.models import FormatTemplate
         template = FormatTemplate(
             slug="test-format",
             name="Test Format",
             description="Test",
+            file_path=Path("/tmp/test-format.md"),
             structure={},
             segments=[],
             asset_groups=[]
@@ -241,7 +245,7 @@ class TestInitiateRoughCutWithProgress:
         }
         
         with patch('roughcut.protocols.handlers.ai.get_settings') as mock_settings:
-            mock_settings.return_value = {"openai_api_key": "test-key"}
+            mock_settings.return_value = {"ai_api_key": "test-key", "ai_provider": "openai"}
             
             with patch('roughcut.protocols.handlers.ai.OpenAIClient'):
                 with patch('roughcut.protocols.handlers.ai.RoughCutOrchestrator'):

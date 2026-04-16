@@ -139,14 +139,14 @@ class TagStorage:
             asset = self._assets.get(asset_id)
             if asset:
                 if category is None or asset.category == category:
-                    # Store match count for sorting
-                    results.append((match_count, asset))
+                    # Store match count and confidence for sorting
+                    results.append((match_count, asset.confidence, asset))
         
-        # Sort by match count (relevance) descending
-        results.sort(key=lambda x: x[0], reverse=True)
+        # Sort by match count (relevance) descending, then by confidence descending
+        results.sort(key=lambda x: (x[0], x[1]), reverse=True)
         
         # Return limited results
-        return [asset for _, asset in results[:limit]]
+        return [asset for _, _, asset in results[:limit]]
     
     def get_asset_tags(self, asset_id: str) -> Optional[List[str]]:
         """Get tags for a specific asset.

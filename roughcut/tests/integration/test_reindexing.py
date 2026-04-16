@@ -12,8 +12,8 @@ from pathlib import Path
 
 from roughcut.backend.indexing.change_detector import ChangeDetector, FileMetadata
 from roughcut.backend.indexing.indexer import MediaIndexer
-from roughcut.backend.database.models import MediaAsset, MediaFolderConfig
-from roughcut.config.models import MediaFolderConfig as ConfigMediaFolderConfig
+from roughcut.backend.database.models import MediaAsset
+from roughcut.config.models import MediaFolderConfig
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def indexer():
 @pytest.fixture
 def folder_config(temp_media_folder):
     """Create a MediaFolderConfig for testing."""
-    config = ConfigMediaFolderConfig()
+    config = MediaFolderConfig()
     config.music_folder = str(Path(temp_media_folder) / "Music")
     config.sfx_folder = str(Path(temp_media_folder) / "SFX")
     config.vfx_folder = None
@@ -60,7 +60,7 @@ class TestChangeDetectorIntegration:
     
     def test_full_scan_finds_all_files(self, temp_media_folder, indexer):
         """Test that full scan finds all files in configured folders."""
-        config = ConfigMediaFolderConfig()
+        config = MediaFolderConfig()
         config.music_folder = str(Path(temp_media_folder) / "Music")
         config.sfx_folder = str(Path(temp_media_folder) / "SFX")
         config.vfx_folder = None
@@ -390,7 +390,7 @@ class TestReindexingWorkflowIntegration:
         asyncio.set_event_loop(loop)
         
         # Configure with non-existent folder
-        config = ConfigMediaFolderConfig()
+        config = MediaFolderConfig()
         config.music_folder = str(Path(temp_media_folder) / "NonExistent")
         config.sfx_folder = str(Path(temp_media_folder) / "SFX")  # Exists
         config.vfx_folder = None

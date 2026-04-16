@@ -40,13 +40,16 @@ class AssetQueryBuilder:
         """Initialize query builder.
         
         Args:
-            client: SpacetimeDB client instance
+            client: SpacetimeDB client instance (or mock for testing)
             
         Raises:
-            TypeError: If client is not a SpacetimeClient instance
+            TypeError: If client is missing required methods
         """
-        if not isinstance(client, SpacetimeClient):
-            raise TypeError(f"client must be SpacetimeClient, got {type(client).__name__}")
+        # Duck typing: check for required methods instead of strict isinstance
+        required_methods = ['query_assets']
+        for method in required_methods:
+            if not hasattr(client, method):
+                raise TypeError(f"client must have '{method}' method, got {type(client).__name__}")
         
         self.client: SpacetimeClient = client
         self._category: Optional[str] = None

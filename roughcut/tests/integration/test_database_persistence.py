@@ -46,7 +46,7 @@ def mock_spacetime_client():
     client.get_asset_counts = AsyncMock(return_value=Mock(
         music=2, sfx=0, vfx=0, total=2
     ))
-    client.subscribe_to_changes = Mock(return_value="sub-123")
+    client.subscribe_to_changes = AsyncMock(return_value="sub-123")
     client._connected = True
     return client
 

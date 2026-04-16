@@ -1,0 +1,1 @@
+Review the code and make every part of the Electron app work. We must not have memory issues when indexing. We must use openrouter for the AI communication. Run tests after each change. Output <promise>COMPLETE</promise> when all tests pass.

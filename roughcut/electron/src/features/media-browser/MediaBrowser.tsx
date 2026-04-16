@@ -376,14 +376,24 @@ export function MediaBrowser({
 
   // Real-time asset streaming - assets appear immediately as they're written to DB
   useEffect(() => {
-    const handleStreamingAsset = (_event: unknown, data: { category: Category; asset: BrowserAsset }) => {
-      console.log('[MediaBrowser] Streaming asset received:', data.asset.name, 'for category:', data.category)
+    const handleStreamingAsset = (_event: unknown, data: { category: Category; asset: { id: string; file_name?: string; ai_tags?: string[]; duration?: string; used?: boolean } }) => {
+      const assetName = data.asset.file_name || 'Unknown'
+      console.log('[MediaBrowser] Streaming asset received:', assetName, 'for category:', data.category)
+      
+      // Map IndexedAsset to BrowserAsset
+      const browserAsset: BrowserAsset = {
+        id: data.asset.id,
+        name: data.asset.file_name || 'Unknown',
+        tags: data.asset.ai_tags || [],
+        duration: data.asset.duration || '0:00',
+        used: data.asset.used || false,
+      }
       
       setAssetsByCategory((current) => {
         const categoryAssets = current[data.category] || []
         
         // Check if asset already exists (avoid duplicates)
-        const exists = categoryAssets.some((a) => a.id === data.asset.id)
+        const exists = categoryAssets.some((a) => a.id === browserAsset.id)
         if (exists) {
           return current
         }
@@ -391,7 +401,7 @@ export function MediaBrowser({
         // Add new asset at the beginning of the list for immediate visibility
         return {
           ...current,
-          [data.category]: [data.asset, ...categoryAssets],
+          [data.category]: [browserAsset, ...categoryAssets],
         }
       })
       

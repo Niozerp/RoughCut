@@ -232,7 +232,7 @@ class TestAnalyzeTranscriptionQualityHandler:
         # Expected: 140 words for 60 seconds (140 wpm baseline)
         params = {
             'transcript': {
-                'text': 'Speaker 1: ' .. string.rep('word ', 70),  # 70 words
+                'text': 'Speaker 1: ' + 'word ' * 70,  # 70 words
                 'word_count': 70,
                 'duration_seconds': 60.0,
                 'confidence_score': 0.95

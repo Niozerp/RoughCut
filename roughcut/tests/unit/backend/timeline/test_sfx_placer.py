@@ -299,7 +299,7 @@ class TestSfxPlacerResult(unittest.TestCase):
     
     def test_total_duration_timecode(self):
         """Test timecode conversion for total duration."""
-        # 900 frames at 30fps = 30 seconds = 0:00:30
+        # 900 frames at 30fps = 30 seconds = 0:30
         result = SfxPlacerResult(
             clips_placed=1,
             tracks_used=[3],
@@ -308,11 +308,11 @@ class TestSfxPlacerResult(unittest.TestCase):
             fps=30
         )
         
-        self.assertEqual(result.total_duration_timecode, "0:00:30")
+        self.assertEqual(result.total_duration_timecode, "0:30")
     
     def test_custom_fps_timecode(self):
         """Test timecode conversion with custom FPS."""
-        # 60 frames at 24fps = 2.5 seconds = 0:00:02 (truncated)
+        # 60 frames at 24fps = 2.5 seconds = 0:02 (truncated)
         result = SfxPlacerResult(
             clips_placed=1,
             tracks_used=[3],
@@ -321,7 +321,7 @@ class TestSfxPlacerResult(unittest.TestCase):
             fps=24
         )
         
-        self.assertEqual(result.get_total_duration_timecode(fps=24), "0:00:02")
+        self.assertEqual(result.get_total_duration_timecode(fps=24), "0:02")
 
 
 class TestSfxPlacerSecondsToFrames(unittest.TestCase):

@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from roughcut.src.roughcut.backend.media.validator import (
+from roughcut.backend.media.validator import (
     MediaValidator,
     ValidationResult,
     ValidationCheck,

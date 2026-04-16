@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from roughcut.src.roughcut.config.media_formats import (
+from roughcut.config.media_formats import (
     SUPPORTED_AUDIO_CODECS,
     PROBLEMATIC_AUDIO_CODECS,
     get_supported_codecs,

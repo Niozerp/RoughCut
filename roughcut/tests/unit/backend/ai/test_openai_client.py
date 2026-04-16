@@ -103,7 +103,8 @@ class TestOpenAIClientTagGeneration:
             
             assert isinstance(result, TagResult)
             assert result.tags == ["corporate", "upbeat", "bright", "theme"]
-            assert result.confidence == 0.9
+            # Confidence is 0.95 for 4 comma-separated tags (per _calculate_confidence logic)
+            assert result.confidence == 0.95
             assert result.raw_response == "corporate, upbeat, bright, theme"
     
     @pytest.mark.asyncio

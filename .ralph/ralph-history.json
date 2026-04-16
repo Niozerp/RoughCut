@@ -1,0 +1,160 @@
+{
+  "iterations": [
+    {
+      "iteration": 1,
+      "startedAt": "2026-04-14T05:43:21.362Z",
+      "endedAt": "2026-04-14T05:43:21.367Z",
+      "durationMs": 5,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 2,
+      "startedAt": "2026-04-14T05:44:11.531Z",
+      "endedAt": "2026-04-14T05:44:11.533Z",
+      "durationMs": 2,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 3,
+      "startedAt": "2026-04-14T05:45:01.543Z",
+      "endedAt": "2026-04-14T05:45:01.545Z",
+      "durationMs": 2,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 4,
+      "startedAt": "2026-04-14T05:45:51.596Z",
+      "endedAt": "2026-04-14T05:45:51.597Z",
+      "durationMs": 1,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 5,
+      "startedAt": "2026-04-14T05:46:42.210Z",
+      "endedAt": "2026-04-14T05:46:42.212Z",
+      "durationMs": 2,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 6,
+      "startedAt": "2026-04-14T05:47:36.434Z",
+      "endedAt": "2026-04-14T05:47:36.435Z",
+      "durationMs": 1,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 7,
+      "startedAt": "2026-04-14T05:48:30.887Z",
+      "endedAt": "2026-04-14T05:48:30.907Z",
+      "durationMs": 20,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 8,
+      "startedAt": "2026-04-14T05:49:25.164Z",
+      "endedAt": "2026-04-14T05:49:25.166Z",
+      "durationMs": 2,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 9,
+      "startedAt": "2026-04-14T05:50:18.769Z",
+      "endedAt": "2026-04-14T05:50:18.771Z",
+      "durationMs": 2,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    },
+    {
+      "iteration": 10,
+      "startedAt": "2026-04-14T05:51:12.527Z",
+      "endedAt": "2026-04-14T05:51:12.529Z",
+      "durationMs": 2,
+      "agent": "opencode",
+      "model": "",
+      "toolsUsed": {},
+      "filesModified": [],
+      "exitCode": -1,
+      "completionDetected": false,
+      "errors": [
+        "Error: ENOENT: no such file or directory, uv_spawn 'opencode'"
+      ]
+    }
+  ],
+  "totalDurationMs": 39,
+  "struggleIndicators": {
+    "repeatedErrors": {},
+    "noProgressIterations": 0,
+    "shortIterations": 0
+  }
+}

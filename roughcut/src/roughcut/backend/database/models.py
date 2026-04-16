@@ -562,7 +562,7 @@ class Transcript:
             else:
                 lines.append(segment.text)
         
-        return '\n'.join(lines)
+        return '\n\n'.join(lines)
     
     def analyze_quality(self) -> TranscriptQuality:
         """Analyze transcript quality and return detailed quality metrics.

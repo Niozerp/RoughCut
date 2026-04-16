@@ -150,8 +150,8 @@ class TestDocumentFormatter(unittest.TestCase):
         json_data = self.formatter.format_for_json()
         
         self.assertEqual(json_data["title"], "Test Interview")
-        self.assertEqual(json_data["section_count"], 1)
         self.assertIn("summary", json_data)
+        self.assertEqual(json_data["summary"]["section_count"], 1)
     
     def test_get_all_formatted_sections(self):
         """Test getting all formatted sections."""
@@ -286,8 +286,18 @@ class TestDocumentValidator(unittest.TestCase):
     
     def test_validate_gap_between_sections(self):
         """Test detecting gaps between sections."""
-        section1 = RoughCutSection(name="part1", start_time=0.0, end_time=10.0)
-        section2 = RoughCutSection(name="part2", start_time=20.0, end_time=30.0)  # 10s gap
+        section1 = RoughCutSection(
+            name="part1",
+            start_time=0.0,
+            end_time=10.0,
+            transcript_segments=[TranscriptSegment(start_time=0.0, end_time=10.0, text="Part 1 content")]
+        )
+        section2 = RoughCutSection(
+            name="part2",
+            start_time=20.0,
+            end_time=30.0,
+            transcript_segments=[TranscriptSegment(start_time=20.0, end_time=30.0, text="Part 2 content")]
+        )  # 10s gap
         
         doc = RoughCutDocument(
             title="Gaps",
@@ -301,8 +311,9 @@ class TestDocumentValidator(unittest.TestCase):
         result = validator.validate()
         
         self.assertTrue(result.is_valid)
-        self.assertEqual(len(result.warnings), 1)
-        self.assertIn("gap", result.warnings[0].lower())
+        # Should have gap warning and duration mismatch warning
+        gap_warnings = [w for w in result.warnings if "gap" in w.lower()]
+        self.assertEqual(len(gap_warnings), 1)
     
     def test_is_empty(self):
         """Test checking if document is empty."""

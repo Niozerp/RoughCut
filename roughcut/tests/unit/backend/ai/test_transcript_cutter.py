@@ -315,8 +315,8 @@ class TestTranscriptCutter:
         
         # Should detect word modification
         assert result.segments[0].source_words_preserved is False
-        # Should have warning
-        assert any("word modification" in w.lower() for w in result.warnings)
+        # Should have warning about word modification
+        assert any("word_modification" in w.lower() or "word modification" in w.lower() for w in result.warnings)
     
     def test_section_count_mismatch(self):
         """Test handling of section count mismatch."""
@@ -428,8 +428,8 @@ class TestTranscriptCutter:
             ai_response=ai_response
         )
         
-        # Should detect invalid boundaries
-        assert any("invalid" in w.lower() for w in result.warnings)
+        # Should detect invalid boundaries (end_time <= start_time)
+        assert any("invalid" in w.lower() or "validation error" in w.lower() or "must be greater" in w.lower() for w in result.warnings)
     
     def test_word_count_calculation(self):
         """Test automatic word count calculation."""

@@ -7,7 +7,7 @@ validation rules, and format-specific settings for RoughCut.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, set
+from typing import Any, Set
 
 
 @dataclass

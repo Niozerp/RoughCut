@@ -122,14 +122,17 @@ class ContextChunker:
         """
         total_tokens = estimate_token_count(transcript_text)
         
-        # Get provider limit
+        # Get provider limit (fallback to config max_tokens_per_chunk)
         provider_limit = self._get_provider_token_limit(
             self.config.provider_name,
             model_name
         )
         
+        # Use the smaller of provider limit or config limit to respect user settings
+        effective_limit = min(provider_limit, self.config.max_tokens_per_chunk)
+        
         # Apply safety margin
-        effective_limit = int(provider_limit * TOKEN_SAFETY_MARGIN)
+        effective_limit = int(effective_limit * TOKEN_SAFETY_MARGIN)
         
         # Check if chunking is needed
         needs_chunking = total_tokens > effective_limit

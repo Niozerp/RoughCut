@@ -35,9 +35,9 @@ class TestTimecodeConversion(unittest.TestCase):
     
     def test_timecode_to_frames_with_frames(self):
         """Test converting H:MM:SS:FF timecode to frames."""
-        # 0:15:30:15 at 30fps = (15*60 + 30) * 30 + 15 = 27930 + 15 = 27945 frames
+        # 0:15:30:15 at 30fps = (0*3600 + 15*60 + 30) * 30 + 15 = 27900 + 15 = 27915 frames
         result = timecode_to_frames("0:15:30:15", fps=30)
-        self.assertEqual(result, 27945)
+        self.assertEqual(result, 27915)
     
     def test_timecode_to_frames_different_fps(self):
         """Test conversion with different frame rates."""
@@ -63,9 +63,9 @@ class TestTimecodeConversion(unittest.TestCase):
     
     def test_frames_to_timecode_with_frames(self):
         """Test converting frames to H:MM:SS:FF timecode."""
-        # 27945 frames at 30fps = 931.5 seconds = 15:31:15 (15 min, 31 sec, 15 frames)
+        # 27945 frames at 30fps = 931.5 seconds = 00:15:31:15 (15 min, 31 sec, 15 frames)
         result = frames_to_timecode(27945, fps=30, include_frames=True)
-        self.assertEqual(result, "15:31:15")
+        self.assertEqual(result, "00:15:31:15")
     
     def test_roundtrip_conversion(self):
         """Test that timecode -> frames -> timecode is consistent."""

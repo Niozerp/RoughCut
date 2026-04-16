@@ -1181,7 +1181,8 @@ class MediaIndexer:
                             'modified_time': asset.modified_time.isoformat() if asset.modified_time else None,
                             'created_at': asset.created_at.isoformat() if asset.created_at else None,
                         }
-                        await self.streaming_callback(asset_dict)
+                        # Call the callback directly (not async) - it's a regular function
+                        self.streaming_callback(asset_dict)
                         _stream_logger.info(f"[INDEXING_LOG] [VERBOSE] [{category_upper}] STREAMED to GUI: {file_path.name}")
                     except Exception as stream_err:
                         _stream_logger.warning(f"[INDEXING_LOG] Streaming callback failed: {stream_err}")

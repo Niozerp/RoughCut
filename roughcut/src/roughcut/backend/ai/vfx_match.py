@@ -58,14 +58,22 @@ class VFXPlacement:
         Returns:
             True if placements overlap within tolerance
         """
-        # Add tolerance to create overlap detection windows
-        self_start = self.start_time - tolerance
-        self_end = self.end_time + tolerance
-        other_start = other.start_time - tolerance
-        other_end = other.end_time + tolerance
+        # Check for overlap: intervals overlap if they share any time period
+        # Two intervals [a, b] and [c, d] overlap if max(a,c) < min(b,d)
+        # This means they actually share time, not just touch at boundaries
         
-        # Check for overlap
-        return self_start < other_end and other_start < self_end
+        # Check if there's an actual time overlap (not just adjacency)
+        latest_start = max(self.start_time, other.start_time)
+        earliest_end = min(self.end_time, other.end_time)
+        
+        # Overlap exists if latest_start < earliest_end (strict inequality)
+        # Equal values mean adjacent, not overlapping
+        if latest_start < earliest_end:
+            return True
+        
+        # Check if within tolerance for near-overlap detection
+        gap = latest_start - earliest_end  # Positive if there's a gap
+        return 0 < gap <= tolerance
     
     def get_overlap_duration(self, other: VFXPlacement) -> float:
         """Calculate overlap duration with another placement.
